@@ -1,0 +1,40 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+    <id>com.omariskandarani.LiveLatex</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
+    <name>LiveLatex</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor url="https://www.omariskandarani.com">omariskandarani</vendor>
+
+
+    <description>
+        Live preview for .tex files in a Tool Window using JCEF + MathJax.
+    </description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <!-- Tool Window -->
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="LaTeX Preview"
+                    anchor="right"
+                    factoryClass="com.omariskandarani.livelatex.ui.LatexPreviewToolWindowFactory"
+                    icon="livelatex.svg"
+        />
+        <projectService serviceImplementation="com.omariskandarani.livelatex.core.LatexPreviewService"/>
+    </extensions>
+
+    <!-- Action to open/focus the preview window -->
+    <actions>
+        <action id="com.omariskandarani.LiveLatex.actions.ShowPreview"
+                class="com.omariskandarani.livelatex.actions.ShowPreviewAction"
+                text="Show LaTeX Preview"
+                description="Open/focus LaTeX Preview tool window">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>
+        </action>
+    </actions>
+</idea-plugin>

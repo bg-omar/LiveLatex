@@ -1,0 +1,14 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="LatexAvoidEqnarray" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="LatexDocumentclassNotInRoot" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="LatexGatherEquations" enabled="false" level="WEAK WARNING" enabled_by_default="false" />
+    <inspection_tool class="LatexLineBreak" enabled="false" level="WEAK WARNING" enabled_by_default="false" />
+    <inspection_tool class="LatexNonMatchingEnvironment" enabled="false" level="ERROR" enabled_by_default="false" />
+    <inspection_tool class="LatexOverInsteadOfFrac" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="LatexPackageUpdate" enabled="$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$" level="WARNING" enabled_by_default="$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$" />
+    <inspection_tool class="LatexQedHere" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="LatexRequiredExtension" enabled="false" level="ERROR" enabled_by_default="false" />
+  </profile>
+</component>
