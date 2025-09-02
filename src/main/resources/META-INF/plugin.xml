@@ -1,7 +1,7 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
     <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
-    <id>com.omariskandarani.LiveLatex</id>
+    <id>com.omariskandarani.livelatex</id>
 
     <!-- Public plugin name should be written in Title Case.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
@@ -22,7 +22,7 @@
         <toolWindow id="LaTeX Preview"
                     anchor="right"
                     factoryClass="com.omariskandarani.livelatex.ui.LatexPreviewToolWindowFactory"
-                    icon="livelatex.svg"
+                    icon="/livelatex.svg"
         />
         <projectService serviceImplementation="com.omariskandarani.livelatex.core.LatexPreviewService"/>
     </extensions>

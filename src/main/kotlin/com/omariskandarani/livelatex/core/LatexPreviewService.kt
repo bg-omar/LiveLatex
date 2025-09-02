@@ -37,19 +37,24 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private val caretListener = object : CaretListener {
-        override fun caretPositionChanged(event: CaretEvent) = scheduleRefresh()
+        override fun caretPositionChanged(event: CaretEvent) {
+            val editor = event.editor
+            val line = editor.caretModel.logicalPosition.line + 1
+            browser?.cefBrowser?.executeJavaScript(
+                "window.sync && window.sync.scrollToAbs($line);",
+                browser?.cefBrowser?.url ?: "about:blank", 0
+            )
+        }
     }
 
     private val visibleListener = VisibleAreaListener { e: VisibleAreaEvent ->
         val editor = e.editor ?: return@VisibleAreaListener
         val topY = e.newRectangle.y
         val topLogical: LogicalPosition = editor.xyToLogicalPosition(Point(0, topY))
-        val absLine = topLogical.line + 1  // IntelliJ lines are 0-based; we use 1-based-ish in anchors
-        // Call the JS API in the JCEF page
+        val absLine = topLogical.line + 1
         browser?.cefBrowser?.executeJavaScript(
-            "window.sync && window.sync.scrollToAbs(${absLine});",
-            browser?.cefBrowser?.url ?: "about:blank",
-            0
+            "window.sync && window.sync.scrollToAbs($absLine);",
+            browser?.cefBrowser?.url ?: "about:blank", 0
         )
     }
 
@@ -72,12 +77,12 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
         // Listen to all docs for changes
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(docListener, this)
-        // Also refresh when caret moves
+        // Only add caret and visible listeners for scroll sync, not refresh
         EditorFactory.getInstance().eventMulticaster.addCaretListener(caretListener, this)
+        EditorFactory.getInstance().eventMulticaster.addVisibleAreaListener(visibleListener, this)
         // Initial render
         scheduleRefresh()
 
-        EditorFactory.getInstance().eventMulticaster.addVisibleAreaListener(visibleListener, this)
 
         // Initial sync to caret/visible line (optional)
         FileEditorManager.getInstance(project).selectedTextEditor?.let { ed ->
@@ -92,19 +97,25 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private fun refresh() {
+        // Get caret line before refresh
+        val caretLine = FileEditorManager.getInstance(project).selectedTextEditor?.caretModel?.logicalPosition?.line?.plus(1) ?: 1
         val (vf, text) = currentTexFileAndText() ?: run {
-            renderHtml(LatexHtml.wrap("<p style='opacity:0.66'>Open a <code>.tex</code> file to preview.</p>"))
+            renderHtml(LatexHtml.wrap("<p style='opacity:0.66'>Open a <code>.tex</code> file to preview.</p>"), caretLine)
             return
         }
         // Generate HTML with MathJax
         val html = LatexHtml.wrap(text)
-        renderHtml(html)
+        renderHtml(html, caretLine)
     }
 
-    private fun renderHtml(html: String) {
+    private fun renderHtml(html: String, caretLine: Int) {
         ApplicationManager.getApplication().invokeLater {
-            // Use a stable fake base URL so relative assets (if any later) can resolve
             browser?.loadHTML(html, "http://latex-preview.local/")
+            // After HTML is loaded, scroll to caret line
+            browser?.cefBrowser?.executeJavaScript(
+                "window.sync && window.sync.scrollToAbs($caretLine);",
+                browser?.cefBrowser?.url ?: "about:blank", 0
+            )
         }
     }
 

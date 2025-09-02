@@ -6,8 +6,8 @@ object LatexHtml {
 
     fun wrap(texSource: String): String {
         val srcNoComments = stripLineComments(texSource)
-        val userMacros    = extractNewcommands(srcNoComments)
-        val macrosJs      = buildMathJaxMacros(userMacros)
+        val userMacros = extractNewcommands(srcNoComments)
+        val macrosJs = buildMathJaxMacros(userMacros)
 
         // Find body & absolute line offset of the first body line
         val beginIdx = texSource.indexOf("\\begin{document}")
@@ -21,13 +21,10 @@ object LatexHtml {
         val body2 = applyProseConversions(body1)
         val body3 = sanitizeForMathJaxProse(body2)
 
-        // Escape but keep backslashes for MathJax
-        val escaped = escapeHtmlKeepBackslashes(body3)
-
-        // ⬇️ Insert line anchors every Nth line using ABSOLUTE source line numbers
-        val withAnchors = injectLineAnchors(escaped, absOffset, everyN = 3)
-
+        // anchors (no blanket escape here)
+        val withAnchors = injectLineAnchors(body3, absOffset, everyN = 3)
         return buildHtml(withAnchors, macrosJs)
+
     }
 
 
@@ -67,7 +64,7 @@ object LatexHtml {
         inlineMath: [['\\(','\\)'], ['$', '$']],
         displayMath: [['\\[','\\]'], ['$$','$$']],
         processEscapes: true,
-        packages: {'[+]': ['ams','bbox','base']},
+        packages: {'[+]': ['ams','bbox','base','textmacros']},
         macros: $macrosJs
       },
       options: { skipHtmlTags: ['script','noscript','style','textarea','pre','code'] },
@@ -122,29 +119,32 @@ object LatexHtml {
 
     private fun applyProseConversions(s: String): String {
         var t = s
-        t = convertSiunitx(t)      // \num, \si
-        t = convertHref(t)         // \href{url}{text}
-        t = convertSections(t)     // \section, \subsection, \paragraph
-        t = convertItemize(t)      // itemize → <ul>
-        t = convertEnumerate(t)    // enumerate → <ol>
-        t = convertTabulars(t)     // tabular → <table>
-        t = stripAuxDirectives(t)  // \addcontentsline, \nocite, \bibliography (placeholder)
+        t = convertSiunitx(t)       // \num, \si, \SI
+        t = convertHref(t)          // \href{url}{text}
+        t = convertSections(t)      // sections, sub(sub)sections, paragraph, underline
+        t = convertTableEnvs(t)     // table wrappers with \caption
+        t = convertItemize(t)       // itemize → <ul>
+        t = convertEnumerate(t)     // enumerate → <ol>
+        t = convertTabulars(t)      // tabular → <table>
+        t = convertTheBibliography(t) // thebibliography → list
+        t = stripAuxDirectives(t)   // \addcontentsline, \bibliographystyle, ...
         return t
     }
 
     /** Keep only the document body; MathJax doesn’t understand the preamble. */
     private fun stripPreamble(s: String): String {
         val begin = s.indexOf("\\begin{document}")
-        val end   = s.lastIndexOf("\\end{document}")
+        val end = s.lastIndexOf("\\end{document}")
         return if (begin >= 0 && end > begin) s.substring(begin + "\\begin{document}".length, end) else s
     }
 
     /** Remove % line comments (safe heuristic for authoring). */
     private fun stripLineComments(s: String): String =
         s.lines().map { line ->
-            val i = line.indexOf('%')
-            if (i >= 0) line.substring(0, i) else line
+            // Remove percent-comments that are NOT escaped (\%)
+            line.replace(Regex("(?<!\\\\)%.*$"), "")
         }.joinToString("\n")
+
 
     // ------------------------ MACROS ------------------------
 
@@ -155,12 +155,14 @@ object LatexHtml {
         val out = LinkedHashMap<String, Macro>()
 
         // \newcommand{\foo}[2]{...}
-        val rxNew = Regex("""\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)\])?(?:\[[^\]]*\])?\{(.+?)\}""",
-            RegexOption.DOT_MATCHES_ALL)
+        val rxNew = Regex(
+            """\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)\])?(?:\[[^\]]*\])?\{(.+?)\}""",
+            RegexOption.DOT_MATCHES_ALL
+        )
         rxNew.findAll(s).forEach { m ->
-            val name  = m.groupValues[1]
+            val name = m.groupValues[1]
             val nargs = m.groupValues[2].ifEmpty { "0" }.toInt()
-            val body  = m.groupValues[3].trim()
+            val body = m.groupValues[3].trim()
             out[name] = Macro(body, nargs)
         }
 
@@ -177,25 +179,27 @@ object LatexHtml {
     private fun buildMathJaxMacros(user: Map<String, Macro>): String {
         // Lightweight shims for common packages (physics, siunitx, etc.)
         val base = linkedMapOf(
-            "vb" to Macro("\\mathbf{#1}",1),
-            "bm" to Macro("\\boldsymbol{#1}",1),
-            "dv" to Macro("\\frac{d #1}{d #2}",2),
-            "pdv" to Macro("\\frac{\\partial #1}{\\partial #2}",2),
-            "abs" to Macro("\\left|#1\\right|",1),
-            "norm" to Macro("\\left\\lVert #1\\right\\rVert",1),
-            "qty" to Macro("\\left(#1\\right)",1),
-            "qtyb" to Macro("\\left[#1\\right]",1),
-            "qed" to Macro("\\square",0),
+            "ae" to Macro("\\unicode{x00E6}", 0),
+            "AE" to Macro("\\unicode{x00C6}", 0),
+            "vb" to Macro("\\mathbf{#1}", 1),
+            "bm" to Macro("\\boldsymbol{#1}", 1),
+            "dv" to Macro("\\frac{d #1}{d #2}", 2),
+            "pdv" to Macro("\\frac{\\partial #1}{\\partial #2}", 2),
+            "abs" to Macro("\\left|#1\\right|", 1),
+            "norm" to Macro("\\left\\lVert #1\\right\\rVert", 1),
+            "qty" to Macro("\\left(#1\\right)", 1),
+            "qtyb" to Macro("\\left[#1\\right]", 1),
+            "qed" to Macro("\\square", 0),
             // siunitx placeholders (convertSiunitx does formatting)
-            "si" to Macro("\\mathrm{#1}",1),
-            "num" to Macro("{#1}",1),
+            "si" to Macro("\\mathrm{#1}", 1),
+            "num" to Macro("{#1}", 1),
             // handy aliases
-            "Lam" to Macro("\\Lambda",0),
-            "rc"  to Macro("r_c",0),
+            "Lam" to Macro("\\Lambda", 0),
+            "rc" to Macro("r_c", 0),
             // text-ish shims (kept mild)
-            "texttt" to Macro("\\mathtt{#1}",1),
-            "textbf" to Macro("\\mathbf{#1}",1),
-            "emph"   to Macro("\\mathit{#1}",1)
+            "texttt" to Macro("\\mathtt{#1}", 1),
+            "textbf" to Macro("\\mathbf{#1}", 1),
+            "emph" to Macro("\\mathit{#1}", 1)
         )
 
         // Merge with user macros (user wins)
@@ -203,9 +207,9 @@ object LatexHtml {
         merged.putAll(base)
         merged.putAll(user)
 
-        val parts = merged.map { (k,v) ->
+        val parts = merged.map { (k, v) ->
             if (v.nargs > 0) "\"$k\": [${jsonEscape(v.def)}, ${v.nargs}]"
-            else              "\"$k\": ${jsonEscape(v.def)}"
+            else "\"$k\": ${jsonEscape(v.def)}"
         }
         return "{${parts.joinToString(",")}}"
     }
@@ -221,21 +225,34 @@ object LatexHtml {
 
     private fun convertSections(s: String): String {
         var t = s
+        // \section, \subsection, \subsubsection (starred or not)
         t = t.replace(Regex("""\\section\*?\{([^}]*)\}""")) {
             "<h2>${escapeHtmlKeepBackslashes(it.groupValues[1])}</h2>"
         }
         t = t.replace(Regex("""\\subsection\*?\{([^}]*)\}""")) {
             "<h3>${escapeHtmlKeepBackslashes(it.groupValues[1])}</h3>"
         }
-        t = t.replace(Regex("""\\paragraph\{([^}]*)\}""")) {
+        t = t.replace(Regex("""\\subsubsection\*?\{([^}]*)\}""")) {
             """<h4 style="margin:1em 0 .4em 0;">${escapeHtmlKeepBackslashes(it.groupValues[1])}</h4>"""
         }
-        // \texorpdfstring{math}{text} → show the text in HTML
+        // \paragraph{...}
+        t = t.replace(Regex("""\\paragraph\{([^}]*)\}""")) {
+            """<h5 style="margin:1em 0 .3em 0;">${escapeHtmlKeepBackslashes(it.groupValues[1])}</h5>"""
+        }
+        // \underline and common text decorations
+        t = t.replace(Regex("""\\underline\{([^{}]*)\}"""), "<u>$1</u>")
+            .replace(Regex("""\\textbf\{([^{}]*)\}"""), "<strong>$1</strong>")
+            .replace(Regex("""\\emph\{([^{}]*)\}"""), "<em>$1</em>")
+            .replace(Regex("""\\textit\{([^{}]*)\}"""), "<em>$1</em>")
+        // \texorpdfstring{math}{text} → use the text
         t = t.replace(Regex("""\\texorpdfstring\{([^}]*)\}\{([^}]*)\}""")) {
             escapeHtmlKeepBackslashes(it.groupValues[2])
         }
-        // \appendix → thin rule
-        t = t.replace(Regex("""\\appendix"""), """<hr style="border:none;border-top:1px solid var(--border);margin:16px 0;"/>""")
+        // \appendix divider
+        t = t.replace(
+            Regex("""\\appendix"""),
+            """<hr style="border:none;border-top:1px solid var(--border);margin:16px 0;"/>"""
+        )
         return t
     }
 
@@ -262,6 +279,7 @@ object LatexHtml {
     }
 
     private data class ColSpec(val align: String?, val widthPct: Int?)
+
     private fun convertTabulars(text: String): String {
         val rx = Regex("""\\begin\{tabular\}\{([^}]*)\}(.+?)\\end\{tabular\}""", RegexOption.DOT_MATCHES_ALL)
         return rx.replace(text) { m ->
@@ -304,9 +322,18 @@ object LatexHtml {
         var i = 0
         while (i < spec.length) {
             when (spec[i]) {
-                'l' -> { cols += ColSpec("left", null);  i++ }
-                'c' -> { cols += ColSpec("center", null); i++ }
-                'r' -> { cols += ColSpec("right", null);  i++ }
+                'l' -> {
+                    cols += ColSpec("left", null); i++
+                }
+
+                'c' -> {
+                    cols += ColSpec("center", null); i++
+                }
+
+                'r' -> {
+                    cols += ColSpec("right", null); i++
+                }
+
                 'p' -> {
                     val m = Regex("""p\{([^}]*)\}""").find(spec, i)
                     if (m != null && m.range.first == i) {
@@ -315,11 +342,13 @@ object LatexHtml {
                         i = m.range.last + 1
                     } else i++
                 }
+
                 '|', '!' -> i++ // ignore vertical rules / !{..}
                 '@', '>' -> {
                     val m = Regex("""[@>]\{([^}]*)\}""").find(spec, i)
                     i = if (m != null && m.range.first == i) m.range.last + 1 else i + 1
                 }
+
                 else -> i++
             }
         }
@@ -351,7 +380,8 @@ object LatexHtml {
 
     private fun convertHref(s: String): String =
         s.replace(Regex("""\\href\{([^}]*)\}\{([^}]*)\}""")) { m ->
-            val url = m.groupValues[1]; val txt = m.groupValues[2]
+            val url = m.groupValues[1];
+            val txt = m.groupValues[2]
             """<a href="${escapeHtmlKeepBackslashes(url)}" target="_blank" rel="noopener">${escapeHtmlKeepBackslashes(txt)}</a>"""
         }
 
@@ -360,8 +390,10 @@ object LatexHtml {
         t = t.replace(Regex("""\\addcontentsline\{[^}]*\}\{[^}]*\}\{[^}]*\}"""), "")
         t = t.replace(Regex("""\\nocite\{[^}]*\}"""), "")
         t = t.replace(Regex("""\\bibliographystyle\{[^}]*\}"""), "")
-        t = t.replace(Regex("""\\bibliography\{[^}]*\}"""),
-            """<div style="opacity:.7;margin:8px 0;">[References: compile in PDF mode]</div>""")
+        t = t.replace(
+            Regex("""\\bibliography\{[^}]*\}"""),
+            """<div style="opacity:.7;margin:8px 0;">[References: compile in PDF mode]</div>"""
+        )
         return t
     }
 
@@ -390,7 +422,7 @@ object LatexHtml {
         }
 
         // theorem-like → HTML card
-        val theoremLike = listOf("theorem","lemma","proposition","corollary","definition","remark","identity")
+        val theoremLike = listOf("theorem", "lemma", "proposition", "corollary", "definition", "remark", "identity")
         for (env in theoremLike) {
             s = s.replace(
                 Regex("""\\begin\{$env\}(?:\[(.*?)\])?(.+?)\\end\{$env\}""", RegexOption.DOT_MATCHES_ALL)
@@ -424,37 +456,144 @@ object LatexHtml {
             val raw = m.groupValues[1].trim()
             val sci = Regex("""^\s*([+-]?\d+(?:\.\d+)?)[eE]([+-]?\d+)\s*$""").matchEntire(raw)
             if (sci != null) {
-                val a = sci.groupValues[1]; val b = sci.groupValues[2]
+                val a = sci.groupValues[1];
+                val b = sci.groupValues[2]
                 "$a\\times 10^{${b}}"
-            } else raw // fallback; MathJax macro 'num' shows as-is
+            } else raw
         }
-        // \si{m.s^{-1}} → \mathrm{m\,s^{-1}} (simple and readable)
+        // \si{m.s^{-1}} → \mathrm{m\,s^{-1}}
         t = t.replace(Regex("""\\si\{([^\}]*)\}""")) { m ->
-            val u = m.groupValues[1]
-                .replace(".", "\\,")     // thin-space as mild separator
-                .replace("~", "\\,")
+            val u = m.groupValues[1].replace(".", "\\,").replace("~", "\\,")
             "\\mathrm{$u}"
         }
+        // \SI{<num>}{<unit>} → \num{...}\,\si{...}  (lets MathJax render both)
+        t = t.replace(Regex("""\\SI\{([^\}]*)\}\{([^\}]*)\}""")) { m ->
+            val num = m.groupValues[1];
+            val unit = m.groupValues[2]
+            "\\num{$num}\\,\\si{$unit}"
+        }
+        // common text encodings
+        t = t.replace(Regex("""\\textasciitilde\{\}"""), "~")
+            .replace(Regex("""\\textasciitilde"""), "~")
+            .replace(Regex("""\\&"""), "&")
         return t
     }
+
 
     // ------------------------ UTIL ------------------------
 
     /** Escape &,<,> but keep backslashes so MathJax sees TeX. */
     private fun escapeHtmlKeepBackslashes(s: String): String =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-}
 
-private fun injectLineAnchors(escapedBodyHtml: String, absOffset: Int, everyN: Int = 3): String {
-    val sb = StringBuilder(escapedBodyHtml.length + 1024)
-    val lines = escapedBodyHtml.split("\n")
-    for (i in lines.indices) {
-        val absLine = absOffset + i // 0-based index → 1-based abs handled below if you prefer; OK as-is
-        if (i % everyN == 0) {
-            sb.append("""<span class="syncline" data-abs="$absLine"></span>""")
+
+    private fun injectLineAnchors(s: String, absOffset: Int, everyN: Int = 3): String {
+        val mathEnvs = setOf(
+            "equation","equation*","align","align*","gather","gather*",
+            "multline","multline*","flalign","flalign*","alignat","alignat*"
+        )
+        var i = 0
+        var line = 0
+        var inDollar = false
+        var inDoubleDollar = false
+        var inBracket = false   // \[...\]
+        var inParen = false     // \(...\)
+        var envDepth = 0
+
+        fun startsAt(idx: Int, tok: String) =
+            idx + tok.length <= s.length && s.regionMatches(idx, tok, 0, tok.length)
+
+        val sb = StringBuilder(s.length + 1024)
+
+        while (i < s.length) {
+            // toggle $$ first (so we don't flip single $ inside $$...$$)
+            if (!inBracket && !inParen) {
+                if (startsAt(i,"$$")) {
+                    inDoubleDollar = !inDoubleDollar
+                    sb.append("$$"); i += 2; continue
+                }
+                if (!inDoubleDollar && s[i] == '$') {
+                    inDollar = !inDollar
+                    sb.append('$'); i += 1; continue
+                }
+            }
+            if (!inDollar && !inDoubleDollar) {
+                if (startsAt(i,"\\[")) { inBracket = true;  sb.append("\\["); i += 2; continue }
+                if (startsAt(i,"\\]") && inBracket) { inBracket = false; sb.append("\\]"); i += 2; continue }
+                if (startsAt(i,"\\(")) { inParen = true;   sb.append("\\("); i += 2; continue }
+                if (startsAt(i,"\\)") && inParen) { inParen = false;  sb.append("\\)"); i += 2; continue }
+
+                if (startsAt(i,"\\begin{")) {
+                    val end = s.indexOf('}', i + 7)
+                    val name = if (end > 0) s.substring(i + 7, end) else ""
+                    if (name in mathEnvs) envDepth++
+                    sb.append(s, i, (end + 1).coerceAtMost(s.length))
+                    i = (end + 1).coerceAtMost(s.length)
+                    continue
+                }
+                if (startsAt(i,"\\end{")) {
+                    val end = s.indexOf('}', i + 5)
+                    val name = if (end > 0) s.substring(i + 5, end) else ""
+                    if (name in mathEnvs && envDepth > 0) envDepth--
+                    sb.append(s, i, (end + 1).coerceAtMost(s.length))
+                    i = (end + 1).coerceAtMost(s.length)
+                    continue
+                }
+            }
+
+            val ch = s[i]
+            if (ch == '\n') {
+                line++
+                val safeSpot = !inDollar && !inDoubleDollar && !inBracket && !inParen && envDepth == 0
+                if (safeSpot && (line % everyN == 0)) {
+                    val absLine = absOffset + line
+                    sb.append('\n')
+                    sb.append("""<span class="syncline" data-abs="$absLine"></span>""")
+                }
+                sb.append('\n'); i++; continue
+            }
+
+            sb.append(ch); i++
         }
-        sb.append(lines[i])
-        if (i < lines.lastIndex) sb.append('\n')
+        return sb.toString()
     }
-    return sb.toString()
+
+
+    private fun convertTableEnvs(s: String): String {
+        val rx = Regex("""\\begin\{table\}(?:\[[^\]]*])?(.+?)\\end\{table\}""", RegexOption.DOT_MATCHES_ALL)
+        return rx.replace(s) { m ->
+            var body = m.groupValues[1]
+            // extract caption
+            var captionHtml = ""
+            val capRx = Regex("""\\caption\{([^}]*)\}""")
+            val cap = capRx.find(body)
+            if (cap != null) {
+                captionHtml = """<figcaption style="opacity:.8;margin:6px 0 10px;">${escapeHtmlKeepBackslashes(cap.groupValues[1])}</figcaption>"""
+                body = body.replace(cap.value, "")
+            }
+            // drop \centering, labels
+            body = body.replace(Regex("""\\centering"""), "")
+                .replace(Regex("""\\label\{[^}]*\}"""), "")
+            // wrap; tabular will be converted later
+            """<figure style="margin:14px 0;">$body$captionHtml</figure>"""
+        }
+    }
+
+    private fun convertTheBibliography(s: String): String {
+        val rx = Regex(
+            """\\begin\{thebibliography\}\{[^}]*\}(.+?)\\end\{thebibliography\}""",
+            RegexOption.DOT_MATCHES_ALL
+        )
+        return rx.replace(s) { m ->
+            val body = m.groupValues[1]
+            // split on \bibitem{...}
+            val entries = Regex("""\\bibitem\{[^}]*\}""")
+                .split(body)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (entries.isEmpty()) return@replace ""
+            val lis = entries.joinToString("") { "<li>${escapeHtmlKeepBackslashes(it)}</li>" }
+            """<h4>References</h4><ol style="margin:12px 0 12px 24px;">$lis</ol>"""
+        }
+    }
 }
