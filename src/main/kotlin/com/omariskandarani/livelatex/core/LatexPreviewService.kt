@@ -20,7 +20,10 @@ import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.editor.event.VisibleAreaEvent
 import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.editor.LogicalPosition
+import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.openapi.wm.ToolWindow
 import java.awt.Point
+import java.awt.Dimension
 import java.nio.charset.StandardCharsets
 
 class LatexPreviewService(private val project: Project) : Disposable {
@@ -58,6 +61,12 @@ class LatexPreviewService(private val project: Project) : Disposable {
         )
     }
 
+    // Extension function for ToolWindow width
+    private fun ToolWindow.setWidth(width: Int) {
+        this.component.preferredSize = Dimension(width, this.component.height)
+        this.component.revalidate()
+    }
+
     init {
         Disposer.register(project, this)
 
@@ -66,6 +75,15 @@ class LatexPreviewService(private val project: Project) : Disposable {
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
                 override fun selectionChanged(event: FileEditorManagerEvent) {
+                    val file = event.newFile
+                    val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview") ?: return
+                    if (file?.name?.endsWith(".tex") == true) {
+                        toolWindow.show()
+                        toolWindow.setWidth(400) // Expand to normal width
+                    } else {
+                        toolWindow.setWidth(40) // Collapse to minimal width
+                        toolWindow.hide()
+                    }
                     scheduleRefresh()
                 }
             }
