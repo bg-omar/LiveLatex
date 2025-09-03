@@ -2,6 +2,7 @@
 <idea-plugin>
     <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
     <id>com.omariskandarani.livelatex</id>
+    <icon>livelatex.svg</icon>
 
     <!-- Public plugin name should be written in Title Case.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
@@ -11,10 +12,6 @@
     <vendor url="https://www.omariskandarani.com">omariskandarani</vendor>
 
 
-    <description>
-        Live preview for .tex files in a Tool Window using JCEF + MathJax.
-    </description>
-
     <depends>com.intellij.modules.platform</depends>
 
     <!-- Tool Window -->
@@ -22,7 +19,7 @@
         <toolWindow id="LaTeX Preview"
                     anchor="right"
                     factoryClass="com.omariskandarani.livelatex.ui.LatexPreviewToolWindowFactory"
-                    icon="/livelatex.svg"
+                    icon="livelatex.svg"
         />
         <projectService serviceImplementation="com.omariskandarani.livelatex.core.LatexPreviewService"/>
     </extensions>
