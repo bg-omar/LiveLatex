@@ -33,5 +33,25 @@
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>
         </action>
+        <action id="LiveLaTeX.GenerateTable"
+                class="com.omariskandarani.livelatex.actions.GenerateLatexTableAction"
+                text="Generate LaTeX Table…"
+                description="Create a LaTeX table from CSV/Markdown or a blank template">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="LiveLaTeX.InsertImage"
+                class="com.omariskandarani.livelatex.actions.InsertImageAction"
+                text="Insert Image…"
+                description="Copy image into project and insert \\includegraphics snippet">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+
+        <action id="LiveLaTeX.NewTikzFigure"
+                class="com.omariskandarani.livelatex.actions.NewTikzFigureAction"
+                text="New TikZ Figure…"
+                description="Open a simple canvas, export TikZ and insert it here">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>
