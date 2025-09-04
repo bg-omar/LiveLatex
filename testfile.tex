@@ -1,17 +1,136 @@
 %! Author = mr
 %! Date = 9/3/2025
+\newcommand{\canonversion}{\textbf{v0.3.4}} % Semantic versioning: vMAJOR.MINOR.PATCH
+\newcommand{\papertitle}{Swirl String Theory (SST) Canon \canonversion}
+\newcommand{\paperdoi}{10.5281/zenodo.17014358}
+
+% ==== Swirl String Theory (SST) macros ====
+% Context-aware subscript symbol; uses math styles, not \scriptsize
+\newcommand{\swirlarrow}{%
+    \mathchoice{\mkern-2mu\scriptstyle\boldsymbol{\circlearrowleft}}%
+    {\mkern-2mu\scriptstyle\boldsymbol{\circlearrowleft}}%
+    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}%
+    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}%
+}
+\newcommand{\swirlarrowcw}{%
+    \mathchoice{\mkern-2mu\scriptstyle\boldsymbol{\circlearrowright}}%
+    {\mkern-2mu\scriptstyle\boldsymbol{\circlearrowright}}%
+    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowright}}%
+    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowright}}%
+}
+
+% Canonical symbols
+\newcommand{\vswirl}{\mathbf{v}_{\swirlarrow}}
+\newcommand{\vswirlcw}{\mathbf{v}_{\swirlarrowcw}}
+\newcommand{\SwirlClock}{S_(t)^{\swirlarrow}}
+\newcommand{\SwirlClockcw}{S_(t)^{\swirlarrowcw}}
+\newcommand{\omegas}{\boldsymbol{\omega}_{\swirlarrow}}  % swirl vorticity
+\newcommand{\vscore}{v_{\swirlarrow}}                    % shorthand: |v_swirl| at r=r_c
+\newcommand{\vnorm}{\lVert \vswirl \rVert}               % swirl speed magnitude
+\newcommand{\rhof}{\rho_{\!f}}                           % effective fluid density
+\newcommand{\rhoE}{\rho_{\!E}}                           % swirl energy density /c^2? (we define clearly below)
+\newcommand{\rhom}{\rho_{\!m}}                           % mass-equivalent density
+\newcommand{\rc}{r_c}                                    % string core radius (swirl string radius)
+\newcommand{\FmaxEM}{F_{\mathrm{EM}}^{\max}}             % EM-like maximal force scale
+\newcommand{\FmaxG}{F_{\mathrm{G}}^{\max}}               % G-like maximal force scale
+\newcommand{\Lam}{\Lambda}                               % Swirl Coulomb constant
+\newcommand{\Om}{\Omega_{\swirlarrow}}                   % swirl angular frequency profile
+\newcommand{\alpg}{\alpha_g}                             % gravitational fine-structure analogue
+
+% Policy: the golden constant is only allowed via hyperbolic functions.
+% Never write (1+\sqrt{5})/2; always use \xig=\asinh(1/2), \varphi=e^{\xig}.
+\newcommand{\xig}{\operatorname{asinh}\!\left(\tfrac{1}{2}\right)} % base hyperbolic scale  "golden" constant is fundamentally hyperbolic.
+\newcommand{\phig}{\exp(\xig)}                                     % golden from hyperbolic
+\newcommand{\phialg}{\bigl(1+\sqrt{5}\bigr)/2}                     % algebraic echo (use sparingly)
+\newcommand{\xigold}{\tfrac{3}{2}\,\xig}                           % "golden rapidity" scale
+
+% --- Display helpers (optional) ---
+\newcommand{\GoldenDeclare}{%
+    \textbf{Golden (hyperbolic)}:\ \(\ln\phi=\xig\), hence \(\phi=\phig\).
+    \ \emph{(Equivalently, \(\phi=\phialg\); this algebraic form is derivative.)}%
+}
+% --- Canonical identity (hyperbolic-only proof, algebraic as corollary) ---
+\newtheorem{identity}{Identity}
+
 
 % Preamble
-\documentclass[11pt]{article}
-\usepackage{longtable}
+\documentclass{article}
+
 \usepackage{hyperref}
+\usepackage{multicol}
+\usepackage{calc,pict2e,picture}
+\usepackage{textgreek,textcomp,gensymb,stix}
+\usepackage{longtable}
 \usepackage{amssymb} % For \checkmark
+
 
 % Packages
 \usepackage{amsmath}
-
+\title{Sample \LaTeX}
 % Document
 \begin{document}
+    \maketitle
+
+    \begin{abstract}
+        \vswirl
+        \vswirlcw
+        \SwirlClock
+        \SwirlClockcw
+        \omegas
+        \vscore
+        \vnorm
+        \rhof
+        \rhoE
+        \rhom
+        \rc
+        \FmaxEM
+        \FmaxG
+        \Lam
+        \Om
+    \end{abstract}
+
+    \section{Text}
+    Text, paragraphs and ligatures goes here.
+
+    \section{Characters}
+    Sample characters:
+    \$ \& \% \# \_ \{ \} \~{} \^{}
+
+    \section{Math}
+    Sample math formulae:
+    $f(x) = \int_{-\infty}^\infty \hat f(\xi)\,e^{2 \pi \xi} \, d\xi$
+
+    \section{Multicolumn}
+    \begin{multicols}{3}
+        Column 1
+        Column 2
+        Column 3
+    \end{multicols}
+
+    \section{Boxes}
+    \medbreak\noindent\fbox{\verb|\mbox{|\emph{Sample box}\verb|}|}\smallbreak
+
+    \section{Symbols}
+    Sample symbols:
+    \noindent \textfractionsolidus \textdiv \texttimes \textminus \textpm \textsurd \textlnot \textasteriskcentered
+
+    \section{Picture}
+    Sample picture:
+    \setlength{\unitlength}{0.8cm}
+    \begin{picture}(6,5)
+        \thicklines
+        \put(1,0.5){\line(2,1){3}}
+        \put(4,2){\line(-2,1){2}}
+        \put(2,3){\line(-2,-5){1}}
+        \put(0.7,0.3){$A$}
+        \put(4.05,1.9){$B$}
+        \put(1.7,2.95){$C$}
+        \put(3.1,2.5){$a$}
+        \put(1.3,1.7){$b$}
+        \put(2.5,1.05){$c$}
+        \put(0.3,4){$F=\sqrt{s(s-a)(s-b)(s-c)}$}
+        \put(3.5,0.4){$\displaystyle s:=\frac{a+b+c}{2}$}
+    \end{picture}
 
 testo
 \begin{equation}
