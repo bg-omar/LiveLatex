@@ -93,18 +93,22 @@ class LatexPreviewService(private val project: Project) : Disposable {
     fun attachBrowser(b: JBCefBrowser) {
         browser = b
 
-        // Listen to all docs for changes
+        // Listen to document changes globally (for refresh)
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(docListener, this)
-        // Only add caret and visible listeners for scroll sync, not refresh
-        EditorFactory.getInstance().eventMulticaster.addCaretListener(caretListener, this)
-        EditorFactory.getInstance().eventMulticaster.addVisibleAreaListener(visibleListener, this)
+        // Only add caret and visible listeners for the selected LaTeX editor in this project
+        val fem = FileEditorManager.getInstance(project)
+        val editor = fem.selectedTextEditor
+        if (editor != null) {
+            editor.caretModel.addCaretListener(caretListener, this)
+            editor.scrollingModel.addVisibleAreaListener(visibleListener, this)
+        }
         // Initial render
         scheduleRefresh()
 
 
         // Initial sync to caret/visible line (optional)
-        FileEditorManager.getInstance(project).selectedTextEditor?.let { ed ->
-            val line = ed.caretModel.logicalPosition.line + 1
+        if (editor != null) {
+            val line = editor.caretModel.logicalPosition.line + 1
             b.cefBrowser.executeJavaScript("window.sync && window.sync.scrollToAbs($line);", b.cefBrowser.url, 0)
         }
     }
@@ -116,13 +120,19 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
     private fun refresh() {
         // Get caret line before refresh
-        val caretLine = FileEditorManager.getInstance(project).selectedTextEditor?.caretModel?.logicalPosition?.line?.plus(1) ?: 1
-        val (vf, text) = currentTexFileAndText() ?: run {
+        val fem = FileEditorManager.getInstance(project)
+        val editor = fem.selectedTextEditor
+        val caretLine = editor?.caretModel?.logicalPosition?.line?.plus(1) ?: 1
+        val doc = editor?.document
+        val vf = if (doc != null) FileDocumentManager.getInstance().getFile(doc) else null
+        val ext = vf?.extension?.lowercase()
+        if (vf == null || ext !in setOf("tex", "ltx", "latex")) {
             renderHtml(LatexHtml.wrap("<p style='opacity:0.66'>Open a <code>.tex</code> file to preview.</p>"), caretLine)
             return
         }
-        // Generate HTML with MathJax
-        val html = LatexHtml.wrap(text)
+        val text = doc?.text ?: ""
+        // Use wrapWithInputs to inline all \input and \include files
+        val html = LatexHtml.wrapWithInputs(text, vf.path)
         renderHtml(html, caretLine)
     }
 

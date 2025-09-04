@@ -1,5 +1,8 @@
 package com.omariskandarani.livelatex.html
 
+import java.io.File
+import java.nio.file.Paths
+
 /**
  * Minimal LaTeX → HTML previewer for prose + MathJax math.
  * - Parses user \newcommand / \def into MathJax macros
@@ -11,13 +14,22 @@ object LatexHtml {
 
     // ─────────────────────────── PUBLIC ENTRY ───────────────────────────
 
+    private const val BEGIN_DOCUMENT = "\\begin{document}"
+    private const val END_DOCUMENT = "\\end{document}"
+    private const val LABEL_REGEX =  "\\\\label\\{[^}]*\\}"
+    private const val EM_HTML = "<em>$1</em>"
+    val rxNew = Regex(
+        """\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)])?(?:\[[^\]]*])?\{(.+?)\}""",
+        RegexOption.DOT_MATCHES_ALL
+    )
+
     fun wrap(texSource: String): String {
         val srcNoComments = stripLineComments(texSource)
         val userMacros    = extractNewcommands(srcNoComments)
         val macrosJs      = buildMathJaxMacros(userMacros)
 
         // Find body & absolute line offset of the first body line
-        val beginIdx  = texSource.indexOf("\\begin{document}")
+        val beginIdx  = texSource.indexOf(BEGIN_DOCUMENT)
         val absOffset = if (beginIdx >= 0)
             texSource.substring(0, beginIdx).count { it == '\n' } + 1
         else
@@ -34,6 +46,17 @@ object LatexHtml {
         return buildHtml(withAnchors, macrosJs)
     }
 
+    // Helper to extract package names from \usepackage
+    private fun extractUsepackageNames(s: String): List<String> {
+        val rx = Regex("""\\usepackage(?:\[[^\]]*])?\{([^}]*)\}""", RegexOption.DOT_MATCHES_ALL)
+        val pkgs = mutableSetOf<String>()
+        rx.findAll(s).forEach { m ->
+            m.groupValues[1].split(',').map { it.trim() }.filter { it.isNotEmpty() }.forEach { pkgs += it }
+        }
+        // Only include supported MathJax packages
+        val supported = setOf("ams", "base", "bbox", "textmacros", "color", "boldsymbol", "mhchem", "noundefined")
+        return pkgs.filter { it in supported }.toList()
+    }
 
     // ─────────────────────────── PAGE BUILDER ───────────────────────────
 
@@ -103,9 +126,8 @@ object LatexHtml {
           }
           const target = arr[ans] && arr[ans].el;
           if (target) {
-            target.scrollIntoView({block:'start', inline:'nearest'});
-            // slight nudge
-            window.scrollBy(0, -8);
+            target.scrollIntoView({block:'center', inline:'nearest'});
+            // Remove nudge, centering is handled by scrollIntoView
           }
         }
       };
@@ -144,9 +166,9 @@ object LatexHtml {
 
     /** Keep only the document body; MathJax doesn’t understand the preamble. */
     private fun stripPreamble(s: String): String {
-        val begin = s.indexOf("\\begin{document}")
-        val end   = s.lastIndexOf("\\end{document}")
-        return if (begin >= 0 && end > begin) s.substring(begin + "\\begin{document}".length, end) else s
+        val begin = s.indexOf(BEGIN_DOCUMENT)
+        val end   = s.lastIndexOf(END_DOCUMENT)
+        return if (begin >= 0 && end > begin) s.substring(begin + BEGIN_DOCUMENT.length, end) else s
     }
 
     /**
@@ -261,19 +283,25 @@ object LatexHtml {
     private fun extractNewcommands(s: String): Map<String, Macro> {
         val out = LinkedHashMap<String, Macro>()
 
-        // \newcommand{\foo}[2]{...}
-        val rxNew = Regex(
-            """\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)])?(?:\[[^\]]*])?\{(.+?)\}""",
-            RegexOption.DOT_MATCHES_ALL
-        )
-        rxNew.findAll(s).forEach { m ->
-            val name  = m.groupValues[1]
+        // --- Improved \newcommand parser ---
+        val rxNewStart = Regex("""\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)])?(?:\[[^\]]*])?\{""")
+        var pos = 0
+        while (true) {
+            val m = rxNewStart.find(s, pos) ?: break
+            val name = m.groupValues[1]
             val nargs = m.groupValues[2].ifEmpty { "0" }.toInt()
-            val body  = m.groupValues[3].trim()
+            val bodyOpen = m.range.last
+            val bodyClose = findBalancedBrace(s, bodyOpen)
+            if (bodyClose < 0) {
+                pos = m.range.last + 1
+                continue // skip malformed
+            }
+            val body = s.substring(bodyOpen + 1, bodyClose).trim()
             out[name] = Macro(body, nargs)
+            pos = bodyClose + 1
         }
 
-        // \def\foo{...}
+        // \def\foo{...} (unchanged)
         val rxDef = Regex("""\\def\\([A-Za-z@]+)\{(.+?)\}""", RegexOption.DOT_MATCHES_ALL)
         rxDef.findAll(s).forEach { m ->
             out.putIfAbsent(m.groupValues[1], Macro(m.groupValues[2].trim(), 0))
@@ -353,8 +381,8 @@ object LatexHtml {
         // inline text decorations
         t = t.replace(Regex("""\\underline\{([^{}]*)\}"""), "<u>$1</u>")
             .replace(Regex("""\\textbf\{([^{}]*)\}"""), "<strong>$1</strong>")
-            .replace(Regex("""\\emph\{([^{}]*)\}"""), "<em>$1</em>")
-            .replace(Regex("""\\textit\{([^{}]*)\}"""), "<em>$1</em>")
+            .replace(Regex("""\\emph\{([^{}]*)\}"""), EM_HTML)
+            .replace(Regex("""\\textit\{([^{}]*)\}"""), EM_HTML)
         // \texorpdfstring{math}{text} → use the text
         t = t.replace(Regex("""\\texorpdfstring\{([^}]*)\}\{([^}]*)\}""")) {
             escapeHtmlKeepBackslashes(it.groupValues[2])
@@ -552,7 +580,7 @@ object LatexHtml {
     private fun proseLatexToHtml(s: String): String {
         var t = s
         t = t.replace(Regex("""\\textbf\{([^{}]*)\}"""), "<strong>$1</strong>")
-        t = t.replace(Regex("""\\emph\{([^{}]*)\}"""), "<em>$1</em>")
+        t = t.replace(Regex("""\\emph\{([^{}]*)\}"""), EM_HTML)
         t = t.replace(Regex("""\\footnotesize\{([^{}]*)\}"""), "<small>$1</small>")
         return t
     }
@@ -598,8 +626,7 @@ object LatexHtml {
         ) { m ->
             """
             <div style="padding:12px;border-left:3px solid var(--border);
-                        background:color-mix(in srgb, var(--bg), #6b7280 10%);
-                        margin:12px 0;">
+                        background: #6b728033; margin:12px 0;">
               <strong>Abstract.</strong> ${escapeHtmlKeepBackslashes(m.groupValues[1].trim())}
             </div>
             """.trimIndent()
@@ -614,11 +641,10 @@ object LatexHtml {
                 val ttl     = m.groupValues[1].trim()
                 val content = m.groupValues[2].trim()
                 val head    = if (ttl.isNotEmpty()) "$env ($ttl)" else env
-                """
-                <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin:12px 0;">
+                """ 
                   <div style="font-weight:600;margin-bottom:6px;text-transform:capitalize;">$head.</div>
                   ${escapeHtmlKeepBackslashes(content)}
-                </div>
+        
                 """.trimIndent()
             }
         }
@@ -756,14 +782,14 @@ object LatexHtml {
             val capRx = Regex("""\\caption\{([^}]*)\}""")
             val cap = capRx.find(body)
             if (cap != null) {
-                captionHtml = """<figcaption style="opacity:.8;margin:6px 0 10px;">${escapeHtmlKeepBackslashes(cap.groupValues[1])}</figcaption>"""
+                captionHtml = """<figcaption style=\"opacity:.8;margin:6px 0 10px;\">${escapeHtmlKeepBackslashes(cap.groupValues[1])}</figcaption>"""
                 body = body.replace(cap.value, "")
             }
             // drop \centering, labels
             body = body.replace(Regex("""\\centering"""), "")
                 .replace(Regex("""\\label\{[^}]*\}"""), "")
             // wrap; tabular will be converted later
-            """<figure style="margin:14px 0;">$body$captionHtml</figure>"""
+            """<figure style=\"margin:14px 0;\">$body$captionHtml</figure>"""
         }
     }
 
@@ -852,5 +878,38 @@ object LatexHtml {
         return "max-width:100%;height:auto;"
     }
 
-}
+    /** Recursively inline all \input{...} and \include{...} files. */
+    fun inlineInputs(source: String, baseDir: String, seen: MutableSet<String> = mutableSetOf()): String {
+        val rx = Regex("""\\(input|include)\{([^}]+)\}""")
 
+        var result: String = source
+
+        rx.findAll(source).forEach { m ->
+            val cmd = m.groupValues[1]
+            val rawPath = m.groupValues[2]
+            // Try .tex, .sty, or no extension
+            val candidates = listOf(rawPath, "$rawPath.tex", "$rawPath.sty")
+            val filePath = candidates
+                .map { Paths.get(baseDir, it).toFile() }
+                .firstOrNull { it.exists() && it.isFile }
+            val absPath = filePath?.absolutePath
+            if (absPath != null && absPath !in seen) {
+                seen += absPath
+                val fileText = filePath.readText()
+                val inlined = inlineInputs(fileText, filePath.parent ?: baseDir, seen)
+                result = result.replace(m.value, inlined)
+            } else if (absPath != null && absPath in seen) {
+                result = result.replace(m.value, "% Circular input: $rawPath %")
+            } else {
+                result = result.replace(m.value, "% Missing input: $rawPath %")
+            }
+        }
+        return result
+    }
+
+    fun wrapWithInputs(texSource: String, mainFilePath: String): String {
+        val baseDir = File(mainFilePath).parent ?: ""
+        val fullSource = inlineInputs(texSource, baseDir)
+        return wrap(fullSource)
+    }
+}
