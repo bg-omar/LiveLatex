@@ -37,11 +37,12 @@ object LatexHtml {
 
         val body0 = stripPreamble(texSource)
         val body1 = stripLineComments(body0)
-        val body2 = applyProseConversions(body1)
-        val body3 = sanitizeForMathJaxProse(body2)
+        val body2 = sanitizeForMathJaxProse(body1)
+        val body3 = applyProseConversions(body2)
+        val body4 = applyInlineFormattingOutsideTags(body3)
 
         // Insert anchors (no blanket escaping here; we preserve math)
-        val withAnchors = injectLineAnchors(body3, absOffset, everyN = 3)
+        val withAnchors = injectLineAnchors(body4, absOffset, everyN = 1)
 
         return buildHtml(withAnchors, macrosJs)
     }
@@ -84,6 +85,10 @@ object LatexHtml {
     a { color: inherit; }
     /* zero-size line markers that don't affect layout */
     .syncline { display:inline-block; width:0; height:0; overflow:hidden; }
+    html, body { height: 100%; margin: 0; }
+    body { overflow-y: auto; }
+    .wrap { min-height: 100vh; }
+
   </style>
 
   <script>
@@ -105,36 +110,91 @@ object LatexHtml {
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 
-  <!-- simple scroll API -->
-  <script>
-    (function(){
-      const sync = {
-        idx: [],
-        init() {
-          this.idx = Array.from(document.querySelectorAll('.syncline'))
-                          .map(el => ({ el, abs: +el.dataset.abs || 0 }));
-        },
-        scrollToAbs(line) {
-          if (!this.idx.length) this.init();
-          const arr = this.idx;
-          if (!arr.length) return;
-          // binary search: last anchor with abs <= line
-          let lo=0, hi=arr.length-1, ans=0;
-          while (lo <= hi) {
-            const mid = (lo+hi) >> 1;
-            if (arr[mid].abs <= line) { ans = mid; lo = mid+1; } else { hi = mid-1; }
-          }
-          const target = arr[ans] && arr[ans].el;
-          if (target) {
-            target.scrollIntoView({block:'center', inline:'nearest'});
-            // Remove nudge, centering is handled by scrollIntoView
-          }
+<script>
+  (function () {
+    const sync = {
+      idx: [],
+      init() {
+        this.idx = Array.from(document.querySelectorAll('.syncline'))
+                        .map(el => ({ el, abs: +el.dataset.abs || 0 }));
+      },
+      scrollToAbs(line, mode = 'center') {
+        if (!this.idx.length) this.init();
+        const arr = this.idx;
+        if (!arr.length) return;
+        // binary search: last anchor with abs <= line
+        let lo=0, hi=arr.length-1, ans=0;
+        while (lo <= hi) {
+          const mid = (lo+hi) >> 1;
+          if (arr[mid].abs <= line) { ans = mid; lo = mid+1; } else { hi = mid-1; }
         }
-      };
-      window.sync = sync;
-      document.addEventListener('DOMContentLoaded', () => sync.init());
-    })();
-  </script>
+        const target = arr[ans] && arr[ans].el;
+        if (!target) return;
+        if (mode === 'center') {
+          const r = target.getBoundingClientRect();
+          const y = window.scrollY + r.top - (window.innerHeight/2);
+          window.scrollTo({ top: Math.max(0, y) });
+        } else {
+          target.scrollIntoView({block:'start', inline:'nearest'});
+          window.scrollBy(0, -8);
+        }
+      }
+    };
+    window.sync = sync;
+
+    // Re-index after layout (MathJax ready calls init too)
+    document.addEventListener('DOMContentLoaded', () => sync.init());
+
+    // Accept postMessage from host
+    window.addEventListener('message', (ev) => {
+      const d = ev.data || {};
+      if (d && d.type === 'sync-line' && Number.isFinite(d.abs)) {
+        sync.scrollToAbs(d.abs, d.mode || 'center');
+      }
+    }, false);
+  })();
+</script>
+<script>
+  (function () {
+    const sync = {
+      idx: [],
+      init() {
+        this.idx = Array.from(document.querySelectorAll('.syncline'))
+                        .map(el => ({ el, abs: +el.dataset.abs || 0 }));
+      },
+      scrollToAbs(line, mode = 'center') {
+        if (!this.idx.length) this.init();
+        const arr = this.idx;
+        if (!arr.length) return;
+
+        // last anchor with abs <= line
+        let lo=0, hi=arr.length-1, ans=0;
+        while (lo <= hi) {
+          const mid = (lo+hi) >> 1;
+          if (arr[mid].abs <= line) { ans = mid; lo = mid+1; } else { hi = mid-1; }
+        }
+        const target = arr[ans] && arr[ans].el;
+        if (!target) return;
+
+        // center the target
+        const r = target.getBoundingClientRect();
+        const y = window.scrollY + r.top - (window.innerHeight / 2);
+        window.scrollTo({ top: Math.max(0, y) });
+      }
+    };
+    window.sync = sync;
+
+    document.addEventListener('DOMContentLoaded', () => sync.init());
+    window.addEventListener('message', (ev) => {
+      const d = ev.data || {};
+      if (d.type === 'sync-line' && Number.isFinite(d.abs)) {
+        sync.scrollToAbs(d.abs, d.mode || 'center');
+      }
+    }, false);
+  })();
+</script>
+
+
 </head>
 <body>
   <div class="wrap mj">
@@ -366,27 +426,24 @@ object LatexHtml {
         var t = s
         // \section, \subsection, \subsubsection (starred or not)
         t = t.replace(Regex("""\\section\*?\{([^}]*)\}""")) {
-            "<h2>${escapeHtmlKeepBackslashes(it.groupValues[1])}</h2>"
+            "<h2>${latexProseToHtmlWithMath(it.groupValues[1])}</h2>"
         }
         t = t.replace(Regex("""\\subsection\*?\{([^}]*)\}""")) {
-            "<h3>${escapeHtmlKeepBackslashes(it.groupValues[1])}</h3>"
+            "<h3>${latexProseToHtmlWithMath(it.groupValues[1])}</h3>"
         }
         t = t.replace(Regex("""\\subsubsection\*?\{([^}]*)\}""")) {
-            """<h4 style="margin:1em 0 .4em 0;">${escapeHtmlKeepBackslashes(it.groupValues[1])}</h4>"""
+            """<h4 style="margin:1em 0 .4em 0;">${latexProseToHtmlWithMath(it.groupValues[1])}</h4>"""
         }
-        // \paragraph{...}
         t = t.replace(Regex("""\\paragraph\{([^}]*)\}""")) {
-            """<h5 style="margin:1em 0 .3em 0;">${escapeHtmlKeepBackslashes(it.groupValues[1])}</h5>"""
+            """<h5 style="margin:1em 0 .3em 0;">${latexProseToHtmlWithMath(it.groupValues[1])}</h5>"""
         }
-        // inline text decorations
-        t = t.replace(Regex("""\\underline\{([^{}]*)\}"""), "<u>$1</u>")
-            .replace(Regex("""\\textbf\{([^{}]*)\}"""), "<strong>$1</strong>")
-            .replace(Regex("""\\emph\{([^{}]*)\}"""), EM_HTML)
-            .replace(Regex("""\\textit\{([^{}]*)\}"""), EM_HTML)
-        // \texorpdfstring{math}{text} → use the text
+
+
+// \texorpdfstring{math}{text} → use the *text* argument, formatted like prose
         t = t.replace(Regex("""\\texorpdfstring\{([^}]*)\}\{([^}]*)\}""")) {
-            escapeHtmlKeepBackslashes(it.groupValues[2])
+            latexProseToHtmlWithMath(it.groupValues[2])
         }
+
         // \appendix divider
         t = t.replace(
             Regex("""\\appendix"""),
@@ -616,38 +673,38 @@ object LatexHtml {
             .replace("""\\titlepageClose""".toRegex(), "")
 
         // center → HTML
+        // center
         s = s.replace(
             Regex("""\\begin\{center\}(.+?)\\end\{center\}""", RegexOption.DOT_MATCHES_ALL)
-        ) { m -> """<div style="text-align:center;">${escapeHtmlKeepBackslashes(m.groupValues[1].trim())}</div>""" }
+        ) { m -> """<div style="text-align:center;">${latexProseToHtmlWithMath(m.groupValues[1].trim())}</div>""" }
 
-        // abstract → HTML card
+// abstract
         s = s.replace(
             Regex("""\\begin\{abstract\}(.+?)\\end\{abstract\}""", RegexOption.DOT_MATCHES_ALL)
         ) { m ->
             """
-            <div style="padding:12px;border-left:3px solid var(--border);
-                        background: #6b728033; margin:12px 0;">
-              <strong>Abstract.</strong> ${escapeHtmlKeepBackslashes(m.groupValues[1].trim())}
-            </div>
-            """.trimIndent()
+  <div style="padding:12px;border-left:3px solid var(--border); background:#6b728022; margin:12px 0;">
+    <strong>Abstract.</strong> ${latexProseToHtmlWithMath(m.groupValues[1].trim())}
+  </div>
+  """.trimIndent()
         }
 
-        // theorem-like → HTML card
-        val theoremLike = listOf("theorem", "lemma", "proposition", "corollary", "definition", "remark", "identity")
+// theorem-like
+        val theoremLike = listOf("theorem","lemma","proposition","corollary","definition","remark","identity")
         for (env in theoremLike) {
             s = s.replace(
                 Regex("""\\begin\{$env\}(?:\[(.*?)\])?(.+?)\\end\{$env\}""", RegexOption.DOT_MATCHES_ALL)
             ) { m ->
-                val ttl     = m.groupValues[1].trim()
+                val ttl = m.groupValues[1].trim()
                 val content = m.groupValues[2].trim()
-                val head    = if (ttl.isNotEmpty()) "$env ($ttl)" else env
-                """ 
-                  <div style="font-weight:600;margin-bottom:6px;text-transform:capitalize;">$head.</div>
-                  ${escapeHtmlKeepBackslashes(content)}
-        
-                """.trimIndent()
+                val head = if (ttl.isNotEmpty()) "$env ($ttl)" else env
+                """
+      <div style="font-weight:600;margin-bottom:6px;text-transform:capitalize;">$head.</div>
+      ${latexProseToHtmlWithMath(content)}
+    """.trimIndent()
             }
         }
+
 
         // Drop unknown NON-math wrappers but keep inner text
         val mathEnvs = "(?:equation\\*?|align\\*?|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?)"
@@ -696,6 +753,23 @@ object LatexHtml {
     /** Escape &,<,> but keep backslashes so MathJax sees TeX. */
     private fun escapeHtmlKeepBackslashes(s: String): String =
         s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    // After all conversions & before injectLineAnchors(...)
+    private fun applyInlineFormattingOutsideTags(html: String): String {
+        // Split into [text, <tag>, text, <tag>, ...]
+        val rx = Regex("(<[^>]+>)")
+        val parts = rx.split(html)
+        val tags  = rx.findAll(html).map { it.value }.toList()
+
+        val out = StringBuilder(html.length + 256)
+        for (i in parts.indices) {
+            // Format only non-HTML text chunks, preserving math
+            out.append(latexProseToHtmlWithMath(parts[i]))
+            if (i < tags.size) out.append(tags[i]) // reinsert the tag that followed
+        }
+        return out.toString()
+    }
+
 
     /**
      * Insert invisible line anchors every Nth source line, but never *inside*
