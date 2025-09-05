@@ -263,7 +263,7 @@ object LatexHtml {
             when (s[i]) {
                 '{' -> depth++
                 '}' -> { depth--; if (depth == 0) return i }
-                '\\' -> i++ // skip next char
+                '\\' -> if (i + 1 < s.length) i++ // skip next char
             }
             i++
         }
@@ -271,14 +271,20 @@ object LatexHtml {
     }
 
     private fun replaceCmd1ArgBalanced(s: String, cmd: String, wrap: (String) -> String): String {
-        val rx = Regex("""\\$cmd\s*\{""")
+        val rx = Regex("""\\$cmd\\s*\{""")
         val sb = StringBuilder(s.length)
         var pos = 0
         while (true) {
             val m = rx.find(s, pos) ?: break
             val start = m.range.first
             val braceOpen = m.range.last
-            val braceClose = findBalancedBrace(s, braceOpen) ?: break
+            val braceClose = findBalancedBrace(s, braceOpen)
+            if (braceClose < 0) {
+                // Malformed command: skip this match and continue
+                sb.append(s, pos, start + 1)
+                pos = start + 1
+                continue
+            }
             sb.append(s, pos, start)
             val inner = s.substring(braceOpen + 1, braceClose)
             sb.append(wrap(inner))
@@ -503,7 +509,11 @@ object LatexHtml {
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
             if (parts.isEmpty()) return@replace ""
-            val lis = parts.joinToString("") { "<li>${latexProseToHtmlWithMath(it)}</li>" }
+            val lis = parts.joinToString("") { item ->
+                // Use latexProseToHtmlWithMath to handle both \textbf and math
+                val html = latexProseToHtmlWithMath(item)
+                "<li>$html</li>"
+            }
             """<ul style="margin:12px 0 12px 24px;">$lis</ul>"""
         }
     }
@@ -512,13 +522,18 @@ object LatexHtml {
         val rx = Regex("""\\begin\{enumerate\}(.+?)\\end\{enumerate\}""", RegexOption.DOT_MATCHES_ALL)
         return rx.replace(s) { m ->
             val body  = m.groupValues[1]
+            // FIX: Use correct regex for splitting items
             val parts = Regex("""(?m)^\s*\\item\s*""")
                 .split(body)
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
             if (parts.isEmpty()) return@replace ""
-            val lis = parts.joinToString("") { "<li>${latexProseToHtmlWithMath(it)}</li>" }
-            """<ol style="margin:12px 0 12px 24px;">$lis</ol>"""
+            val lis = parts.joinToString("") { item ->
+                // Use latexProseToHtmlWithMath to handle both \textbf and math
+                val html = latexProseToHtmlWithMath(item)
+                "<li>$html</li>"
+            }
+            """<ol style=\"margin:12px 0 12px 24px;\">$lis</ol>"""
         }
     }
 
@@ -563,16 +578,22 @@ object LatexHtml {
 
             val trs = rows.joinToString("") { row ->
                 val cells = row.split('&').map { it.trim() }
-                val tds = cells.mapIndexed { idx, raw ->
-                    val (align, widthPct) = colStyle(cols, idx)
-                    val style = buildString {
-                        if (align != null) append("text-align:$align;")
-                        if (widthPct != null) append("width:${widthPct}%;")
-                        append("padding:4px 8px;border:1px solid var(--border);vertical-align:top;")
+                var cellIdx = 0
+                val tds = cols.joinToString("") { col ->
+                    if (col.align == "space") {
+                        "<td style=\"width:1em;border:none;\"></td>"
+                    } else {
+                        val raw = if (cellIdx < cells.size) cells[cellIdx] else ""
+                        cellIdx++
+                        val style = buildString {
+                            if (col.align != null) append("text-align:${col.align};")
+                            if (col.widthPct != null) append("width:${col.widthPct}%;")
+                            append("padding:4px 8px;border:1px solid var(--border);vertical-align:top;")
+                        }
+                        val cellHtml = latexProseToHtmlWithMath(raw)
+                        "<td style=\"$style\">$cellHtml</td>"
                     }
-                    val cellHtml = latexProseToHtmlWithMath(raw)
-                    """<td style="$style">$cellHtml</td>"""
-                }.joinToString("")
+                }
                 "<tr>$tds</tr>"
             }
 
@@ -635,11 +656,8 @@ object LatexHtml {
 
     /** Very conservative prose text helpers (used inside table/list conversions). */
     private fun proseLatexToHtml(s: String): String {
-        var t = s
-        t = t.replace(Regex("""\\textbf\{([^{}]*)\}"""), "<strong>$1</strong>")
-        t = t.replace(Regex("""\\emph\{([^{}]*)\}"""), EM_HTML)
-        t = t.replace(Regex("""\\footnotesize\{([^{}]*)\}"""), "<small>$1</small>")
-        return t
+        // DEPRECATED: Use latexProseToHtmlWithMath for all prose conversions to handle \textbf, \emph, etc. with balanced braces and math preservation.
+        return latexProseToHtmlWithMath(s)
     }
 
     private fun convertHref(s: String): String =
@@ -660,8 +678,6 @@ object LatexHtml {
         )
         return t
     }
-
-
     // ─────────────────────────── SANITIZER ───────────────────────────
 
     /** Convert abstract/center/theorem-like to HTML; drop unknown NON-math envs; keep math envs intact. */
@@ -678,7 +694,7 @@ object LatexHtml {
             Regex("""\\begin\{center\}(.+?)\\end\{center\}""", RegexOption.DOT_MATCHES_ALL)
         ) { m -> """<div style="text-align:center;">${latexProseToHtmlWithMath(m.groupValues[1].trim())}</div>""" }
 
-// abstract
+        // abstract
         s = s.replace(
             Regex("""\\begin\{abstract\}(.+?)\\end\{abstract\}""", RegexOption.DOT_MATCHES_ALL)
         ) { m ->
@@ -689,7 +705,7 @@ object LatexHtml {
   """.trimIndent()
         }
 
-// theorem-like
+        // theorem-like
         val theoremLike = listOf("theorem","lemma","proposition","corollary","definition","remark","identity")
         for (env in theoremLike) {
             s = s.replace(
@@ -705,11 +721,10 @@ object LatexHtml {
             }
         }
 
-
-        // Drop unknown NON-math wrappers but keep inner text
-        val mathEnvs = "(?:equation\\*?|align\\*?|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?)"
-        s = s.replace(Regex("""\\begin\{(?!$mathEnvs)\w+\}"""), "")
-        s = s.replace(Regex("""\\end\{(?!$mathEnvs)\w+\}"""), "")
+        // Math environments to preserve verbatim (add bmatrix, pmatrix, etc.)
+        val mathEnvs = "(?:equation\\*?|align\\*?|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?|bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|smallmatrix)"
+        s = s.replace(Regex("""\\begin\{(?!$mathEnvs)\\w+\}"""), "")
+        s = s.replace(Regex("""\\end\{(?!$mathEnvs)\\w+\}"""), "")
 
         return s
     }

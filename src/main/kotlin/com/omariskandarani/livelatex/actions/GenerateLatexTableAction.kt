@@ -34,4 +34,10 @@ class GenerateLatexTableAction : AnAction("Generate LaTeX Table…") {
             caret.moveToOffset(offset + text.length + 2)
         }
     }
+
+    override fun update(e: AnActionEvent) {
+        val file = e.getData(CommonDataKeys.PSI_FILE)
+        val ext = file?.virtualFile?.extension?.lowercase()
+        e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
 }

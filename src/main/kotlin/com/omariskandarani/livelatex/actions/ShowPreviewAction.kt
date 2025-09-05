@@ -11,4 +11,10 @@ class ShowPreviewAction : AnAction(), DumbAware {
         val tw = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview") ?: return
         tw.show()
     }
+
+    override fun update(e: AnActionEvent) {
+        val file = e.getData(com.intellij.openapi.actionSystem.CommonDataKeys.PSI_FILE)
+        val ext = file?.virtualFile?.extension?.lowercase()
+        e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
 }

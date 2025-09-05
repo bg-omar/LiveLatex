@@ -74,6 +74,12 @@ class InsertImageAction : AnAction() {
         }
     }
 
+    override fun update(e: AnActionEvent) {
+        val file = e.getData(com.intellij.openapi.actionSystem.CommonDataKeys.PSI_FILE)
+        val ext = file?.virtualFile?.extension?.lowercase()
+        e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
+
     private fun sanitizeLabel(s: String): String =
         s.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
 
