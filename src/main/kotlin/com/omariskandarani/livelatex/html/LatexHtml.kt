@@ -220,7 +220,7 @@ object LatexHtml {
         t = convertTabulars(t)        // finally convert tabular -> <table>
         t = convertTheBibliography(t)
         t = stripAuxDirectives(t)
-        t = t.replace(Regex("""\\label\{[^}]*\}"""), "") // belt-and-suspenders
+        t = t.replace(Regex("""\\label\{[^}]*}"""), "") // belt-and-suspenders
         return t
     }
 
@@ -1006,4 +1006,5 @@ object LatexHtml {
         return wrap(fullSource)
     }
 }
+
 
