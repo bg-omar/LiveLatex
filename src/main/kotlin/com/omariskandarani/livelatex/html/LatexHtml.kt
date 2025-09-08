@@ -788,8 +788,8 @@ object LatexHtml {
 
     /**
      * Insert invisible line anchors every Nth source line, but never *inside*
-     * math (\[...\], \(...\), $...$, $$...$$) or math environments.
-     * Keeps all content intact for MathJax.
+     * math ($...$, $$...$$, \[...\], \(...\)) or math environments.
+     * Handles math regions spanning multiple lines robustly.
      */
     private fun injectLineAnchors(s: String, absOffset: Int, everyN: Int = 3): String {
         val mathEnvs = setOf(
@@ -808,7 +808,6 @@ object LatexHtml {
             idx + tok.length <= s.length && s.regionMatches(idx, tok, 0, tok.length)
 
         val sb = StringBuilder(s.length + 1024)
-
         while (i < s.length) {
             // toggle $$ first (so we don't flip single $ inside $$...$$)
             if (!inBracket && !inParen) {
@@ -817,8 +816,12 @@ object LatexHtml {
                     sb.append("$$"); i += 2; continue
                 }
                 if (!inDoubleDollar && s[i] == '$') {
-                    inDollar = !inDollar
-                    sb.append('$'); i += 1; continue
+                    // Only toggle if not escaped
+                    val prev = if (i > 0) s[i-1] else ' '
+                    if (prev != '\\') {
+                        inDollar = !inDollar
+                        sb.append('$'); i += 1; continue
+                    }
                 }
             }
             if (!inDollar && !inDoubleDollar) {
@@ -850,9 +853,10 @@ object LatexHtml {
                 line++
                 sb.append('\n')
                 val safeSpot = !inDollar && !inDoubleDollar && !inBracket && !inParen && envDepth == 0
+                // Only insert anchor if the *previous* line ended outside math
                 if (safeSpot && (line % everyN == 0)) {
                     val absLine = absOffset + line
-                    sb.append("""<span class="syncline" data-abs="$absLine"></span>""")
+                    sb.append("<span class=\"syncline\" data-abs=\"$absLine\"></span>")
                 }
                 i++; continue
             }
@@ -1002,3 +1006,4 @@ object LatexHtml {
         return wrap(fullSource)
     }
 }
+

@@ -64,7 +64,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview") ?: return
                     val file = event.newFile
                     if (file?.name?.endsWith(".tex") == true) {
-                        toolWindow.show()
+                        // toolWindow.show() Do NOT auto-show the tool window; only update width and listeners
                         toolWindow.setWidth(400)
                         rebindToSelectedEditor()
                     } else {
