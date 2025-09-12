@@ -2,7 +2,6 @@
 <idea-plugin>
     <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
     <id>com.omariskandarani.livelatex</id>
-    <icon>livelatex.svg</icon>
 
     <!-- Public plugin name should be written in Title Case.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
@@ -19,8 +18,7 @@
         <toolWindow id="LaTeX Preview"
                     anchor="right"
                     factoryClass="com.omariskandarani.livelatex.ui.LatexPreviewToolWindowFactory"
-                    icon="livelatex.svg"
-        />
+                    icon="/icons/livelatex.svg"/>
         <projectService serviceImplementation="com.omariskandarani.livelatex.core.LatexPreviewService"/>
     </extensions>
 
@@ -52,6 +50,7 @@
                 text="New TikZ Figure…"
                 description="Open a simple canvas, export TikZ and insert it here">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>

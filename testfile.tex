@@ -4,6 +4,45 @@
 \newcommand{\papertitle}{Swirl String Theory (SST) Canon \canonversion}
 \newcommand{\paperdoi}{10.5281/zenodo.17014358}
 
+
+\documentclass{article}
+% ------- TikZ Preamble -------
+\RequirePackage{tikz}
+\usetikzlibrary{knots,hobby,calc,intersections,decorations.pathreplacing,shapes.geometric,spath3}
+% ------- Shared styles (from your preamble) -------
+\tikzset{
+    knot diagram/every strand/.append style={ultra thick, black},
+    every path/.style={black,line width=2pt},
+    every node/.style={transform shape,knot crossing,inner sep=1.5pt},
+    every knot/.style={line cap=round,line join=round,very thick},
+    strand/.style={line cap=round,line join=round,line width=3pt,draw=black},
+    over/.style={preaction={draw=white,line width=6.5pt}},
+    sst/ring A/.style={draw=black, line width=3pt},
+    sst/ring B/.style={draw=black,  line width=3pt},
+    sst/ring C/.style={draw=black, line width=3pt},
+}
+% ------- Guides toggle -------
+\newif\ifsstguides
+\sstguidestrue
+% ------- Helper: label & skeleton for points P1..Pn -------
+\newcommand{\SSTGuidesPoints}[2]{% #1=basename (e.g. P), #2=last index
+    \ifsstguides
+    \foreach \i in {1,...,#2}{
+        \fill[blue] (#1\i) circle (1.2pt);
+        \node[blue,font=\scriptsize,above] at (#1\i) {\i};
+    }
+    \draw[gray!40, dashed] \foreach \i [remember=\i as \lasti (initially 1)] in {2,...,#2,1} { (#1\lasti)--(#1\i) };
+    \fi
+}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{bm}
+\usepackage{hyperref}
+\usepackage{multicol}
+\usepackage{calc,pict2e,picture}
+\usepackage{textgreek,textcomp,gensymb,stix}
+\usepackage{longtable}
+
 % ==== Swirl String Theory (SST) macros ====
 % Context-aware subscript symbol; uses math styles, not \scriptsize
 \newcommand{\swirlarrow}{%
@@ -22,8 +61,8 @@
 % Canonical symbols
 \newcommand{\vswirl}{\mathbf{v}_{\swirlarrow}}
 \newcommand{\vswirlcw}{\mathbf{v}_{\swirlarrowcw}}
-\newcommand{\SwirlClock}{S_(t)^{\swirlarrow}}
-\newcommand{\SwirlClockcw}{S_(t)^{\swirlarrowcw}}
+\newcommand{\SwirlClock}{S_{(t)}^{\swirlarrow}}
+\newcommand{\SwirlClockcw}{S_{(t)}^{\swirlarrowcw}}
 \newcommand{\omegas}{\boldsymbol{\omega}_{\swirlarrow}}  % swirl vorticity
 \newcommand{\vscore}{v_{\swirlarrow}}                    % shorthand: |v_swirl| at r=r_c
 \newcommand{\vnorm}{\lVert \vswirl \rVert}               % swirl speed magnitude
@@ -54,39 +93,28 @@
 
 
 % Preamble
-\documentclass{article}
 
-\usepackage{hyperref}
-\usepackage{multicol}
-\usepackage{calc,pict2e,picture}
-\usepackage{textgreek,textcomp,gensymb,stix}
-\usepackage{longtable}
-\usepackage{amssymb} % For \checkmark
-
-
-% Packages
-\usepackage{amsmath}
 \title{Sample \LaTeX}
 % Document
 \begin{document}
     \maketitle
 
     \begin{abstract}
-        \vswirl
-        \vswirlcw
-        \SwirlClock
-        \SwirlClockcw
-        \omegas
-        \vscore
-        \vnorm
-        \rhof
-        \rhoE
-        \rhom
-        \rc
-        \FmaxEM
-        \FmaxG
-        \Lam
-        \Om
+    $\vswirl
+    \vswirlcw
+    \SwirlClock
+    \SwirlClockcw
+    \omegas
+    \vscore
+    \vnorm
+    \rhof
+    \rhoE
+    \rhom
+    \rc
+    \FmaxEM
+    \FmaxG
+    \Lam
+    \Om$
     \end{abstract}
 
     \section{Text}
@@ -95,6 +123,7 @@
     \section{Characters}
     Sample characters:
     \$ \& \% \# \_ \{ \} \~{} \^{}
+
 
     \section{Math}
     Sample math formulae:
@@ -138,6 +167,7 @@ E = mc^2
 \end{equation}
 no equation number
 \[ \frac{1}{2}mv^2\]
+
 
 
 inline equation $a^2 + b^2 = c^2$ type with dollar signs
