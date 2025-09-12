@@ -401,9 +401,9 @@ object LatexHtml {
             "rc"   to Macro("r_c", 0),
 
             // text-ish shims (kept mild)
-            "texttt" to Macro("\\mathtt{#1}", 1),
-            "textbf" to Macro("\\mathbf{#1}", 1),
-            "emph"   to Macro("\\mathit{#1}", 1)
+            "texttt" to Macro("\\text{#1}", 1),
+            "textbf" to Macro("\\text{#1}", 1),
+            "emph"   to Macro("\\text{#1}", 1)
         )
 
         // Merge with user macros (user wins)
@@ -1006,5 +1006,4 @@ object LatexHtml {
         return wrap(fullSource)
     }
 }
-
 

@@ -34,4 +34,14 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
             document.insertString(caret.offset, code)
         }
     }
+
+    override fun update(e: AnActionEvent) {
+        val vFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        val ext = vFile?.extension?.lowercase()
+        e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
+
+    override fun getActionUpdateThread(): com.intellij.openapi.actionSystem.ActionUpdateThread {
+        return com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
+    }
 }

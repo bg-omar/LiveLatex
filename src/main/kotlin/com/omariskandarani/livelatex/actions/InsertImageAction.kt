@@ -25,36 +25,39 @@ class InsertImageAction : AnAction() {
         val project = e.project ?: return
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
         val document = editor.document
+        val editorFile = e.getData(CommonDataKeys.VIRTUAL_FILE) ?: return
+        val editorPath = Paths.get(editorFile.path)
+        val projectBase = project.basePath?.let { Paths.get(it) } ?: editorPath.parent
 
         // Pick an image
-        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
-        descriptor.title = "Choose Image"
+        val allowedExtensions = setOf("png", "jpg", "jpeg", "gif", "svg", "bmp", "webp", "pdf")
+        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor("png")
         descriptor.withFileFilter { file ->
             val ext = file.extension?.lowercase()
-            ext in setOf("png", "jpg", "jpeg", "gif", "svg", "bmp", "webp", "pdf")
+            ext in allowedExtensions
         }
+        descriptor.setTitle("Choose Image")
         val chosen = FileChooser.chooseFile(descriptor, project, null) ?: return
 
         try {
-            val basePath = project.basePath ?: Paths.get(chosen.path).parent.toString()
-            val figuresDir = Paths.get(basePath, "figures")
-            Files.createDirectories(figuresDir)
+            val chosenPath = Paths.get(chosen.path)
+            val relPath: String
+            if (chosenPath.startsWith(projectBase)) {
+                // Image is inside project, use relative path to editor's file
+                relPath = editorPath.parent.relativize(chosenPath).toString().replace("\\", "/")
+            } else {
+                // Image is outside, copy to figures next to editor's file
+                val figuresDir = editorPath.parent.resolve("figures")
+                Files.createDirectories(figuresDir)
+                val dest = figuresDir.resolve(chosen.name)
+                Files.copy(chosenPath, dest, StandardCopyOption.REPLACE_EXISTING)
+                val ioFile = dest.toFile()
+                val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile)
+                VfsUtil.markDirtyAndRefresh(false, true, true, vf)
+                relPath = "figures/${chosen.name}"
+            }
 
-            val dest = figuresDir.resolve(chosen.name)
-            // Ensure we have a real file on disk
-            val ioSrc = Paths.get(chosen.path)
-            Files.copy(ioSrc, dest, StandardCopyOption.REPLACE_EXISTING)
-
-            // Refresh VFS
-            val ioFile = dest.toFile()
-            val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(ioFile)
-            VfsUtil.markDirtyAndRefresh(false, true, true, vf)
-
-            // Make sure \usepackage{graphicx} is present
             LatexUtils.ensurePackage(project, editor, "graphicx")
-
-            // Insert snippet at caret
-            val relPath = "figures/" + chosen.name
             val baseName = chosen.nameWithoutExtension
             val caret = editor.caretModel.currentCaret
             val snippet = """
@@ -75,9 +78,13 @@ class InsertImageAction : AnAction() {
     }
 
     override fun update(e: AnActionEvent) {
-        val file = e.getData(com.intellij.openapi.actionSystem.CommonDataKeys.PSI_FILE)
-        val ext = file?.virtualFile?.extension?.lowercase()
+        val vFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        val ext = vFile?.extension?.lowercase()
         e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
+
+    override fun getActionUpdateThread(): com.intellij.openapi.actionSystem.ActionUpdateThread {
+        return com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
     }
 
     private fun sanitizeLabel(s: String): String =

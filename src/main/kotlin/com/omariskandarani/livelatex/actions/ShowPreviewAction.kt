@@ -2,6 +2,7 @@ package com.omariskandarani.livelatex.actions
 
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.wm.ToolWindowManager
 
@@ -13,8 +14,12 @@ class ShowPreviewAction : AnAction(), DumbAware {
     }
 
     override fun update(e: AnActionEvent) {
-        val file = e.getData(com.intellij.openapi.actionSystem.CommonDataKeys.PSI_FILE)
-        val ext = file?.virtualFile?.extension?.lowercase()
+        val vFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        val ext = vFile?.extension?.lowercase()
         e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
+
+    override fun getActionUpdateThread(): com.intellij.openapi.actionSystem.ActionUpdateThread {
+        return com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
     }
 }

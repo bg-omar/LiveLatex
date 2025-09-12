@@ -36,8 +36,12 @@ class GenerateLatexTableAction : AnAction("Generate LaTeX Table…") {
     }
 
     override fun update(e: AnActionEvent) {
-        val file = e.getData(CommonDataKeys.PSI_FILE)
-        val ext = file?.virtualFile?.extension?.lowercase()
+        val vFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        val ext = vFile?.extension?.lowercase()
         e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
+
+    override fun getActionUpdateThread(): com.intellij.openapi.actionSystem.ActionUpdateThread {
+        return com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
     }
 }
