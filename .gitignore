@@ -42,3 +42,6 @@ bin/
 .DS_Store
 /secrets/
 /.run/LiveLatex [publishPlugin].run.xml
+
+# Ignore Gradle build output directory
+build

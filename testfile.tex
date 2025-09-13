@@ -15,11 +15,6 @@
     every path/.style={black,line width=2pt},
     every node/.style={transform shape,knot crossing,inner sep=1.5pt},
     every knot/.style={line cap=round,line join=round,very thick},
-    strand/.style={line cap=round,line join=round,line width=3pt,draw=black},
-    over/.style={preaction={draw=white,line width=6.5pt}},
-    sst/ring A/.style={draw=black, line width=3pt},
-    sst/ring B/.style={draw=black,  line width=3pt},
-    sst/ring C/.style={draw=black, line width=3pt},
 }
 % ------- Guides toggle -------
 \newif\ifsstguides
@@ -100,25 +95,30 @@
     \maketitle
 
     \begin{abstract}
-    $\vswirl
-    \vswirlcw
-    \SwirlClock
-    \SwirlClockcw
-    \omegas
-    \vscore
-    \vnorm
-    \rhof
-    \rhoE
-    \rhom
-    \rc
-    \FmaxEM
-    \FmaxG
-    \Lam
-    \Om$
+
+        \begin{equation}
+            \vswirl = \frac{\Gamma}{2\pi r}\bigl(1-\exp(-r^2/\rc^2)\bigr)\hat{\bm{\phi}}
+        \end{equation}
+
+        \[\vswirlcw = -\frac{\Gamma}{2\pi r}\bigl(1-\exp(-r^2/\rc^2)\bigr)\hat{\bm{\phi}}\]
+
+
+        \begin{equation}
+            \SwirlClock = \int \rhof \vswirl \, dV
+        \end{equation}
+
+        Or as anti version \(\SwirlClockcw = \int \rhof \vswirlcw \, dV\).
+
+        $\omegas\quad \vscore\quad \vnorm\quad \rhof\quad \rhoE\quad \rhom\quad \rc\quad \FmaxEM\quad \FmaxG\quad \Lam\quad \Om$
+
+        inline equation $a^2 + b^2 = c^2$ type with \$...\$ dollar signs
+        and also like this \(e^{i\pi} + 1 = 0\) with \\( ... \).
+
+        But does it support \textbf{bold}, \textit{italic} and \underline{underline} text?.
     \end{abstract}
 
     \section{Text}
-    Text, paragraphs and ligatures goes here.
+    Text\quad paragraphs and ligatures goes here.
 
     \section{Characters}
     Sample characters:
@@ -142,6 +142,33 @@
     \section{Symbols}
     Sample symbols:
     \noindent \textfractionsolidus \textdiv \texttimes \textminus \textpm \textsurd \textlnot \textasteriskcentered
+    \textbullet \textperiodcentered \textdagger \textdaggerdbl \textsection \textparagraph \textbardbl \textellipsis
+    \textquotedblleft \textquotedblright \textquoteleft \textquoteright \textbackslash \textbullet \textemdash \textendash
+
+
+\section{New Section $\omegas\quad$} This is a new section
+\subsection{New Subsection} This is a new subsection
+\subsubsection{New Subsubsection} This is a new subsubsection
+\paragraph{New Paragraph  $\omegas\quad$ } This is a new paragraph
+
+
+
+% Example table
+\begin{table}[h!]
+  \begin{center}
+    \caption{caption: Your first table.}
+    \label{tab:table1}
+    \begin{tabular}{l|c|r}
+      \textbf{Value 1} & \textbf{Value 2} & \textbf{Value 3}\\
+      $\alpha$ & $\beta$ & $\gamma$ \\
+      \hline
+      1 & 1110.1 & a\\
+      2 & 10.1 & b\\
+      3 & 23.113231 & c\\
+    \end{tabular}
+  \end{center}
+\end{table}
+
 
     \section{Picture}
     Sample picture:
@@ -160,43 +187,5 @@
         \put(0.3,4){$F=\sqrt{s(s-a)(s-b)(s-c)}$}
         \put(3.5,0.4){$\displaystyle s:=\frac{a+b+c}{2}$}
     \end{picture}
-
-testo
-\begin{equation}
-E = mc^2
-\end{equation}
-no equation number
-\[ \frac{1}{2}mv^2\]
-
-
-
-inline equation $a^2 + b^2 = c^2$ type with dollar signs
-and also with \(a^2\) like this \(e^{i\pi} + 1 = 0\)
-
-But does it support \textbf{bold} and \textit{italic} text?
-
-yes it does, and also \underline{underline}.
-\section{New Section} This is a new section
-\subsection{New Subsection} This is a new subsection
-\subsubsection{New Subsubsection} This is a new subsubsection
-\paragraph{New Paragraph} This is a new paragraph
-
-\subparagraph{New Subparagraph} This is a new subparagraph
-
-% Example table
-\begin{table}[h!]
-  \begin{center}
-    \caption{Your first table.}
-    \label{tab:table1}
-    \begin{tabular}{l|c|r}
-      \textbf{Value 1} & \textbf{Value 2} & \textbf{Value 3}\\
-      $\alpha$ & $\beta$ & $\gamma$ \\
-      \hline
-      1 & 1110.1 & a\\
-      2 & 10.1 & b\\
-      3 & 23.113231 & c\\
-    \end{tabular}
-  \end{center}
-\end{table}
 
 \end{document}

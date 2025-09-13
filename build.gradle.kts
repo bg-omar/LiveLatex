@@ -31,7 +31,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        create("IC", "2025.1")
+        create("IC", "2025.2")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // Add necessary plugin dependencies for compilation here, example:

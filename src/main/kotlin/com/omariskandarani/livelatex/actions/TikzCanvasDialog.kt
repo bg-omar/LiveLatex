@@ -274,7 +274,7 @@ class TikzCanvasDialog(
         title = "TikZ Knot"
         initUI()
         init()
-        setSize(980, 680)
+        setSize(1200, 800)
         initialTikz?.let { importCoordinates(it) }
     }
 
