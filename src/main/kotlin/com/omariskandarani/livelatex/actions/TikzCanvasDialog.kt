@@ -7,583 +7,711 @@ import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.*
-import com.intellij.openapi.ui.ComboBox
 import kotlin.math.*
 
-sealed class ShapeElt {
-    data class Node(val x: Int, val y: Int): ShapeElt()
-    data class Line(val x1: Int, val y1: Int, val x2: Int, val y2: Int): ShapeElt()
-    data class Rect(val x: Int, val y: Int, val w: Int, val h: Int): ShapeElt()
-    data class Circle(val cx: Int, val cy: Int, val r: Int): ShapeElt()
-    data class Knot(val points: List<Point>): ShapeElt()
+private fun segmentDist2(p: Point, a: Point, b: Point): Int {
+    val vx = (b.x - a.x).toDouble()
+    val vy = (b.y - a.y).toDouble()
+    val wx = (p.x - a.x).toDouble()
+    val wy = (p.y - a.y).toDouble()
+
+    val c1 = vx * wx + vy * wy
+    if (c1 <= 0.0) return p.distanceSq(a).toInt()
+
+    val c2 = vx * vx + vy * vy
+    if (c2 <= c1) return p.distanceSq(b).toInt()
+
+    val t = c1 / c2
+    val projX = a.x + t * vx
+    val projY = a.y + t * vy
+    val dx = p.x - projX
+    val dy = p.y - projY
+    return (dx * dx + dy * dy).roundToInt()
 }
 
-class TikzCanvasDialog(project: Project) : DialogWrapper(project, true) {
 
-    private val canvas = DrawPanel()
-    private val toolGroup = ButtonGroup()
-    private val nodeBtn = JToggleButton("Node")
-    private val lineBtn = JToggleButton("Line")
-    private val rectBtn = JToggleButton("Rect")
-    private val circBtn = JToggleButton("Circle")
-    private val knotBtn = JToggleButton("Knot")
-    private val clearBtn = JButton("Clear")
-    private val undoBtn = JButton("Undo")
-    private val showPointsBox = JCheckBox("Show Points", true)
-    private val stylePathBox = JCheckBox("Export every path style", false)
-    private val styleNodeBox = JCheckBox("Export every node style", false)
-    private val styleKnotBox = JCheckBox("Export every knot style", false)
-    private val gridSizeOptions = arrayOf("2x2", "4x4", "6x6")
-    private val gridSizeBox = ComboBox(gridSizeOptions)
-    private val gridStepOptions = arrayOf("1", "0.5", "0.25")
-    private val gridStepBox = ComboBox(gridStepOptions)
-    private val zoomOptions = arrayOf("25%", "50%", "100%", "200%", "400%")
-    private val zoomBox = ComboBox(zoomOptions).apply { selectedIndex = 2 }
+class TikzCanvasDialog(
+    private val project: Project,
+    private val initialTikz: String? = null
+) : DialogWrapper(project, true) {
 
+    private companion object {
+        const val STEP = 100          // 1 unit
+        const val SUB = STEP / 4      // 0.25 unit
+        private const val GRID_UNITS = 4
+        private const val PICK_R = 10
+    }
+
+
+    // --------- model types ----------
+    private sealed interface Shape {
+        fun hit(raw: Point, tol2: Int): Hit? = null
+        data class Hit(val kind: String, val index: Int = -1) // kind: "center","p1","p2","radius","body"
+    }
+    private data class Dot(var p: Point) : Shape {
+        override fun hit(raw: Point, tol2: Int) =
+            if (raw.distanceSq(p) <= tol2) Shape.Hit("center") else null
+    }
+    private data class Label(var p: Point, var text: String) : Shape {
+        override fun hit(raw: Point, tol2: Int) =
+            if (raw.distanceSq(p) <= tol2) Shape.Hit("center") else null
+    }
+    private data class LineSeg(var a: Point, var b: Point) : Shape {
+        override fun hit(raw: Point, tol2: Int): Shape.Hit? {
+            if (raw.distanceSq(a) <= tol2) return Shape.Hit("p1")
+            if (raw.distanceSq(b) <= tol2) return Shape.Hit("p2")
+            // body (projection distance)
+            val d2 = segmentDist2(raw, a, b)
+            return if (d2 <= tol2) Shape.Hit("body") else null
+        }
+    }
+    private data class Circ(var c: Point, var rUnits: Double) : Shape {
+        override fun hit(raw: Point, tol2: Int): Shape.Hit? {
+            if (raw.distanceSq(c) <= tol2) return Shape.Hit("center")
+            val px = raw.distance(c).toInt()
+            val ringPx = (rUnits * STEP).toInt()
+            val diff = abs(px - ringPx)
+            return if (diff <= sqrt(tol2.toDouble())) Shape.Hit("radius") else null
+        }
+    }
+
+
+    // Knot points are edited separately (tool=KNOT)
+    private val knotPts = mutableListOf<Point>()
+    // export buffer the action reads after OK
     var resultTikz: String? = null
         private set
 
-    private lateinit var content: JPanel
 
-    init {
-        title = "TikZ Canvas"
-        initUI()
-        init()
-        setSize(800, 600)
+    // --------- services / state ----------
+    private val store = project.getService(TikzKnotStore::class.java)
+    private val shapes = mutableListOf<Shape>()
+    private var mode = EditMode.ADD
+    private var tool = Tool.KNOT
+    private var dirty = false
+
+    // in-progress
+    private var tmpA: Point? = null   // for line/circle first click
+    private var circlePreview: Circ? = null
+    private var linePreview: LineSeg? = null
+
+    // dragging
+    private data class DragCtx(val idx: Int, val hit: Shape.Hit, val start: Point, val orig: Any)
+    private var drag: DragCtx? = null
+    private var dragKnotIndex: Int = -1
+    private var dragKind: String = ""  // for circle radius, etc.
+
+    // --------- UI controls ----------
+    private lateinit var rootPanel: JPanel
+
+    private val titleCombo = JComboBox(DefaultComboBoxModel(store.names().toTypedArray())).apply {
+        isEditable = true
+        preferredSize = Dimension(220, preferredSize.height)
+        toolTipText = "Saved knots (MRU, max 9). Type a new title to save."
+    }
+    private val saveBtn = JButton("Save")
+    private val loadBtn = JButton("Load")
+    private val deleteBtn = JButton("Delete")
+    private val newBtn = JButton("New")
+
+    private val flipField = JTextField().apply { columns = 14 }
+    private val showPointsBox = JCheckBox("Guides", true)
+
+    private val knotColor = JComboBox(arrayOf("black","red","blue","green","teal","orange","purple","gray")).apply {
+        selectedItem = "black"
+        toolTipText = "Knot color"
+        preferredSize = Dimension(100, preferredSize.height)
+    }
+    private val textDefault = JTextField("Text").apply {
+        columns = 12
+        toolTipText = "Default text for Text tool"
     }
 
-    // Defensive initialization for knotModeGroup
-    private var knotModeGroup: ButtonGroup? = null
-    private val knotAddBtn = JRadioButton("Add", true)
-    private val knotEraseBtn = JRadioButton("Erase")
-    private val knotMoveBtn = JRadioButton("Move")
+    private val toolGroup = ButtonGroup()
+    private val rbKnot = JRadioButton("Knot", true)
+    private val rbLine = JRadioButton("Line")
+    private val rbCircle = JRadioButton("Circle")
+    private val rbDot = JRadioButton("Dot")
+    private val rbText = JRadioButton("Text")
 
-    private fun initUI() {
-        nodeBtn.isSelected = true
-        // Assert all components are non-null before adding to top panel
-        requireNotNull(nodeBtn) { "nodeBtn is null" }
-        requireNotNull(lineBtn) { "lineBtn is null" }
-        requireNotNull(rectBtn) { "rectBtn is null" }
-        requireNotNull(circBtn) { "circBtn is null" }
-        requireNotNull(knotBtn) { "knotBtn is null" }
-        requireNotNull(undoBtn) { "undoBtn is null" }
-        requireNotNull(clearBtn) { "clearBtn is null" }
-        requireNotNull(gridSizeBox) { "gridSizeBox is null" }
-        requireNotNull(gridStepBox) { "gridStepBox is null" }
-        requireNotNull(zoomBox) { "zoomBox is null" }
-        requireNotNull(showPointsBox) { "showPointsBox is null" }
-        requireNotNull(stylePathBox) { "stylePathBox is null" }
-        requireNotNull(styleNodeBox) { "styleNodeBox is null" }
-        requireNotNull(styleKnotBox) { "styleKnotBox is null" }
+    private val modeGroup = ButtonGroup()
+    private val rbAdd = JRadioButton("Add", true)
+    private val rbMove = JRadioButton("Move")
+    private val rbDel = JRadioButton("Delete")
 
-        clearBtn.addActionListener { canvas.clear() }
-        undoBtn.addActionListener { canvas.undo() }
-
-        // Explicitly initialize knotModeGroup here
-        knotModeGroup = ButtonGroup()
-        knotModeGroup!!.add(knotAddBtn)
-        knotModeGroup!!.add(knotEraseBtn)
-        knotModeGroup!!.add(knotMoveBtn)
-        val knotModePanel = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
-            add(JLabel("Knot Mode:"))
-            add(knotAddBtn)
-            add(knotEraseBtn)
-            add(knotMoveBtn)
-        }
-        val top = JPanel(FlowLayout(FlowLayout.LEFT))
-        fun logAdd(comp: Component, name: String) {
-            // Avoid NullPointerException by not accessing comp.parent before adding
-            println("DEBUG: Adding $name, class=${comp.javaClass.simpleName}, hash=${comp.hashCode()}")
-            top.add(comp)
-        }
-        logAdd(JLabel("Tool:"), "ToolLabel")
-        logAdd(nodeBtn, "nodeBtn")
-        logAdd(lineBtn, "lineBtn")
-        logAdd(rectBtn, "rectBtn")
-        logAdd(circBtn, "circBtn")
-        logAdd(knotBtn, "knotBtn")
-        logAdd(Box.createHorizontalStrut(12), "Strut1")
-        logAdd(undoBtn, "undoBtn")
-        logAdd(clearBtn, "clearBtn")
-        logAdd(Box.createHorizontalStrut(12), "Strut2")
-        logAdd(JLabel("Grid:"), "GridLabel")
-        logAdd(gridSizeBox, "gridSizeBox")
-        logAdd(JLabel("Grid Step:"), "GridStepLabel")
-        logAdd(gridStepBox, "gridStepBox")
-        logAdd(JLabel("Zoom:"), "ZoomLabel")
-        logAdd(zoomBox, "zoomBox")
-        logAdd(showPointsBox, "showPointsBox")
-        logAdd(stylePathBox, "stylePathBox")
-        logAdd(styleNodeBox, "styleNodeBox")
-        logAdd(styleKnotBox, "styleKnotBox")
-        logAdd(Box.createHorizontalStrut(12), "Strut3")
-        logAdd(knotModePanel, "knotModePanel")
-        content = JPanel(BorderLayout())
-        content.add(top, BorderLayout.NORTH)
-        content.add(JScrollPane(canvas), BorderLayout.CENTER)
-        content.preferredSize = Dimension(900, 600)
-        setResizable(true)
-        setOKButtonText("Export & Insert")
-        setCancelButtonText("Cancel")
-        super.setTitle("TikZ Canvas")
-
-        canvas.toolProvider = { currentTool() }
-        canvas.showPointsProvider = { showPointsBox.isSelected }
-        canvas.gridSizeProvider = { gridSizeBox.selectedItem as String }
-        canvas.gridStepProvider = { (gridStepBox.selectedItem as String).toDouble() }
-        canvas.zoomProvider = {
-            val zoomStr = zoomBox.selectedItem as String
-            when (zoomStr) {
-                "25%" -> 0.25
-                "50%" -> 0.5
-                "100%" -> 1.0
-                "200%" -> 2.0
-                "400%" -> 4.0
-                else -> 1.0
-            }
-        }
-        canvas.knotModeProvider = {
-            when {
-                knotAddBtn.isSelected -> "add"
-                knotEraseBtn.isSelected -> "erase"
-                knotMoveBtn.isSelected -> "move"
-                else -> "add"
-            }
-        }
+    private val twinBox = JCheckBox("Twin", false)
+    private val twinOffset = JSpinner(SpinnerNumberModel(0.25, 0.25, 2.0, 0.25)).apply {
+        toolTipText = "Twin strand offset (grid units)"
+        preferredSize = Dimension(70, preferredSize.height)
     }
 
-    override fun createCenterPanel(): JComponent {
-        // Controls (strongly typed)
-        val gridSizeOptions = arrayOf("2x2","4x4","6x6")
-        val gridStepOptions = arrayOf("1","0.5","0.25")
-        val zoomOptions     = arrayOf("25%","50%","100%","200%","400%")
-
-        val gridSizeBox = ComboBox<String>(gridSizeOptions)
-        val gridStepBox = ComboBox<String>(gridStepOptions)
-        val zoomBox     = ComboBox<String>(zoomOptions).apply { selectedIndex = 2 }
-
-        // Tool buttons grouped so exactly one is on
-        val toolGroup = ButtonGroup().apply {
-            add(nodeBtn); add(lineBtn); add(rectBtn); add(circBtn); add(knotBtn)
-        }
-        nodeBtn.isSelected = true
-
-        // Knot mode radio buttons grouped
-        val knotModeGroup = ButtonGroup().apply {
-            add(knotAddBtn); add(knotEraseBtn); add(knotMoveBtn)
-        }
-        val knotModePanel = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
-            add(JLabel("Knot Mode:"))
-            add(knotAddBtn); add(knotEraseBtn); add(knotMoveBtn)
-        }
-
-        // Top toolbar row (build without the logAdd indirection)
-        val top = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
-            add(JLabel("Tool:")); add(nodeBtn); add(lineBtn); add(rectBtn); add(circBtn); add(knotBtn)
-            add(Box.createHorizontalStrut(12))
-            add(undoBtn); add(clearBtn)
-            add(Box.createHorizontalStrut(12))
-            add(JLabel("Grid:")); add(gridSizeBox)
-            add(JLabel("Grid Step:")); add(gridStepBox)
-            add(JLabel("Zoom:")); add(zoomBox)
-            add(showPointsBox); add(stylePathBox); add(styleNodeBox); add(styleKnotBox)
-            add(Box.createHorizontalStrut(12))
-            add(knotModePanel)
-        }
-
-        // Wire providers AFTER controls exist
-        canvas.toolProvider = { currentTool() }
-        canvas.showPointsProvider = { showPointsBox.isSelected }
-        canvas.gridSizeProvider = { gridSizeBox.selectedItem as String }
-        canvas.gridStepProvider = { (gridStepBox.selectedItem as String).toDouble() }
-        canvas.zoomProvider = {
-            when (zoomBox.selectedItem as String) {
-                "25%" -> 0.25; "50%" -> 0.5; "100%" -> 1.0; "200%" -> 2.0; "400%" -> 4.0
-                else -> 1.0
-            }
-        }
-        canvas.knotModeProvider = {
-            when {
-                knotAddBtn.isSelected -> "add"
-                knotEraseBtn.isSelected -> "erase"
-                knotMoveBtn.isSelected -> "move"
-                else -> "add"
-            }
-        }
-
-        // Actions
-        clearBtn.addActionListener { canvas.clear() }
-        undoBtn.addActionListener { canvas.undo() }
-
-        return JPanel(BorderLayout()).apply {
-            add(top, BorderLayout.NORTH)
-            add(JScrollPane(canvas), BorderLayout.CENTER)
-            preferredSize = Dimension(900, 600)
-        }
+    // compute twin preview points in pixels (uses unit-space offset then converts back)
+    private fun twinPixels(points: List<Point>, dUnits: Double): List<Point> {
+        val cx = canvas.width / 2; val cy = canvas.height / 2
+        val units = points.map { Pair(toUnits(it.x - cx), -toUnits(it.y - cy)) }
+        val off = offsetUnits(units, dUnits)
+        return off.map { (ux, uy) -> Point(cx + fromUnits(ux), cy - fromUnits(uy)) }
     }
 
-
-    private fun currentTool(): String = when {
-        nodeBtn.isSelected -> "node"
-        lineBtn.isSelected -> "line"
-        rectBtn.isSelected -> "rect"
-        circBtn.isSelected -> "circ"
-        knotBtn.isSelected -> "knot"
-        else -> "node"
+    // smoothed offset of a closed polyline in unit space
+    private fun offsetUnits(u: List<Pair<Double, Double>>, d: Double): List<Pair<Double, Double>> {
+        val n = u.size
+        if (n == 0) return emptyList()
+        fun norm(x: Double, y: Double): Pair<Double, Double> {
+            val L = hypot(x, y)
+            return if (L == 0.0) 0.0 to 0.0 else (x / L) to (y / L)
+        }
+        val out = ArrayList<Pair<Double, Double>>(n)
+        for (i in 0 until n) {
+            val im = (i - 1 + n) % n
+            val ip = (i + 1) % n
+            val vx1 = u[i].first - u[im].first
+            val vy1 = u[i].second - u[im].second
+            val vx2 = u[ip].first - u[i].first
+            val vy2 = u[ip].second - u[i].second
+            val (nx1, ny1) = norm(-vy1, vx1) // left normal of segment im->i
+            val (nx2, ny2) = norm(-vy2, vx2) // left normal of segment i->ip
+            var nx = nx1 + nx2
+            var ny = ny1 + ny2
+            val L = hypot(nx, ny)
+            if (L != 0.0) { nx /= L; ny /= L }
+            out += (u[i].first + d * nx) to (u[i].second + d * ny)
+        }
+        return out
     }
 
-    override fun doOKAction() {
-        resultTikz = canvas.exportTikz(
-            showPoints = showPointsBox.isSelected,
-            stylePath = stylePathBox.isSelected,
-            styleNode = styleNodeBox.isSelected,
-            styleKnot = styleKnotBox.isSelected
-        )
-        super.doOKAction()
-    }
-
-    private class DrawPanel : JPanel() {
-        private val shapes = mutableListOf<ShapeElt>()
-        private var startX = 0
-        private var startY = 0
-        private var dragging = false
-        private var preview: ShapeElt? = null
-        var toolProvider: (() -> String)? = null
-        var showPointsProvider: (() -> Boolean)? = null
-        var gridSizeProvider: (() -> String)? = null
-        var gridStepProvider: (() -> Double)? = null
-        var zoomProvider: (() -> Double)? = null
-        var knotModeProvider: (() -> String)? = null
-
-        private var knotPoints = mutableListOf<Point>()
-        private var isDrawingKnot = false
-        private var movingKnotIdx: Int? = null
-
+    // canvas
+    private val canvas = object : JPanel() {
         init {
             background = JBColor(Color(0xF8F9FB), Color(0x23272E))
             preferredSize = Dimension(1200, 800)
             border = BorderFactory.createLineBorder(JBColor(Color(0xD0D7DE), Color(0x23272E)), 1)
-
             val ma = object : MouseAdapter() {
-                override fun mousePressed(e: MouseEvent) {
-                    val tool = toolProvider?.invoke() ?: "node"
-                    val knotMode = knotModeProvider?.invoke() ?: "add"
-                    val gridSizeStr = gridSizeProvider?.invoke() ?: "4x4"
-                    val gridCount = when (gridSizeStr) {
-                        "2x2" -> 2
-                        "4x4" -> 4
-                        "6x6" -> 6
-                        else -> 4
-                    }
-                    val gridStep = gridStepProvider?.invoke() ?: 1.0
-                    val pxPerCm = 37.8
-                    val gridStepPx = (gridStep * pxPerCm).toInt()
-                    val centerX = width / 2
-                    val centerY = height / 2
-                    val zoom = zoomProvider?.invoke() ?: 1.0
-                    fun snapToGrid(x: Int, y: Int): Point {
-                        val zx = (x.toDouble() / zoom).toInt()
-                        val zy = (y.toDouble() / zoom).toInt()
-                        val dx = ((zx - centerX) / gridStepPx.toDouble()).roundToInt()
-                        val dy = ((zy - centerY) / gridStepPx.toDouble()).roundToInt()
-                        val gx = centerX + (dx * gridStepPx)
-                        val gy = centerY + (dy * gridStepPx)
-                        return Point(gx, gy)
-                    }
-                    startX = e.x; startY = e.y
-                    when (tool) {
-                        "node" -> {
-                            val pt = snapToGrid(e.x, e.y)
-                            shapes += ShapeElt.Node(pt.x, pt.y)
-                            repaint()
-                        }
-                        "knot" -> {
-                            if (!isDrawingKnot) {
-                                knotPoints.clear()
-                                isDrawingKnot = true
-                            }
-                            val pt = snapToGrid(e.x, e.y)
-                            when (knotMode) {
-                                "add" -> {
-                                    knotPoints.add(pt)
-                                    repaint()
-                                }
-                                "erase" -> {
-                                    // Remove nearest node within threshold
-                                    val idx = knotPoints.indexOfFirst { p -> p.distance(pt) < 12 }
-                                    if (idx != -1) {
-                                        knotPoints.removeAt(idx)
-                                        repaint()
-                                    }
-                                }
-                                "move" -> {
-                                    // Select node to move
-                                    movingKnotIdx = knotPoints.indexOfFirst { p -> p.distance(pt) < 12 }
-                                }
-                            }
-                            if (e.clickCount == 2 || SwingUtilities.isRightMouseButton(e)) {
-                                if (knotPoints.size > 1) {
-                                    shapes += ShapeElt.Knot(knotPoints.toList())
-                                }
-                                knotPoints.clear()
-                                isDrawingKnot = false
-                                movingKnotIdx = null
-                                repaint()
-                            }
-                        }
-                        else -> {
-                            dragging = true
-                            preview = null
-                        }
-                    }
-                }
-
-                override fun mouseDragged(e: MouseEvent) {
-                    if (!dragging) return
-                    val tool = toolProvider?.invoke() ?: "line"
-                    val x1 = startX; val y1 = startY
-                    val x2 = e.x; val y2 = e.y
-                    preview = when (tool) {
-                        "line" -> ShapeElt.Line(x1, y1, x2, y2)
-                        "rect" -> {
-                            val x = min(x1, x2); val y = min(y1, y2)
-                            val w = max(1, kotlin.math.abs(x2 - x1))
-                            val h = max(1, kotlin.math.abs(y2 - y1))
-                            ShapeElt.Rect(x, y, w, h)
-                        }
-                        "circ" -> {
-                            val r = hypot((x2 - x1).toDouble(), (y2 - y1).toDouble()).toInt()
-                            ShapeElt.Circle(x1, y1, r)
-                        }
-                        else -> null
-                    }
-                    repaint()
-                }
-
-                override fun mouseReleased(e: MouseEvent) {
-                    if (!dragging) return
-                    dragging = false
-                    preview?.let { shapes += it }
-                    preview = null
-                    repaint()
-                }
+                override fun mousePressed(e: MouseEvent) = onPress(e)
+                override fun mouseDragged(e: MouseEvent) = onDrag(e)
+                override fun mouseReleased(e: MouseEvent) = onRelease(e)
             }
-            addMouseListener(ma)
-            addMouseMotionListener(ma)
+            addMouseListener(ma); addMouseMotionListener(ma)
         }
-
-        fun clear() {
-            shapes.clear()
-            preview = null
-            repaint()
-        }
-
-        fun undo() {
-            if (preview != null) {
-                preview = null
-            } else if (shapes.isNotEmpty()) {
-                shapes.removeAt(shapes.lastIndex)
-            }
-            repaint()
-        }
-
         override fun paintComponent(g: Graphics) {
             super.paintComponent(g)
             val g2 = g as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val zoom: Double = zoomProvider?.invoke() ?: 1.0
-            g2.scale(zoom, zoom)
 
-            // grid size logic
-            val gridSizeStr = gridSizeProvider?.invoke() ?: "4x4"
-            val gridCount = when (gridSizeStr) {
-                "2x2" -> 2
-                "4x4" -> 4
-                "6x6" -> 6
-                else -> 4
-            }
-            val gridStep = gridStepProvider?.invoke() ?: 1.0
-            val pxPerCm = 37.8
-            val gridStepPx = (gridStep * pxPerCm).toInt()
-            val fontGrid = g2.font.deriveFont(Font.PLAIN, 9f)
-            val fontKnot = g2.font.deriveFont(Font.BOLD, 12f)
-            g2.font = fontGrid
-            val centerX = width / 2
-            val centerY = height / 2
-            // Draw grid lines
-            for (i in -gridCount/2..gridCount/2) {
-                val x = centerX + (i * gridStepPx)
+            val cx = width / 2; val cy = height / 2
+
+            // grid (integer only)
+            g2.color = JBColor(Color(0xEAECEF), Color(0x23272E))
+            for (i in -GRID_UNITS..GRID_UNITS) {
+                val x = cx + i * STEP
+                val y = cy + i * STEP
                 g2.drawLine(x, 0, x, height)
-                val y = centerY + (i * gridStepPx)
                 g2.drawLine(0, y, width, y)
-                // Draw coordinate label at grid intersection
-                for (j in -gridCount/2..gridCount/2) {
-                    val gx = centerX + (i * gridStepPx)
-                    val gy = centerY + (j * gridStepPx)
-                    val xCoord = i * gridStep
-                    val yCoord = -j * gridStep
-                    val label = String.format("(%.2f,%.2f)", xCoord, yCoord)
-                    g2.setColor(JBColor(Color(0xAAAAAA), Color(0xAAAAAA)))
-                    g2.drawString(label, gx + 2, gy + 12)
-                    g2.setColor(JBColor(Color(0xEAECEF), Color(0x23272E)))
-                }
             }
-            // Draw axes x=0 and y=0
-            g2.setColor(JBColor(Color(0x1C4DB9), Color(0x1C4DB9)))
-            g2.setStroke(BasicStroke(2f))
-            g2.drawLine(centerX, 0, centerX, height) // y axis
-            g2.drawLine(0, centerY, width, centerY) // x axis
-            g2.setStroke(BasicStroke(1f))
+            // axes
+            val old = g2.stroke
+            g2.stroke = BasicStroke(3f)
+            g2.color = JBColor(Color(0x1C4DB9), Color(0x1C4DB9))
+            g2.drawLine(cx, 0, cx, height)
+            g2.drawLine(0, cy, width, cy)
+            g2.stroke = old
+            // labels (integers)
+            g2.color = JBColor(Color(0xAAAAAA), Color(0xAAAAAA))
+            for (i in -GRID_UNITS..GRID_UNITS) {
+                g2.drawString(i.toString(), cx + i * STEP + 4, cy - 6)
+                g2.drawString(i.toString(), cx + 6, cy + i * STEP + 12)
+            }
 
             // shapes
-            g2.color = JBColor(Color(0x374151), Color(0xEAECEF))
-            for (s in shapes) drawShape(g2, s)
-            preview?.let {
-                val old = g2.composite
-                g2.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f)
-                g2.color = JBColor(Color(0x1F2937), Color(0xEAECEF))
-                drawShape(g2, it)
-                g2.composite = old
+            drawShapes(g2)
+
+            // knot working polyline
+            if (knotPts.size >= 2) {
+                g2.color = JBColor(Color(0xB91C1C), Color(0xB91C1C))
+                for (i in 0 until knotPts.size - 1) {
+                    val a = knotPts[i]; val b = knotPts[i + 1]
+                    g2.drawLine(a.x, a.y, b.x, b.y)
+                }
+            }
+            // knot points + labels
+            val font = g2.font.deriveFont(Font.BOLD, 12f)
+            g2.font = font
+            for ((i, p) in knotPts.withIndex()) {
+                g2.color = JBColor(Color(0xB91C1C), Color(0xB91C1C))
+                g2.fillOval(p.x - 4, p.y - 4, 8, 8)
+                val gx = toUnits(p.x - cx); val gy = -toUnits(p.y - cy)
+                val label = "${i + 1}: (${fmtQ(gx)},${fmtQ(gy)})"
+                val fm = g2.fontMetrics; val w = fm.stringWidth(label); val h = fm.height
+                g2.color = JBColor(Color(0xF8F9FB), Color(0x23272E))
+                g2.fillRect(p.x + 8, p.y - h, w + 6, h)
+                g2.color = JBColor(Color(0x1C4DB9), Color(0x1C4DB9))
+                g2.drawString(label, p.x + 10, p.y - 4)
             }
 
-            // Draw knot in progress
-            if (isDrawingKnot && knotPoints.isNotEmpty()) {
-                val showPoints = showPointsProvider?.invoke() ?: true
-                g2.font = fontKnot
-                for ((i, pt) in knotPoints.withIndex()) {
-                    g2.setColor(JBColor(Color(0xB91C1C), Color(0xB91C1C)))
-                    g2.fillOval(pt.x - 3, pt.y - 3, 6, 6)
-                    // Calculate integer grid coordinates
-                    val gridX = ((pt.x - centerX) / gridStepPx.toDouble()).roundToInt()
-                    val gridY = -((pt.y - centerY) / gridStepPx.toDouble()).roundToInt()
-                    val label = "(${gridX},${gridY})"
-                    val metrics = g2.getFontMetrics()
-                    val labelWidth = metrics.stringWidth(label)
-                    val labelHeight = metrics.height
-                    g2.setColor(JBColor(Color(0xF8F9FB), Color(0x23272E)))
-                    g2.fillRect(pt.x + 8, pt.y - labelHeight / 2, labelWidth + 4, labelHeight)
-                    g2.setColor(JBColor(Color(0x1C4DB9), Color(0x1C4DB9)))
-                    g2.drawString(label, pt.x + 10, pt.y + labelHeight / 2)
-                }
-                g2.setColor(JBColor(Color(0xB91C1C), Color(0xB91C1C)))
-                for (i in 0 until knotPoints.size - 1) {
-                    val p1 = knotPoints[i]
-                    val p2 = knotPoints[i + 1]
-                    g2.drawLine(p1.x, p1.y, p2.x, p2.y)
-                }
-            }
-            // Draw finished knots
-            for (s in shapes) {
-                if (s is ShapeElt.Knot) {
-                    val showPoints = showPointsProvider?.invoke() ?: true
-                    g2.font = fontKnot
-                    for ((i, pt) in s.points.withIndex()) {
-                        g2.setColor(JBColor(Color(0xB91C1C), Color(0xB91C1C)))
-                        g2.fillOval(pt.x - 3, pt.y - 3, 6, 6)
-                        // Calculate integer grid coordinates
-                        val gridX = ((pt.x - centerX) / gridStepPx.toDouble()).roundToInt()
-                        val gridY = -((pt.y - centerY) / gridStepPx.toDouble()).roundToInt()
-                        val label = "(${gridX},${gridY})"
-                        val metrics = g2.getFontMetrics()
-                        val labelWidth = metrics.stringWidth(label)
-                        val labelHeight = metrics.height
-                        g2.setColor(JBColor(Color(0xF8F9FB), Color(0x23272E)))
-                        g2.fillRect(pt.x + 8, pt.y - labelHeight / 2, labelWidth + 4, labelHeight)
-                        g2.setColor(JBColor(Color(0x1C4DB9), Color(0x1C4DB9)))
-                        g2.drawString(label, pt.x + 10, pt.y + labelHeight / 2)
-                    }
-                    g2.setColor(JBColor(Color(0xB91C1C), Color(0xB91C1C)))
-                    for (i in 0 until s.points.size - 1) {
-                        val p1 = s.points[i]
-                        val p2 = s.points[i + 1]
-                        g2.drawLine(p1.x, p1.y, p2.x, p2.y)
+            // previews
+            g2.color = JBColor(Color(0x1F2937), Color(0xEAECEF))
+            if (twinBox.isSelected && knotPts.size >= 2) {
+                val dUnits = (twinOffset.value as? Double) ?: 0.25
+                val twin = twinPixels(knotPts, dUnits)
+                if (twin.isNotEmpty()) {
+                    g2.color = JBColor(Color(0x6B7280), Color(0x9CA3AF)) // subtle gray
+                    for (i in 0 until twin.size - 1) {
+                        val a = twin[i]; val b = twin[i + 1]
+                        g2.drawLine(a.x, a.y, b.x, b.y)
                     }
                 }
             }
+
+            circlePreview?.let { c ->
+                val rPx = (c.rUnits * STEP).toInt()
+                g2.drawOval(c.c.x - rPx, c.c.y - rPx, 2 * rPx, 2 * rPx)
+            }
+            linePreview?.let { l -> g2.drawLine(l.a.x, l.a.y, l.b.x, l.b.y) }
         }
+    }
 
-        private fun drawShape(g2: Graphics2D, s: ShapeElt) {
+    init {
+        title = "TikZ Knot"
+        initUI()
+        init()
+        setSize(980, 680)
+        initialTikz?.let { importCoordinates(it) }
+    }
+
+    private fun drawShapes(g2: Graphics2D) {
+        g2.color = JBColor(Color(0x374151), Color(0xEAECEF))
+        for (s in shapes) {
             when (s) {
-                is ShapeElt.Node -> {
-                    g2.fillOval(s.x - 3, s.y - 3, 6, 6)
+                is Dot -> {
+                    g2.fillOval(s.p.x - 3, s.p.y - 3, 6, 6)
                 }
-                is ShapeElt.Line -> {
-                    g2.drawLine(s.x1, s.y1, s.x2, s.y2)
+                is Label -> {
+                    val fm = g2.fontMetrics
+                    val w = fm.stringWidth(s.text)
+                    val h = fm.height
+                    // background box
+                    g2.color = JBColor(Color(0xF8F9FB), Color(0x23272E))
+                    g2.fillRect(s.p.x + 6, s.p.y - h, w + 8, h)
+                    // text
+                    g2.color = JBColor(Color(0x1C4DB9), Color(0x1C4DB9))
+                    g2.drawString(s.text, s.p.x + 10, s.p.y - 4)
+                    g2.color = JBColor(Color(0x374151), Color(0xEAECEF))
                 }
-                is ShapeElt.Rect -> {
-                    g2.drawRect(s.x, s.y, s.w, s.h)
+                is LineSeg -> {
+                    g2.drawLine(s.a.x, s.a.y, s.b.x, s.b.y)
                 }
-                is ShapeElt.Circle -> {
-                    g2.drawOval(s.cx - s.r, s.cy - s.r, 2 * s.r, 2 * s.r)
+                is Circ -> {
+                    val rPx = (s.rUnits * STEP).toInt()
+                    g2.drawOval(s.c.x - rPx, s.c.y - rPx, 2 * rPx, 2 * rPx)
                 }
-
-                else -> {}
             }
         }
+    }
 
-        // In exportTikz, use snapped grid coordinates for export (no zoom applied)
-        fun exportTikz(
-            showPoints: Boolean = true,
-            stylePath: Boolean = false,
-            styleNode: Boolean = false,
-            styleKnot: Boolean = false
-        ): String {
-            val sb = StringBuilder()
-            val pxPerCm = 37.8
-            val gridStep = gridStepProvider?.invoke() ?: 1.0
-            val centerX = width / 2
-            val centerY = height / 2
-            fun toGrid(pt: Point): Pair<Double, Double> {
-                val gridX = ((pt.x - centerX) / (gridStep * pxPerCm)).toDouble()
-                val gridY = -((pt.y - centerY) / (gridStep * pxPerCm)).toDouble()
-                return Pair(gridX, gridY)
+
+    // ---------- UI build ----------
+    private fun initUI() {
+        // tools row
+        listOf(rbKnot, rbLine, rbCircle, rbDot, rbText).forEach { toolGroup.add(it) }
+        rbKnot.addActionListener { tool = Tool.KNOT }
+        rbLine.addActionListener { tool = Tool.LINE }
+        rbCircle.addActionListener { tool = Tool.CIRCLE }
+        rbDot.addActionListener { tool = Tool.DOT }
+        rbText.addActionListener { tool = Tool.TEXT }
+
+        val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
+            add(JLabel("Tool:"))
+            add(rbKnot); add(rbLine); add(rbCircle); add(rbDot); add(rbText)
+            add(Box.createHorizontalStrut(12))
+            add(JLabel("Knot color:")); add(knotColor)
+            add(Box.createHorizontalStrut(12))
+            add(JLabel("flip crossings:")); add(flipField)
+            add(Box.createHorizontalStrut(12))
+            add(JLabel("Text:")); add(textDefault)
+            add(Box.createHorizontalStrut(12))
+            add(JLabel("Guides:")); add(showPointsBox)
+            add(Box.createHorizontalStrut(12))
+            add(JLabel("Twin:")); add(twinBox); add(twinOffset)
+        }
+
+        // mode row
+        listOf(rbAdd, rbMove, rbDel).forEach { modeGroup.add(it) }
+        rbAdd.addActionListener { mode = EditMode.ADD }
+        rbMove.addActionListener { mode = EditMode.MOVE }
+        rbDel.addActionListener { mode = EditMode.DELETE }
+        val modeRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            add(JLabel("Edit:")); add(rbAdd); add(rbMove); add(rbDel)
+            add(Box.createHorizontalStrut(12))
+            add(JLabel("Title:")); add(titleCombo)
+            add(saveBtn); add(loadBtn); add(newBtn); add(deleteBtn)
+        }
+
+        saveBtn.addActionListener { doSave(true) }
+        loadBtn.addActionListener { doLoadSelected() }
+        deleteBtn.addActionListener { doDeleteSelected() }
+        newBtn.addActionListener { doNew() }
+
+        val header = JPanel()
+        header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
+        header.add(toolsRow)
+        header.add(modeRow)
+
+        rootPanel = JPanel(BorderLayout()).apply {
+            border = BorderFactory.createEmptyBorder(6, 6, 6, 6)
+            add(header, BorderLayout.NORTH)
+            add(JScrollPane(canvas), BorderLayout.CENTER)
+        }
+
+        setOKButtonText("Export & Insert")
+        setCancelButtonText("Cancel")
+    }
+
+    override fun createCenterPanel(): JComponent = rootPanel
+
+    // ---------- Mouse handling ----------
+    private fun onPress(e: MouseEvent) {
+        val p = snap(e.point)
+        when (tool) {
+            Tool.KNOT -> when (mode) {
+                EditMode.ADD -> { knotPts += p; markDirty() }
+                EditMode.DELETE -> {
+                    val i = nearest(knotPts, e.point) ?: return
+                    knotPts.removeAt(i); markDirty()
+                }
+                EditMode.MOVE -> {
+                    dragKnotIndex = nearest(knotPts, e.point) ?: -1
+                }
             }
+            Tool.DOT -> when (mode) {
+                EditMode.ADD -> { shapes += Dot(p); markDirty() }
+                EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("center"))
+            }
+            Tool.TEXT -> when (mode) {
+                EditMode.ADD -> {
+                    val text = JOptionPane.showInputDialog(rootPanel, "Text:", textDefault.text) ?: return
+                    shapes += Label(p, text); markDirty()
+                }
+                EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("center"))
+            }
+            Tool.LINE -> when (mode) {
+                EditMode.ADD -> { tmpA = p; linePreview = LineSeg(p, p); canvas.repaint() }
+                EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("p1","p2","body"))
+            }
+            Tool.CIRCLE -> when (mode) {
+                EditMode.ADD -> { tmpA = p; circlePreview = Circ(p, 0.0); canvas.repaint() }
+                EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("center","radius"))
+            }
+        }
+    }
 
-            // TikZ styles
-            val tikzStyles = mutableListOf<String>()
-            tikzStyles += "knot diagram/every strand/.append style={ultra thick, black}"
-            if (stylePath) tikzStyles += "every path/.style={black,line width=2pt}"
-            if (styleNode) tikzStyles += "every node/.style={transform shape,knot crossing,inner sep=1.5pt}"
-            if (styleKnot) tikzStyles += "every knot/.style={line cap=round,line join=round,very thick}"
-            sb.append("\\tikzset{\n  " + tikzStyles.joinToString(",\n  ") + "\n}\n")
+    private fun onDrag(e: MouseEvent) {
+        val p = snap(e.point)
+        when (tool) {
+            Tool.KNOT -> if (mode == EditMode.MOVE && dragKnotIndex >= 0) {
+                knotPts[dragKnotIndex] = p; markDirty()
+            }
+            Tool.LINE -> if (mode == EditMode.ADD) {
+                linePreview?.let { it.b = p; canvas.repaint() }
+            } else if (mode == EditMode.MOVE) {
+                handleShapeDrag(p)
+            }
+            Tool.CIRCLE -> if (mode == EditMode.ADD) {
+                circlePreview?.let {
+                    it.rUnits = quantQ(p.distance(it.c) / STEP)
+                    canvas.repaint()
+                }
+            } else if (mode == EditMode.MOVE) {
+                handleShapeDrag(p)
+            }
+            Tool.DOT, Tool.TEXT -> if (mode == EditMode.MOVE) {
+                handleShapeDrag(p)
+            }
+        }
+    }
 
-            var knotCount = 1
-            for (s in shapes) {
-                when (s) {
-                    is ShapeElt.Node -> {
-                        val (gridX, gridY) = toGrid(Point(s.x, s.y))
-                        sb.append("\\fill ($gridX,$gridY) circle (0.05);\n")
-                    }
-                    is ShapeElt.Line -> {
-                        val (x1, y1) = toGrid(Point(s.x1, s.y1))
-                        val (x2, y2) = toGrid(Point(s.x2, s.y2))
-                        sb.append("\\draw ($x1,$y1) -- ($x2,$y2);\n")
-                    }
-                    is ShapeElt.Rect -> {
-                        val (x1, y1) = toGrid(Point(s.x, s.y))
-                        val (x2, y2) = toGrid(Point(s.x + s.w, s.y + s.h))
-                        sb.append("\\draw ($x1,$y1) rectangle ($x2,$y2);\n")
-                    }
-                    is ShapeElt.Circle -> {
-                        val (cx, cy) = toGrid(Point(s.cx, s.cy))
-                        sb.append("\\draw ($cx,$cy) circle (${"%.2f".format(s.r / pxPerCm)});\n")
-                    }
-                    is ShapeElt.Knot -> {
-                        for ((i, pt) in s.points.withIndex()) {
-                            val (gridX, gridY) = toGrid(pt)
-                            sb.append("\\coordinate (P${i + 1}) at ($gridX,$gridY);\n")
-                        }
-                        sb.append("\\begin{knot}[consider self intersections, clip width=5pt, clip radius=3pt, ignore endpoint intersections=false]\n")
-                        sb.append("\\strand ([closed] ")
-                        sb.append((1..s.points.size).joinToString("..") { "P$it" })
-                        sb.append(");\n\\end{knot}\n")
-                        if (showPoints) {
-                            sb.append("\\SSTGuidesPoints{P}{${s.points.size}}\n")
-                        }
+    private fun onRelease(e: MouseEvent) {
+        val p = snap(e.point)
+        when (tool) {
+            Tool.LINE -> if (mode == EditMode.ADD) {
+                linePreview?.let { shapes += LineSeg(it.a, p) }
+                linePreview = null; tmpA = null; markDirty()
+            } else drag = null
+            Tool.CIRCLE -> if (mode == EditMode.ADD) {
+                circlePreview?.let {
+                    shapes += Circ(it.c, max(0.0, quantQ(p.distance(it.c) / STEP)))
+                }
+                circlePreview = null; tmpA = null; markDirty()
+            } else drag = null
+            Tool.KNOT -> dragKnotIndex = -1
+            Tool.DOT, Tool.TEXT -> drag = null
+        }
+        canvas.repaint()
+    }
+
+    // ---------- dragging helpers ----------
+    private fun startShapeDrag(e: MouseEvent, preferKinds: List<String>) {
+        val idx = pickShape(e.point) ?: return
+        val s = shapes[idx]
+        val tol2 = PICK_R * PICK_R
+        val hit = s.hit(e.point, tol2) ?: return
+        if (preferKinds.isNotEmpty() && hit.kind !in preferKinds) return
+        val orig = when (s) {
+            is Dot   -> Point(s.p)
+            is Label -> Pair(Point(s.p), s.text)
+            is LineSeg -> Pair(Point(s.a), Point(s.b))
+            is Circ -> Pair(Point(s.c), s.rUnits)
+        }
+        drag = DragCtx(idx, hit, e.point, orig)
+        dragKind = hit.kind
+    }
+
+    private fun handleShapeDrag(pSnapped: Point) {
+        val d = drag ?: return
+        val s = shapes[d.idx]
+        when (s) {
+            is Dot -> {
+                s.p = pSnapped
+            }
+            is Label -> {
+                s.p = pSnapped
+            }
+            is LineSeg -> {
+                when (d.hit.kind) {
+                    "p1" -> s.a = pSnapped
+                    "p2" -> s.b = pSnapped
+                    "body" -> { // translate both
+                        val orig = d.orig as Pair<Point, Point>
+                        val dx = pSnapped.x - d.start.x
+                        val dy = pSnapped.y - d.start.y
+                        s.a = snap(Point(orig.first.x + dx,  orig.first.y + dy))
+                        s.b = snap(Point(orig.second.x + dx, orig.second.y + dy))
                     }
                 }
             }
-            return sb.toString().trim()
+            is Circ -> {
+                when (d.hit.kind) {
+                    "center" -> s.c = pSnapped
+                    "radius" -> {
+                        s.rUnits = quantQ(pSnapped.distance(s.c) / STEP)
+                    }
+                }
+            }
         }
+        markDirty(); canvas.repaint()
+    }
+
+    // ---------- save/load ----------
+    private fun currentTitle(): String = (titleCombo.editor.item?.toString() ?: "").trim()
+    private fun refreshTitlesCombo(select: String? = null) {
+        val names = store.names().toTypedArray()
+        titleCombo.model = DefaultComboBoxModel(names)
+        if (select != null && names.contains(select)) titleCombo.selectedItem = select
+    }
+    private fun autoTitle(): String {
+        val base = "Untitled"
+        val names = store.names().toSet()
+        if (base !in names) return base
+        var i = 2; while ("$base $i" in names) i++
+        return "$base $i"
+    }
+    private fun doSave(explicit: Boolean) {
+        var title = currentTitle()
+        if (title.isBlank()) { title = autoTitle(); titleCombo.editor.item = title }
+        store.save(title, knotPts)
+        refreshTitlesCombo(title); dirty = false
+        if (explicit) JOptionPane.showMessageDialog(rootPanel, "Saved \"$title\".")
+    }
+    private fun maybeAutoSave() {
+        if (!dirty) return
+        var title = currentTitle()
+        if (title.isBlank()) { title = autoTitle(); titleCombo.editor.item = title }
+        store.save(title, knotPts); refreshTitlesCombo(title); dirty = false
+    }
+    private fun doLoadSelected() {
+        maybeAutoSave()
+        val title = currentTitle()
+        if (title.isBlank()) { JOptionPane.showMessageDialog(rootPanel, "Choose a title to load."); return }
+        val pts = store.load(title) ?: run {
+            JOptionPane.showMessageDialog(rootPanel, "No saved knot named \"$title\"."); return
+        }
+        knotPts.clear(); knotPts.addAll(pts.map { Point(it) }); dirty = false; canvas.repaint()
+    }
+    private fun doDeleteSelected() {
+        val title = currentTitle(); if (title.isBlank()) return
+        if (JOptionPane.showConfirmDialog(rootPanel, "Delete \"$title\"?", "Delete",
+                JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+            store.delete(title); refreshTitlesCombo(); titleCombo.editor.item = ""
+        }
+    }
+    private fun doNew() {
+        maybeAutoSave()
+        titleCombo.editor.item = ""; knotPts.clear(); dirty = false; canvas.repaint()
+    }
+
+    // ---------- import/export ----------
+    private fun importCoordinates(tikz: String) {
+        val rx = Regex("""\\coordinate\s*\(P(\d+)\)\s*at\s*\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)\s*;""")
+        val pairs = rx.findAll(tikz)
+            .map { it.groupValues[1].toInt() to Pair(it.groupValues[2].toDouble(), it.groupValues[3].toDouble()) }
+            .sortedBy { it.first }
+            .map { it.second }
+            .toList()
+        if (pairs.isEmpty()) return
+        val cx = canvas.width / 2; val cy = canvas.height / 2
+        knotPts.clear()
+        knotPts.addAll(pairs.map { (x, y) -> Point(cx + fromUnits(x), cy - fromUnits(y)) })
+        dirty = true; canvas.repaint()
+    }
+
+    override fun doOKAction() {
+        resultTikz = exportBody(
+            pts = knotPts, // see #3 below
+            showPoints = showPointsBox.isSelected,
+            flipCrossings = flipField.text.trim(),
+            knotColor = null,         // or e.g. colorField.text.takeIf { it.isNotBlank() }
+            wrapInFigure = false
+        )
+        super.doOKAction()
+    }
+
+    private fun exportBody(
+        pts: List<Point>,
+        showPoints: Boolean,
+        flipCrossings: String,
+        knotColor: String? = null,        // optional: e.g. "red" or "blue!60"
+        wrapInFigure: Boolean = false     // optional: wrap with \begin{figure}...\end{figure}
+    ): String {
+        if (pts.isEmpty()) return "% No knot points."
+
+        // Canvas grid -> integer grid coordinates
+        val step = STEP
+        val cx = canvas.width / 2
+        val cy = canvas.height / 2
+        data class G(val x: Int, val y: Int)
+        fun toGrid(p: Point) = G((p.x - cx) / step, -((p.y - cy) / step))
+
+        // De-duplicate consecutive duplicates to avoid ...P5..P5...
+        val dedup = ArrayList<Point>(pts.size)
+        for (p in pts) if (dedup.isEmpty() || dedup.last() != p) dedup += p
+        val gpts = dedup.map(::toGrid)
+        val n = gpts.size
+
+        val sb = StringBuilder()
+
+        if (wrapInFigure) {
+            sb.append("\\begin{figure}[t]\n")
+            sb.append("    \\centering\n")
+        }
+        sb.append("    \\begin{tikzpicture}[use Hobby shortcut]\n")
+
+        // Optional color for the strand
+        if (!knotColor.isNullOrBlank()) {
+            sb.append("    \\tikzset{knot diagram/every strand/.append style={draw=$knotColor}}\n")
+        }
+
+        // Coordinates P1..Pn and close with P{n+1}=P1
+        for (i in 0 until n) {
+            val q = gpts[i]
+            sb.append("    \\coordinate (P${i + 1}) at (${q.x}, ${q.y});\n")
+        }
+        val q1 = gpts.first()
+        sb.append("    \\coordinate (P${n + 1}) at (${q1.x}, ${q1.y}); % = P1\n\n")
+
+        // Knot options (include flip crossings if provided)
+        val opts = buildList {
+            add("consider self intersections")
+            add("clip width=5pt, clip radius=3pt")
+            add("ignore endpoint intersections=false")
+            if (flipCrossings.isNotBlank()) add("flip crossing/.list={$flipCrossings}")
+            add("draft mode=crossings % uncomment to see numbers")
+        }
+        sb.append(
+            "    \\begin{knot}[\n" +
+                    "        " + opts.joinToString(",\n        ") + "\n" +
+                    "    ]\n"
+        )
+
+        // Strand: ([closed] P1)..(P2).. ... ..(Pn)..(P{n+1});
+        val names = (1..(n + 1)).map { "P$it" }
+        val tail = names.drop(1).joinToString("..") { "($it)" }
+        sb.append("    \\strand\n")
+        sb.append("    ([closed] ${names.first()})..$tail;\n")
+
+        // ✅ Always close the environment
+        sb.append("    \\end{knot}\n")
+
+        // Optional guides — use n+1 because we emitted P{n+1}=P1
+        if (showPoints) {
+            sb.append("    \\SSTGuidesPoints{P}{${n + 1}}\n")
+        }
+
+        // TODO (optional): append exported primitives (labels, dots, lines, circles) here
+        // appendPrimitives(sb)
+
+        sb.append("    \\end{tikzpicture}\n")
+        if (wrapInFigure) sb.append("\\end{figure}\n")
+
+        return sb.toString().trimEnd()
+    }
+
+
+    // ---------- math / utils ----------
+    private enum class EditMode { ADD, MOVE, DELETE }
+    private enum class Tool { KNOT, LINE, CIRCLE, DOT, TEXT }
+
+    private fun snap(p: Point): Point {
+        val cx = canvas.width / 2; val cy = canvas.height / 2
+        val sx = round((p.x - cx).toDouble() / SUB).toInt() * SUB
+        val sy = round((p.y - cy).toDouble() / SUB).toInt() * SUB
+        return Point(cx + sx, cy + sy)
+    }
+
+    private fun fromUnits(u: Double): Int = (u * STEP).roundToInt()
+    private fun toUnits(px: Int): Double = px.toDouble() / STEP
+
+    private fun quantQ(u: Double): Double = round(u * 4.0) / 4.0                    // 0.25
+    private fun fmtQ(u: Double): String = if (abs(u - u.roundToInt()) < 1e-9) "%d".format(u.roundToInt()) else "%.2f".format(u)
+
+    private fun toGrid(p: Point): Pair<Double, Double> {
+        val cx = canvas.width / 2; val cy = canvas.height / 2
+        return Pair(toUnits(p.x - cx), -toUnits(p.y - cy))
+    }
+
+    private fun nearest(list: List<Point>, raw: Point): Int? {
+        if (list.isEmpty()) return null
+        var best = -1; var bestD = Int.MAX_VALUE
+        for (i in list.indices) {
+            val d2 = list[i].distanceSq(raw).toInt()
+            if (d2 < bestD) { bestD = d2; best = i }
+        }
+        return if (best >= 0 && bestD <= PICK_R * PICK_R * 4) best else null
+    }
+
+    private fun pickShape(raw: Point): Int? {
+        val tol2 = PICK_R * PICK_R
+        for (i in shapes.indices.reversed()) {
+            if (shapes[i].hit(raw, tol2) != null) return i
+        }
+        return null
+    }
+
+
+    private fun latexEscape(s: String): String =
+        s.replace("\\", "\\textbackslash{}")
+            .replace("{", "\\{")
+            .replace("}", "\\}")
+            .replace("%", "\\%")
+            .replace("#", "\\#")
+            .replace("_", "\\_")
+            .replace("&", "\\&")
+            .replace("^", "\\^{}")
+            .replace("~", "\\~{}")
+
+    private fun markDirty() { dirty = true }
+
+    // tiny extension helpers
+    private fun Point.distance(o: Point): Double {
+        val dx = (x - o.x).toDouble(); val dy = (y - o.y).toDouble()
+        return sqrt(dx * dx + dy * dy)
     }
 }
