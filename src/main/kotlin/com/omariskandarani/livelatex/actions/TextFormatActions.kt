@@ -13,11 +13,12 @@ import com.intellij.openapi.project.Project
  * or insert suitable templates when nothing is selected.
  */
 abstract open class BaseLatexWrapAction(private val label: String) : AnAction(label), DumbAware {
-    override fun update(e: AnActionEvent) {
-        val editor = e.getData(CommonDataKeys.EDITOR)
-        e.presentation.isEnabledAndVisible = editor != null
-    }
 
+    override fun update(e: AnActionEvent) {
+        val vFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        val ext = vFile?.extension?.lowercase()
+        e.presentation.isEnabledAndVisible = ext in setOf("tex", "sty", "tikz")
+    }
     protected fun getSelection(editor: Editor): Pair<Int, String> {
         val selModel = editor.selectionModel
         return if (selModel.hasSelection()) {
