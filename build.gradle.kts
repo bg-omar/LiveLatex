@@ -33,10 +33,11 @@ dependencies {
     intellijPlatform {
         create("IC", "2025.2")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
-
         // Add necessary plugin dependencies for compilation here, example:
         // bundledPlugin("com.intellij.java")
     }
+    // Ensure plain JUnit 4 tests can run without relying on platform base classes
+    testImplementation("junit:junit:4.13.2")
 }
 
 intellijPlatform {

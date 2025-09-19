@@ -41,7 +41,7 @@ bin/
 ### Mac OS ###
 .DS_Store
 /secrets/
-/.run/LiveLatex [publishPlugin].run.xml
+.run/LiveLatex [publishPlugin].run.xml
 
 # Ignore Gradle build output directory
 build
