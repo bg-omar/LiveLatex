@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Run IDE with Plugin" type="GradleRunConfiguration" factoryName="Gradle">
+  <configuration default="false" name="Run IDE with Plugin" type="GradleRunConfiguration" factoryName="Gradle" singleton="false">
     <log_file alias="idea.log" path="$PROJECT_DIR$/build/idea-sandbox/system/log/idea.log" />
     <ExternalSystemSettings>
       <option name="executionName" />
@@ -16,8 +16,8 @@
       </option>
       <option name="vmOptions" value="" />
     </ExternalSystemSettings>
-    <ExternalSystemDebugServerProcess>true</ExternalSystemDebugServerProcess>
-    <ExternalSystemReattachDebugProcess>true</ExternalSystemReattachDebugProcess>
+    <ExternalSystemDebugServerProcess>$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$</ExternalSystemDebugServerProcess>
+    <ExternalSystemReattachDebugProcess>$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$</ExternalSystemReattachDebugProcess>
     <EXTENSION ID="com.intellij.execution.ExternalSystemRunConfigurationJavaExtension">
       <extension name="net.ashald.envfile">
         <option name="IS_ENABLED" value="false" />
@@ -26,7 +26,7 @@
         <option name="IS_IGNORE_MISSING_FILES" value="false" />
         <option name="IS_ENABLE_EXPERIMENTAL_INTEGRATIONS" value="false" />
         <ENTRIES>
-          <ENTRY IS_ENABLED="true" PARSER="runconfig" IS_EXECUTABLE="false" />
+          <ENTRY IS_ENABLED="$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$" PARSER="runconfig" IS_EXECUTABLE="false" />
         </ENTRIES>
       </extension>
     </EXTENSION>
