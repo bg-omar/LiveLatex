@@ -15,6 +15,10 @@ import java.time.format.DateTimeFormatter
  */
 object LatexHtml {
 
+    // Last computed line maps between original main file lines and merged (inlined) lines
+    private var lineMapOrigToMergedJson: String? = null
+    private var lineMapMergedToOrigJson: String? = null
+
     // ─────────────────────────── PUBLIC ENTRY ───────────────────────────
 
     private const val BEGIN_DOCUMENT = "\\begin{document}"
@@ -30,7 +34,7 @@ object LatexHtml {
         val srcNoComments = stripLineComments(texSource)
         val userMacros    = extractNewcommands(srcNoComments)
         val macrosJs      = buildMathJaxMacros(userMacros)
-        val titleMeta     = extractTitleMeta(srcNoComments)   // ← NEW
+        val titleMeta     = extractTitleMeta(srcNoComments)
 
         // Find body & absolute line offset of the first body line
         val beginIdx  = texSource.indexOf(BEGIN_DOCUMENT)
@@ -42,7 +46,8 @@ object LatexHtml {
         val body0 = stripPreamble(texSource)
         val body1 = stripLineComments(body0)
         val body2 = sanitizeForMathJaxProse(body1)
-        val body3 = applyProseConversions(body2, titleMeta)   // ← pass meta
+        val body2b = convertIncludeGraphics(body2) // <-- Add image conversion here
+        val body3 = applyProseConversions(body2b, titleMeta)
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)
 
@@ -51,6 +56,8 @@ object LatexHtml {
 
         return buildHtml(withAnchors, macrosJs)
     }
+
+
 
     // ── Shared tiny helpers (define ONCE) ─────────────────────────────────────────
     private fun isEscaped(s: String, i: Int): Boolean {
@@ -98,14 +105,19 @@ object LatexHtml {
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
+  <meta charset=\"UTF-8\">
   <title>LaTeX Preview</title>
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' 'unsafe-inline' data: blob: https://cdn.jsdelivr.net;
+  <meta http-equiv=\"Content-Security-Policy\"
+        content=\"default-src 'self' 'unsafe-inline' data: blob: https://cdn.jsdelivr.net;
                  script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net;
                  style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;
                  img-src * data: blob:;
-                 font-src https://cdn.jsdelivr.net data:;">
+                 font-src https://cdn.jsdelivr.net data:;\">
+  <script>
+    // Line maps injected from Kotlin (orig->merged, merged->orig)
+    window.__llO2M = ${lineMapOrigToMergedJson ?: "[]"};
+    window.__llM2O = ${lineMapMergedToOrigJson ?: "[]"};
+  </script>
   <style>
     :root { --bg:#ffffff; --fg:#111827; --muted:#6b7280; --border:#e5e7eb; }
     @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --fg:#e5e7eb; --muted:#9ca3af; --border:#2d3748; } }
@@ -164,7 +176,12 @@ object LatexHtml {
     .multicol-wrap { display: flex; gap: 1em; margin: 0.5em 0; }
     .multicol-col { flex: 1 1 0; padding: 0 0.5em; }
     strong, em, u, small { display: inline; }
-
+    /* Preview caret marker */
+    .caret-mark { display:inline-block; border-left: 1.5px solid #4F46E5; height: 1em; margin-left:-0.75px; animation: llblink 1s step-end infinite; }
+    @keyframes llblink { 50% { border-color: transparent; } }
+    .sync-target { outline: 2px dashed #10b981; outline-offset: 2px; }
+    #ll-debug { position: fixed; right: 10px; bottom: 10px; background: rgba(0,0,0,0.6); color: #fff; font: 12px/1.35 monospace; padding: 8px 10px; border-radius: 6px; z-index: 9999; max-width: 46vw; max-height: 40vh; overflow: auto; white-space: pre-wrap; display: none; }
+    #ll-debug.visible { display: block; }
   </style>
   <script>
     // MathJax config
@@ -233,13 +250,26 @@ object LatexHtml {
   </script>
   <script>
   (function () {
+    const dbgEl = () => document.getElementById('ll-debug');
+    function updateDebug(data){
+      try {
+        const el = dbgEl();
+        if (!el) return;
+        const ts = new Date().toLocaleTimeString();
+        const prev = el.textContent || '';
+        el.textContent = "${'$'}{ts} ${'$'}{JSON.stringify(data)}\n" + prev;
+        el.classList.add('visible');
+      } catch(_){}
+    }
+
     const sync = {
       idx: [],
+      lastEl: null,
       init() {
         this.idx = Array.from(document.querySelectorAll('.syncline'))
                         .map(el => ({ el, abs: +el.dataset.abs || 0 }));
       },
-      scrollToAbs(line, mode = 'center') {
+      scrollToAbs(line, mode = 'center', meta) {
         if (!this.idx.length) this.init();
         const arr = this.idx;
         if (!arr.length) return;
@@ -251,6 +281,10 @@ object LatexHtml {
         }
         const target = arr[ans] && arr[ans].el;
         if (!target) return;
+        if (this.lastEl) this.lastEl.classList.remove('sync-target');
+        target.classList.add('sync-target');
+        this.lastEl = target;
+
         if (mode === 'center') {
           const r = target.getBoundingClientRect();
           const y = window.scrollY + r.top - (window.innerHeight/2);
@@ -259,6 +293,7 @@ object LatexHtml {
           target.scrollIntoView({block:'start', inline:'nearest'});
           window.scrollBy(0, -8);
         }
+        updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta});
       }
     };
     window.sync = sync;
@@ -270,20 +305,39 @@ object LatexHtml {
     window.addEventListener('message', (ev) => {
       const d = ev.data || {};
       if (d && d.type === 'sync-line' && Number.isFinite(d.abs)) {
-        sync.scrollToAbs(d.abs, d.mode || 'center');
+        let abs = d.abs;
+        // Map original editor line -> merged preview line, if available
+        if (Array.isArray(window.__llO2M) && window.__llO2M.length && abs >= 1 && abs <= window.__llO2M.length) {
+          abs = window.__llO2M[abs - 1];
+        }
+        updateDebug({event:'host-sync', origAbs: d.abs, mergedAbs: abs, source: d.source || '', mode: d.mode || 'center'});
+        sync.scrollToAbs(abs, d.mode || 'center', {source: d.source});
       }
     }, false);
   })();
 </script>
 <script>
   (function () {
+    const dbgEl = () => document.getElementById('ll-debug');
+    function updateDebug(data){
+      try {
+        const el = dbgEl();
+        if (!el) return;
+        const ts = new Date().toLocaleTimeString();
+        const prev = el.textContent || '';
+        el.textContent = "${'$'}{ts} ${'$'}{JSON.stringify(data)}\n" + prev;
+        el.classList.add('visible');
+      } catch(_){}
+    }
+
     const sync = {
       idx: [],
+      lastEl: null,
       init() {
         this.idx = Array.from(document.querySelectorAll('.syncline'))
                         .map(el => ({ el, abs: +el.dataset.abs || 0 }));
       },
-      scrollToAbs(line, mode = 'center') {
+      scrollToAbs(line, mode = 'center', meta) {
         if (!this.idx.length) this.init();
         const arr = this.idx;
         if (!arr.length) return;
@@ -296,11 +350,15 @@ object LatexHtml {
         }
         const target = arr[ans] && arr[ans].el;
         if (!target) return;
+        if (this.lastEl) this.lastEl.classList.remove('sync-target');
+        target.classList.add('sync-target');
+        this.lastEl = target;
 
         // center the target
         const r = target.getBoundingClientRect();
         const y = window.scrollY + r.top - (window.innerHeight / 2);
         window.scrollTo({ top: Math.max(0, y) });
+        updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta});
       }
     };
     window.sync = sync;
@@ -309,13 +367,108 @@ object LatexHtml {
     window.addEventListener('message', (ev) => {
       const d = ev.data || {};
       if (d.type === 'sync-line' && Number.isFinite(d.abs)) {
-        sync.scrollToAbs(d.abs, d.mode || 'center');
+        let abs = d.abs;
+        if (Array.isArray(window.__llO2M) && window.__llO2M.length && abs >= 1 && abs <= window.__llO2M.length) {
+          abs = window.__llO2M[abs - 1];
+        }
+        updateDebug({event:'host-sync', origAbs: d.abs, mergedAbs: abs, source: d.source || '', mode: d.mode || 'center'});
+        sync.scrollToAbs(abs, d.mode || 'center', {source: d.source});
       }
     }, false);
   })();
 </script>
 
 
+  <script>
+    // Click-to-caret sync (from preview to editor)
+    (function(){
+      function getPrevSyncline(node){
+        let n = node;
+        while (n && n !== document.body) {
+          // Walk previous siblings and up
+          let p = n;
+          while (p) {
+            if (p.nodeType === 1 && p.classList && p.classList.contains('syncline')) return p;
+            // dive into previous sibling's last descendant
+            let prev = p.previousSibling;
+            while (prev) {
+              if (prev.nodeType === 1 && prev.classList && prev.classList.contains('syncline')) return prev;
+              if (prev.lastElementChild) { p = prev.lastElementChild; prev = null; continue; }
+              prev = prev.previousSibling;
+            }
+            p = p.parentNode;
+          }
+          n = n.parentNode;
+        }
+        return null;
+      }
+
+      function placeCaretMarker(range){
+        try {
+          document.getElementById('ll-caret')?.remove();
+          const mark = document.createElement('span');
+          mark.id = 'll-caret';
+          mark.className = 'caret-mark';
+          const r = range.cloneRange();
+          r.collapse(true);
+          r.insertNode(mark);
+          return mark;
+        } catch(e) { return null; }
+      }
+
+      document.addEventListener('click', function(e){
+        const wrap = document.querySelector('.full-text');
+        if (!wrap) return;
+        if (!wrap.contains(e.target)) return;
+
+        let range = null;
+        if (document.caretRangeFromPoint) {
+          range = document.caretRangeFromPoint(e.clientX, e.clientY);
+        } else if (document.caretPositionFromPoint) {
+          const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+          range = document.createRange();
+          range.setStart(pos.offsetNode, pos.offset);
+          range.collapse(true);
+        }
+        if (!range) return;
+
+        const anchor = getPrevSyncline(range.startContainer);
+        const baseAbs = anchor ? (parseInt(anchor.getAttribute('data-abs')||'0')||0) : 0;
+        const mergedLineAbs = baseAbs + 1; // anchors are after line breaks → prev line
+        // Map merged preview line back to original editor line if available
+        let origLineAbs = mergedLineAbs;
+        if (Array.isArray(window.__llM2O) && window.__llM2O.length && mergedLineAbs >= 1 && mergedLineAbs <= window.__llM2O.length) {
+          origLineAbs = window.__llM2O[mergedLineAbs - 1];
+        }
+
+        // try to extract word around caret
+        let word = '';
+        try {
+          const node = range.startContainer;
+          if (node && node.nodeType === 3) {
+            const t = node.textContent || '';
+            let i = range.startOffset;
+            let a = i, b = i;
+            const rx = /[\p{L}\p{N}_]/u;
+            while (a>0 && rx.test(t[a-1])) a--;
+            while (b<t.length && rx.test(t[b])) b++;
+            word = t.slice(a,b);
+          }
+        } catch(_) {}
+
+        const mark = placeCaretMarker(range);
+        if (mark) {
+          mark.scrollIntoView({block:'nearest', inline:'nearest'});
+        }
+
+        try { if (typeof updateDebug === 'function') updateDebug({event:'preview-click', mergedAbs: mergedLineAbs, origAbs: origLineAbs, word}); } catch(_) {}
+
+        if (window.__jbcefMoveCaret) {
+          try { window.__jbcefMoveCaret({ line: origLineAbs, word: word }); } catch(_) {}
+        }
+      }, false);
+    })();
+  </script>
 </head>
 <body>
   <div class="floating-toolbar" style="">
@@ -326,6 +479,17 @@ object LatexHtml {
   <div class="wrap mj">
     <div class="full-text">$fullTextHtml</div>
   </div>
+  <div id="ll-debug" title="LiveLaTeX debug HUD (press D to toggle)"></div>
+  <script>
+    (function(){
+      document.addEventListener('keydown', function(e){
+        if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          var el = document.getElementById('ll-debug'); if (!el) return;
+          el.classList.toggle('visible');
+        }
+      }, false);
+    })();
+  </script>
 </body>
 </html>
 """.trimIndent()
@@ -965,6 +1129,9 @@ object LatexHtml {
             }
         }
 
+        // Split problematic align environments with multiple \tag{...} into separate blocks
+        s = convertAlignWithMultipleTagsToBlocks(s)
+
         // Math environments to preserve verbatim (add bmatrix, pmatrix, etc.)
         val mathEnvs = "(?:equation\\*?|align\\*?|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?|bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|smallmatrix)"
         val keepEnvs = "(?:$mathEnvs|tabular|table|figure|center|thebibliography)"
@@ -1302,7 +1469,8 @@ object LatexHtml {
                 val opts = Regex("""\\includegraphics(?:\[([^\]]*)])?\{([^}]*)\}""").find(inc.value)
                 val (optStr, path) = if (opts != null) opts.groupValues[1] to opts.groupValues[2] else "" to inc.groupValues[1]
                 val style = includeGraphicsStyle(optStr)
-                imgHtml = """<img src="${escapeHtmlKeepBackslashes(path)}" alt="" style="$style">"""
+                val resolved = resolveImagePath(path)
+                imgHtml = """<img src="$resolved" alt="" style="$style">"""
                 body = body.replace(inc.value, "")
             }
 
@@ -1324,12 +1492,55 @@ object LatexHtml {
         }
     }
 
-    private fun convertIncludeGraphics(s: String): String {
-        // For standalone \includegraphics outside figure
-        return s.replace(Regex("""\\includegraphics(?:\[([^\]]*)])?\{([^}]*)\}""")) { m ->
-            val style = includeGraphicsStyle(m.groupValues[1])
-            val path  = m.groupValues[2]
-            """<img src="${escapeHtmlKeepBackslashes(path)}" alt="" style="$style">"""
+    private fun toFileUrl(f: File): String = f.toURI().toString()
+
+    private fun resolveImagePath(path: String, baseDirFallback: String = "figures"): String {
+        val p = path.trim()
+        if (p.isEmpty()) return ""
+        // If already a URL (http, https, data), pass through
+        if (p.startsWith("http://") || p.startsWith("https://") || p.startsWith("data:")) return p
+
+        // Determine base directory: prefer currentBaseDir (directory of main .tex file)
+        val baseDir = currentBaseDir?.let { File(it) } ?: File("")
+
+        // If absolute filesystem path, convert directly to file URL
+        val abs = File(p)
+        if (abs.isAbsolute && abs.exists()) return toFileUrl(abs)
+
+        // Build candidate locations relative to main file dir
+        val rel = File(baseDir, p)
+        val relFigures = File(baseDir, "figures${File.separator}$p")
+
+        val hasExt = p.contains('.')
+        val exts = listOf(".png", ".jpg", ".jpeg", ".svg", ".pdf")
+
+        fun existingWithExt(f: File): String? {
+            if (hasExt) return if (f.exists()) toFileUrl(f) else null
+            for (e in exts) {
+                val c = File(f.parentFile ?: baseDir, f.name + e)
+                if (c.exists()) return toFileUrl(c)
+            }
+            return null
+        }
+
+        existingWithExt(rel)?.let { return it }
+        existingWithExt(relFigures)?.let { return it }
+
+        // Fallback: return file URL to the first candidate even if missing (browser shows broken img but path is absolute)
+        val fallback = if (hasExt) rel else File(rel.parentFile ?: baseDir, rel.name + exts.first())
+        return toFileUrl(fallback)
+    }
+
+    private fun convertIncludeGraphics(latex: String): String {
+        val rx = Regex("""\\includegraphics(\[.*?\])?\{([^}]+)\}""")
+        return rx.replace(latex) { match ->
+            val opts = match.groups[1]?.value ?: ""
+            val path = match.groups[2]?.value ?: ""
+            val resolvedPath = resolveImagePath(path)
+            val widthMatch = Regex("width=([0-9.]+)\\\\?\\w*").find(opts)
+            val width = widthMatch?.groups?.get(1)?.value ?: ""
+            val style = if (width.isNotEmpty()) " style=\"max-width:${(width.toFloatOrNull()?.let { it * 100 } ?: 70).toInt()}%\"" else " style=\"max-width:70%\""
+            "<img src=\"$resolvedPath\" alt=\"figure\"$style>"
         }
     }
 
@@ -1384,9 +1595,85 @@ object LatexHtml {
         return result
     }
 
+    private var currentBaseDir: String? = null
+
     fun wrapWithInputs(texSource: String, mainFilePath: String): String {
         val baseDir = File(mainFilePath).parent ?: ""
-        val fullSource = inlineInputs(texSource, baseDir)
-        return wrap(fullSource)
+        currentBaseDir = baseDir
+
+        // Build marked source to compute orig→merged line mapping across \input/\include expansions
+        val markerPrefix = "%%LLM"
+        val origLines = texSource.split('\n')
+        val marked = buildString(texSource.length + origLines.size * 10) {
+            origLines.forEachIndexed { idx, line ->
+                append(markerPrefix).append(idx + 1).append("%%").append(line)
+                if (idx < origLines.lastIndex) append('\n')
+            }
+        }
+        val inlinedMarked = inlineInputs(marked, baseDir)
+
+        // Compute mapping orig line (1-based) -> merged line (1-based)
+        val o2m = IntArray(origLines.size) { it + 1 }
+        var searchFrom = 0
+        for (i in 1..origLines.size) {
+            val token = markerPrefix + i + "%%"
+            val idx = inlinedMarked.indexOf(token, searchFrom)
+            val pos = if (idx >= 0) idx else inlinedMarked.indexOf(token)
+            if (pos >= 0) {
+                val before = inlinedMarked.substring(0, pos)
+                val mergedLine = before.count { it == '\n' } + 1
+                o2m[i - 1] = mergedLine
+                if (idx >= 0) searchFrom = idx + token.length
+            } else {
+                // token not found (rare): fallback to previous mapping or 1
+                o2m[i - 1] = if (i > 1) o2m[i - 2] else 1
+            }
+        }
+
+        // Strip markers
+        val fullSource = inlinedMarked.replace(Regex("""${markerPrefix}\d+%%"""), "")
+
+        // Build inverse mapping merged -> original using step function (last original line at/ before m)
+        val mergedLinesCount = fullSource.count { it == '\n' } + 1
+        val m2o = IntArray(mergedLinesCount) { 1 }
+        var j = 0 // index into o2m (0-based)
+        for (m in 1..mergedLinesCount) {
+            while (j + 1 < o2m.size && o2m[j + 1] <= m) j++
+            m2o[m - 1] = j + 1 // original line number (1-based)
+        }
+
+        // Cache JSON strings for HTML embedding
+        lineMapOrigToMergedJson = o2m.joinToString(prefix = "[", postfix = "]") { it.toString() }
+        lineMapMergedToOrigJson = m2o.joinToString(prefix = "[", postfix = "]") { it.toString() }
+
+        val html = wrap(fullSource)
+        // keep baseDir for subsequent renders; do not clear to allow incremental refreshes
+        return html
     }
 }
+    private fun convertAlignWithMultipleTagsToBlocks(s: String): String {
+        // Matches both align and align* environments lazily with DOTALL
+        val rx = Regex("""\\begin\{align(\*?)\}(.+?)\\end\{align\1\}""", RegexOption.DOT_MATCHES_ALL)
+        return rx.replace(s) { m ->
+            val starred = m.groupValues[1].isNotEmpty()
+            val body = m.groupValues[2].trim()
+            // Count occurrences of \tag{...}
+            val tagCount = Regex("""\\tag\{[^}]*}""").findAll(body).count()
+            if (tagCount < 2) {
+                // Leave unchanged if not the problematic case
+                m.value
+            } else {
+                // Split on unescaped \\\\ with optional [..] spacing, remove empties
+                val parts = Regex("""(?<!\\)\\\\(?:\s*\[[^]]*])?\s*""")
+                    .split(body)
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                if (parts.isEmpty()) return@replace m.value
+                val blocks = parts.joinToString("\n\n") { line ->
+                    // Wrap each line so alignment markers & are handled by aligned
+                    """\\[\n\\begin{aligned}\n$line\n\\end{aligned}\n\\]"""
+                }
+                blocks
+            }
+        }
+    }

@@ -52,5 +52,17 @@
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
+        
+        <!-- Text formatting actions submenu -->
+        <group id="LiveLaTeX.TextFormatGroup" text="LaTeX: Format Selection" popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="LiveLaTeX.Text.Bold" class="com.omariskandarani.livelatex.actions.MakeTextBoldAction" text="bold = \\textbf{TEXT}"/>
+            <action id="LiveLaTeX.Text.Italic" class="com.omariskandarani.livelatex.actions.MakeTextItalicAction" text="italic = \\textit{TEXT}"/>
+            <action id="LiveLaTeX.Text.TexOrPdf" class="com.omariskandarani.livelatex.actions.WrapWithTexorpdfstringAction" text="text-pdf = \\texorpdfstring{TEXT}{TEXT}"/>
+            <action id="LiveLaTeX.Text.Emph" class="com.omariskandarani.livelatex.actions.MakeTextEmphAction" text="emph = \\emph{TEXT}"/>
+            <action id="LiveLaTeX.Text.Equation" class="com.omariskandarani.livelatex.actions.InsertEquationEnvironmentAction" text="equation environment"/>
+            <action id="LiveLaTeX.Text.Cite" class="com.omariskandarani.livelatex.actions.MakeTextCiteAction" text="cite = \\cite{TEXT}"/>
+        </group>
+        
     </actions>
 </idea-plugin>

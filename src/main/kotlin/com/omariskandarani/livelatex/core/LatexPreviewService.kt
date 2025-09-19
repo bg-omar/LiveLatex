@@ -12,6 +12,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.Alarm
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
@@ -26,6 +27,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private var pageReady = false
     private val pendingJs = ArrayDeque<String>()
     private var boundEditor: Editor? = null
+    private var jsMoveCaret: JBCefJSQuery? = null
 
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private val debounceMs = 150
@@ -38,13 +40,13 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
     private val caretListener = object : CaretListener {
         override fun caretPositionChanged(event: CaretEvent) {
-            syncCenter(event.editor)
+            syncToCaret(event.editor)
         }
     }
 
     private val visibleListener = VisibleAreaListener { e: VisibleAreaEvent ->
         val editor = e.editor ?: return@VisibleAreaListener
-        syncCenter(editor)
+        syncToViewportCenter(editor)
     }
 
     // ToolWindow width helper
@@ -82,6 +84,36 @@ class LatexPreviewService(private val project: Project) : Disposable {
         browser = b
         pageReady = false
 
+        // Set up JS bridge for clicks from preview → move caret in editor
+        jsMoveCaret = JBCefJSQuery.create(b).also { query ->
+            Disposer.register(this, query)
+            query.addHandler { payload ->
+                try {
+                    val line = Regex("""\"line\"\s*:\s*(\d+)""").find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    val word = Regex("""\"word\"\s*:\s*\"(.*?)\"""").find(payload)?.groupValues?.getOrNull(1) ?: ""
+                    if (line != null) {
+                        ApplicationManager.getApplication().invokeLater {
+                            val fem = FileEditorManager.getInstance(project)
+                            val ed = fem.selectedTextEditor ?: return@invokeLater
+                            val doc = ed.document
+                            val lineIdx = (line - 1).coerceIn(0, doc.lineCount - 1)
+                            val start = doc.getLineStartOffset(lineIdx)
+                            val end = doc.getLineEndOffset(lineIdx)
+                            var caret = start
+                            if (word.isNotEmpty()) {
+                                val text = doc.charsSequence.subSequence(start, end).toString()
+                                val idx = text.indexOf(word)
+                                if (idx >= 0) caret = start + idx
+                            }
+                            ed.caretModel.moveToOffset(caret)
+                            ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
+                        }
+                    }
+                } catch (_: Throwable) {}
+                JBCefJSQuery.Response("OK")
+            }
+        }
+
         // Load-state tracker so we can flush queued JS once the page is ready
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(br: CefBrowser?, isLoading: Boolean, canGoBack: Boolean, canGoForward: Boolean) {
@@ -114,8 +146,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
         editor?.caretModel?.addCaretListener(caretListener, this)
         editor?.scrollingModel?.addVisibleAreaListener(visibleListener, this)
         if (editor != null) {
-            // Initial center sync
-            syncCenter(editor)
+            // Initial sync to caret location
+            syncToCaret(editor)
         }
     }
 
@@ -128,20 +160,23 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
 
-    private fun syncCenter(editor: Editor) {
+    private fun syncToViewportCenter(editor: Editor) {
         // Center-of-viewport absolute line (1-based)
         val area = editor.scrollingModel.visibleArea
         val midY = area.y + area.height / 2
         val vis = editor.xyToVisualPosition(Point(0, midY))
         val log = editor.visualToLogicalPosition(vis)
         val abs = log.line + 1
-
-        // Post to the page (decouples us from MathJax readiness)
-        postSync(abs)
+        postSync(abs, source = "scroll")
     }
 
-    private fun postSync(abs: Int) {
-        eval("""window.postMessage({type:'sync-line', abs:$abs}, '*');""")
+    private fun syncToCaret(editor: Editor) {
+        val abs = editor.caretModel.logicalPosition.line + 1
+        postSync(abs, source = "caret")
+    }
+
+    private fun postSync(abs: Int, source: String) {
+        eval("""window.postMessage({type:'sync-line', abs:$abs, source:'$source'}, '*');""")
     }
 
     private fun eval(js: String) {
@@ -185,8 +220,22 @@ class LatexPreviewService(private val project: Project) : Disposable {
         ApplicationManager.getApplication().invokeLater {
             pageReady = false
             browser?.loadHTML(html, "http://latex-preview.local/")
+            // Define the bridge function for preview → IDE
+            jsMoveCaret?.let { q ->
+                val def = (
+                    """
+                    window.__jbcefMoveCaret = function(obj){
+                      try {
+                        var s = (typeof obj === 'string') ? obj : JSON.stringify(obj);
+                        ${q.inject("s")}
+                      } catch(e) {}
+                    };
+                    """
+                ).trimIndent()
+                eval(def)
+            }
             // Queue the initial sync; it will run after the page finishes loading.
-            postSync(caretLine)
+            postSync(caretLine, source = "initial")
         }
     }
 
