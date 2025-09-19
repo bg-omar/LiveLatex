@@ -91,6 +91,7 @@
 
 \title{Sample \LaTeX}
 % Document
+\usepackage{graphicx}
 \begin{document}
     \maketitle
 
@@ -115,7 +116,28 @@
         and also like this \(e^{i\pi} + 1 = 0\) with \\( ... \).
 
         But does it support \textbf{bold}, \textit{italic} and \underline{underline} text?.
+
     \end{abstract}
+
+    \begin{align}
+        3\frac{\dot a_\mathcal{D}^{\,2}}{a_\mathcal{D}^{\,2}}
+        &= \frac{8\pi G}{c^2}\,\langle \rho c^2 \rangle_\mathcal{D}
+        - \tfrac{1}{2}\,\langle \mathcal{R} \rangle_\mathcal{D}
+        - \tfrac{1}{2}\,\mathcal{Q}_\mathcal{D}, \tag{F1}\label{F1}\\
+        3\frac{\ddot a_\mathcal{D}}{a_\mathcal{D}}
+        &= -\frac{4\pi G}{c^2}\,\langle \rho c^2 \rangle_\mathcal{D}
+        + \mathcal{Q}_\mathcal{D}, \tag{F2}\label{F2}
+    \end{align}
+
+
+    Shown as plain text in the HTML:
+```
+\[\n\begin{aligned}\n3\frac{\dot a_\mathcal{D}^{\,2}}{a_\mathcal{D}^{\,2}} &= \frac{8\pi G}{c^2}\,\langle \rho c^2 \rangle_\mathcal{D} - \tfrac{1}{2}\,\langle \mathcal{R} \rangle_\mathcal{D} - \tfrac{1}{2}\,\mathcal{Q}_\mathcal{D}, \tag{F1}\n\end{aligned}\n\]
+
+\[\n\begin{aligned}\n3\frac{\ddot a_\mathcal{D}}{a_\mathcal{D}} &= -\frac{4\pi G}{c^2}\,\langle \rho c^2 \rangle_\mathcal{D} + \mathcal{Q}_\mathcal{D}, \tag{F2}\n\end{aligned}\n\]
+```
+
+
 
     \section{Text}
     Text\quad paragraphs and ligatures goes here.
@@ -152,7 +174,6 @@
 \paragraph{New Paragraph  $\omegas\quad$ } This is a new paragraph
 
 
-
 % Example table
 \begin{table}[h!]
   \begin{center}
@@ -168,6 +189,13 @@
     \end{tabular}
   \end{center}
 \end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.7\linewidth]{figures/Screenshot 2023-04-07 145654.png}
+  \caption{Screenshot 2023 04 07 145654}
+  \label{fig:screenshot-2023-04-07-145654}
+\end{figure}
 
 
     \section{Picture}
