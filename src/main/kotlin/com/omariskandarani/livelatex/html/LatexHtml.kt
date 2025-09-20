@@ -30,6 +30,12 @@ object LatexHtml {
         RegexOption.DOT_MATCHES_ALL
     )
 
+    private fun slugify(s: String): String =
+        s.lowercase()
+            .replace(Regex("""\\[A-Za-z@]+"""), "")   // drop TeX control sequences
+            .replace(Regex("""[^a-z0-9]+"""), "-")
+            .trim('-')
+
     fun wrap(texSource: String): String {
         val srcNoComments = stripLineComments(texSource)
         val userMacros    = extractNewcommands(srcNoComments)
@@ -47,12 +53,12 @@ object LatexHtml {
         val body1 = stripLineComments(body0)
         val body2 = sanitizeForMathJaxProse(body1)
         val body2b = convertIncludeGraphics(body2) // <-- Add image conversion here
-        val body3 = applyProseConversions(body2b, titleMeta)
+        val body3 = applyProseConversions(body2b, titleMeta, absOffset)
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)
-
+        val body4c = fixInlineBoundarySpaces(body4)
         // Insert anchors (no blanket escaping here; we preserve math)
-        val withAnchors = injectLineAnchors(body4, absOffset, everyN = 1)
+        val withAnchors = injectLineAnchors(body4c, absOffset, everyN = 1)
 
         return buildHtml(withAnchors, macrosJs)
     }
@@ -118,6 +124,14 @@ object LatexHtml {
     window.__llO2M = ${lineMapOrigToMergedJson ?: "[]"};
     window.__llM2O = ${lineMapMergedToOrigJson ?: "[]"};
   </script>
+  <script>
+    // Re-entrancy / echo guards
+    window.__llGuards = {
+      suppressEmitUntil: 0, // while > now: preview won't emit preview-mark
+      echoId: null,         // last id we sent to editor
+      echoUntil: 0          // ignore editor echoes for this id until this time
+    };
+  </script>
   <style>
     :root { --bg:#ffffff; --fg:#111827; --muted:#6b7280; --border:#e5e7eb; }
     @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --fg:#e5e7eb; --muted:#9ca3af; --border:#2d3748; } }
@@ -182,6 +196,74 @@ object LatexHtml {
     .sync-target { outline: 2px dashed #10b981; outline-offset: 2px; }
     #ll-debug { position: fixed; right: 10px; bottom: 10px; background: rgba(0,0,0,0.6); color: #fff; font: 12px/1.35 monospace; padding: 8px 10px; border-radius: 6px; z-index: 9999; max-width: 46vw; max-height: 40vh; overflow: auto; white-space: pre-wrap; display: none; }
     #ll-debug.visible { display: block; }
+    
+    /***** Top bar (chapters + zoom) *****/
+    .ll-topbar {
+      position: fixed;
+      top: 0;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .ll-topbar .title {
+      font-weight: 600;
+      opacity: .85;
+      margin-right: 8px;
+      white-space: nowrap;
+    }
+    .ll-topbar .chapters {
+      min-width: 220px;
+      max-width: 60vw;
+    }
+    .ll-topbar select {
+      width: 100%;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--fg);
+      border-radius: 6px;
+    }
+    .ll-topbar .spacer { flex: 1 1 auto; }
+    .ll-topbar .btn {
+      font-size: 14px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .ll-topbar .btn:hover { background: var(--border); }
+    
+    /* Topbar hide/show */
+    .ll-topbar {
+      transition: transform .22s ease, opacity .22s ease;
+      will-change: transform, opacity;
+    }
+    .ll-topbar.is-hidden {
+      transform: translateY(-110%);
+      opacity: 0;
+    }
+    .ll-topbar.is-pinned {
+      transform: none !important;
+      opacity: 1 !important;
+    }
+    
+    /* Pin control styling */
+    .ll-topbar .pin {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 8px;
+      opacity: .9;
+      user-select: none;
+    }
+    .ll-topbar .pin input { accent-color: currentColor; }
+
   </style>
   <script>
     // MathJax config
@@ -201,285 +283,217 @@ object LatexHtml {
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
-  <script>
-    // Floating toolbar scroll logic
-    (function() {
-      let lastScrollY = window.scrollY;
-      let toolbar = null;
-      let hideTimeout = null;
-      function showToolbar() {
-        if (!toolbar) toolbar = document.querySelector('.floating-toolbar');
-        if (toolbar) {
-          toolbar.classList.add('visible');
-          clearTimeout(hideTimeout);
-          hideTimeout = setTimeout(() => toolbar.classList.remove('visible'), 5000);
-        }
-      }
-      function hideToolbar() {
-        if (!toolbar) toolbar = document.querySelector('.floating-toolbar');
-        if (toolbar) toolbar.classList.remove('visible');
-      }
-      window.addEventListener('scroll', function() {
-        const currentY = window.scrollY;
-        if (currentY < lastScrollY) {
-          // Scrolling up
-          showToolbar();
-        } else if (currentY > lastScrollY) {
-          // Scrolling down
-          hideToolbar();
-        }
-        lastScrollY = currentY;
-      });
-      window.addEventListener('DOMContentLoaded', function() {
-        toolbar = document.querySelector('.floating-toolbar');
-        // Always show on load for a moment
-        showToolbar();
-      });
-    })();
-    // Zoom logic
-    window.setZoom = (factor) => {
-      window._zoom = window._zoom || 1.0;
-      window._zoom = Math.max(0.5, Math.min(window._zoom * factor, 3.0));
-      var mj = document.querySelector('.mj');
-      if (mj) mj.style.fontSize = (16 * window._zoom) + 'px';
-    };
-    window.addEventListener('DOMContentLoaded', function() {
-      document.getElementById('zoom-in')?.addEventListener('click', function() { window.setZoom(1.15); });
-      document.getElementById('zoom-out')?.addEventListener('click', function() { window.setZoom(1/1.15); });
-    });
-  </script>
-  <script>
-  (function () {
-    const dbgEl = () => document.getElementById('ll-debug');
-    function updateDebug(data){
-      try {
-        const el = dbgEl();
-        if (!el) return;
-        const ts = new Date().toLocaleTimeString();
-        const prev = el.textContent || '';
-        el.textContent = "${'$'}{ts} ${'$'}{JSON.stringify(data)}\n" + prev;
-        el.classList.add('visible');
-      } catch(_){}
+
+ <script>
+(function () {
+  const dbgEl = () => document.getElementById('ll-debug');
+  let lastT = 0, lastSig = '';
+
+  function updateDebug(data){
+    const el = dbgEl(); if (!el) return;
+    const now = Date.now();
+    if (now - lastT < 150) return;
+    lastT = now;
+
+    const sig = data.event + '|' + JSON.stringify(data);
+    if (sig === lastSig) return;
+    lastSig = sig;
+
+    data.scrollY = window.scrollY;
+    data.viewportHeight = window.innerHeight;
+    if (data.event === 'scrollToAbs' && window.sync && window.sync.lastEl) {
+      const r = window.sync.lastEl.getBoundingClientRect();
+      data.targetTop = r.top;
+      data.targetAbs = window.sync.lastEl.dataset.abs;
     }
+    if (!window.__llDebugMapsPrinted) {
+      data.llO2M = window.__llO2M;
+      data.llM2O = window.__llM2O;
+      window.__llDebugMapsPrinted = true;
+    }
+    const ts = new Date().toLocaleTimeString();
+    const prev = el.textContent || '';
+    el.textContent = ts + ' ' + JSON.stringify(data) + '\n' + prev;
+    const lines = el.textContent.split('\n');
+    if (lines.length > 200) el.textContent = lines.slice(0, 200).join('\n');
+    el.classList.add('visible');
+  }
 
-    const sync = {
-      idx: [],
-      lastEl: null,
-      init() {
-        this.idx = Array.from(document.querySelectorAll('.syncline'))
-                        .map(el => ({ el, abs: +el.dataset.abs || 0 }));
-      },
-      scrollToAbs(line, mode = 'center', meta) {
-        if (!this.idx.length) this.init();
-        const arr = this.idx;
-        if (!arr.length) return;
-        // binary search: last anchor with abs <= line
-        let lo=0, hi=arr.length-1, ans=0;
-        while (lo <= hi) {
-          const mid = (lo+hi) >> 1;
-          if (arr[mid].abs <= line) { ans = mid; lo = mid+1; } else { hi = mid-1; }
-        }
-        const target = arr[ans] && arr[ans].el;
-        if (!target) return;
-        if (this.lastEl) this.lastEl.classList.remove('sync-target');
-        target.classList.add('sync-target');
-        this.lastEl = target;
+  // === NEW state for idempotent scrolls ===
+  let _lastTargetAbs = -1;
+  let _lastPlannedTop = -1;
+  let _lastScrollTs = 0;
 
-        if (mode === 'center') {
-          const r = target.getBoundingClientRect();
-          const y = window.scrollY + r.top - (window.innerHeight/2);
-          window.scrollTo({ top: Math.max(0, y) });
-        } else {
-          target.scrollIntoView({block:'start', inline:'nearest'});
-          window.scrollBy(0, -8);
-        }
-        updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta});
+  const sync = {
+    idx: [], lastEl: null,
+    init(){ this.idx = Array.from(document.querySelectorAll('.syncline')).map(el => ({ el, abs:+el.dataset.abs||0 })); },
+    scrollToAbs(line, mode='center', meta){
+      if (!this.idx.length) this.init();
+      const arr = this.idx; if (!arr.length) return;
+
+      // binary search: last anchor with abs <= line
+      let lo=0, hi=arr.length-1, ans=0;
+      while (lo<=hi){ const mid=(lo+hi)>>1; if (arr[mid].abs<=line){ ans=mid; lo=mid+1; } else hi=mid-1; }
+      const target = arr[ans] && arr[ans].el; if (!target) return;
+
+      if (this.lastEl) this.lastEl.classList.remove('sync-target');
+      target.classList.add('sync-target'); this.lastEl = target;
+
+      let plannedTop;
+      if (mode==='center'){
+        const r = target.getBoundingClientRect();
+        plannedTop = Math.max(0, Math.min(
+          window.scrollY + r.top - (window.innerHeight/2),
+          Math.max(0, (document.scrollingElement || document.documentElement).scrollHeight - window.innerHeight)
+        ));
+      } else {
+        // emulate scrollIntoView(start) deterministically
+        const r = target.getBoundingClientRect();
+        plannedTop = Math.max(0, window.scrollY + r.top - 8);
       }
-    };
-    window.sync = sync;
 
-    // Re-index after layout (MathJax ready calls init too)
-    document.addEventListener('DOMContentLoaded', () => sync.init());
+      // === NEW: idempotency guards ===
+      const now = Date.now();
+      const sameTarget = (line === _lastTargetAbs);
+      const sameY = Math.abs(plannedTop - _lastPlannedTop) < 1;
+      const tooSoon = (now - _lastScrollTs) < 50; // collapse back-to-back frames
 
-    // Accept postMessage from host
+      if (sameTarget && sameY && tooSoon) {
+        return; // skip duplicate
+      }
+
+      window.scrollTo({ top: plannedTop });
+      _lastTargetAbs = line;
+      _lastPlannedTop = plannedTop;
+      _lastScrollTs = now;
+
+      updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta});
+    }
+  };
+  window.sync = sync;
+
+  document.addEventListener('DOMContentLoaded', () => sync.init());
+})();
+</script>
+
+<script>
+  (function(){
+    let rafHandle = 0;
+    let pending = null;
+    let lastKey = '';
+    let lastTs = 0;
+
     window.addEventListener('message', (ev) => {
       const d = ev.data || {};
       if (d && d.type === 'sync-line' && Number.isFinite(d.abs)) {
-        let abs = d.abs;
-        // Map original editor line -> merged preview line, if available
-        if (Array.isArray(window.__llO2M) && window.__llO2M.length && abs >= 1 && abs <= window.__llO2M.length) {
-          abs = window.__llO2M[abs - 1];
+        let mergedAbs = d.abs;
+        if (Array.isArray(window.__llO2M) && window.__llO2M.length && mergedAbs>=1 && mergedAbs<=window.__llO2M.length) {
+          mergedAbs = window.__llO2M[mergedAbs-1];
         }
-        updateDebug({event:'host-sync', origAbs: d.abs, mergedAbs: abs, source: d.source || '', mode: d.mode || 'center'});
-        sync.scrollToAbs(abs, d.mode || 'center', {source: d.source});
+        if (!window.__llMarks || !window.__llMarks.length) {
+          if (typeof window.__collectMarks === 'function') window.__collectMarks();
+        }
+        const marks = window.__llMarks || [];
+        if (marks.length) {
+          // binary search to pick mark ...
+          let lo=0, hi=marks.length-1, ans=0;
+          while (lo<=hi) { const mid=(lo+hi)>>1; if (marks[mid].abs<=mergedAbs){ ans=mid; lo=mid+1; } else hi=mid-1; }
+          const mark = marks[ans];
+          try { if (mark) window.__llActiveIdx = ans; } catch(_){}
+
+          // >>> NEW: ignore echoes and suppress outbound emissions briefly
+          const g = window.__llGuards || (window.__llGuards = { suppressEmitUntil:0, echoId:null, echoUntil:0 });
+          const now = Date.now();
+          if (mark && g.echoId === mark.id && now < g.echoUntil) {
+            return; // ignore editor echo for the same mark
+          }
+          g.suppressEmitUntil = now + 350; // don't emit while we perform programmatic scroll
+    
+          if (typeof window.__scrollToMark === 'function') {
+            if (typeof updateDebug === 'function') updateDebug({event:'host-sync', origAbs:d.abs, mergedAbs, targetMark: mark?.id || null});
+            window.__scrollToMark(mark, d.mode || 'center');
+          }
+          // End NEW
+        }
+      }
+    
+      if (d && d.type === 'sync-mark' && typeof d.id === 'string') {
+        if (!window.__llMarks || !window.__llMarks.length) {
+          if (typeof window.__collectMarks === 'function') window.__collectMarks();
+        }
+        const m = (window.__llMarks || []).find(x => x.id === d.id);
+        try {
+          const marks = window.__llMarks || [];
+          const idx = marks.findIndex(x => x && x.id === (m && m.id));
+          if (idx >= 0) window.__llActiveIdx = idx;
+        } catch(_){}
+        // >>> NEW: same guards for explicit mark jumps
+        const g = window.__llGuards || (window.__llGuards = { suppressEmitUntil:0, echoId:null, echoUntil:0 });
+        g.suppressEmitUntil = Date.now() + 350;
+    
+        if (typeof window.__scrollToMark === 'function') window.__scrollToMark(m, d.mode || 'center');
       }
     }, false);
   })();
 </script>
-<script>
+  <script>
   (function () {
-    const dbgEl = () => document.getElementById('ll-debug');
-    function updateDebug(data){
-      try {
-        const el = dbgEl();
-        if (!el) return;
-        const ts = new Date().toLocaleTimeString();
-        const prev = el.textContent || '';
-        el.textContent = "${'$'}{ts} ${'$'}{JSON.stringify(data)}\n" + prev;
-        el.classList.add('visible');
-      } catch(_){}
+    const STEP = 1.15, MIN = 0.5, MAX = 3.0;
+
+    function applyZoom(z) {
+      const mj = document.querySelector('.mj');
+      if (!mj) return;
+      mj.style.fontSize = (16 * z) + 'px';
+      window._zoom = z;
+      try { localStorage.setItem('ll_zoom', String(z)); } catch(_) {}
     }
 
-    const sync = {
-      idx: [],
-      lastEl: null,
-      init() {
-        this.idx = Array.from(document.querySelectorAll('.syncline'))
-                        .map(el => ({ el, abs: +el.dataset.abs || 0 }));
-      },
-      scrollToAbs(line, mode = 'center', meta) {
-        if (!this.idx.length) this.init();
-        const arr = this.idx;
-        if (!arr.length) return;
-
-        // last anchor with abs <= line
-        let lo=0, hi=arr.length-1, ans=0;
-        while (lo <= hi) {
-          const mid = (lo+hi) >> 1;
-          if (arr[mid].abs <= line) { ans = mid; lo = mid+1; } else { hi = mid-1; }
-        }
-        const target = arr[ans] && arr[ans].el;
-        if (!target) return;
-        if (this.lastEl) this.lastEl.classList.remove('sync-target');
-        target.classList.add('sync-target');
-        this.lastEl = target;
-
-        // center the target
-        const r = target.getBoundingClientRect();
-        const y = window.scrollY + r.top - (window.innerHeight / 2);
-        window.scrollTo({ top: Math.max(0, y) });
-        updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta});
-      }
+    // Expose for any other code that wants to adjust zoom
+    window.setZoom = function (factor) {
+      const z0 = window._zoom || 1.0;
+      const z1 = Math.max(MIN, Math.min(z0 * factor, MAX));
+      if (Math.abs(z1 - z0) < 1e-3) return;
+      applyZoom(z1);
     };
-    window.sync = sync;
 
-    document.addEventListener('DOMContentLoaded', () => sync.init());
-    window.addEventListener('message', (ev) => {
-      const d = ev.data || {};
-      if (d.type === 'sync-line' && Number.isFinite(d.abs)) {
-        let abs = d.abs;
-        if (Array.isArray(window.__llO2M) && window.__llO2M.length && abs >= 1 && abs <= window.__llO2M.length) {
-          abs = window.__llO2M[abs - 1];
-        }
-        updateDebug({event:'host-sync', origAbs: d.abs, mergedAbs: abs, source: d.source || '', mode: d.mode || 'center'});
-        sync.scrollToAbs(abs, d.mode || 'center', {source: d.source});
-      }
-    }, false);
+    // One listener for both buttons (robust even if DOM changes)
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('#zoom-in, #zoom-out');
+      if (!btn) return;
+      e.preventDefault();
+      if (btn.id === 'zoom-in')  window.setZoom(STEP);
+      if (btn.id === 'zoom-out') window.setZoom(1 / STEP);
+    }, true);
+
+    // Restore zoom on load
+    window.addEventListener('DOMContentLoaded', () => {
+      let z = 1.0;
+      try { z = parseFloat(localStorage.getItem('ll_zoom')) || 1.0; } catch(_) {}
+      applyZoom(z);
+    });
   })();
-</script>
-
-
-  <script>
-    // Click-to-caret sync (from preview to editor)
-    (function(){
-      function getPrevSyncline(node){
-        let n = node;
-        while (n && n !== document.body) {
-          // Walk previous siblings and up
-          let p = n;
-          while (p) {
-            if (p.nodeType === 1 && p.classList && p.classList.contains('syncline')) return p;
-            // dive into previous sibling's last descendant
-            let prev = p.previousSibling;
-            while (prev) {
-              if (prev.nodeType === 1 && prev.classList && prev.classList.contains('syncline')) return prev;
-              if (prev.lastElementChild) { p = prev.lastElementChild; prev = null; continue; }
-              prev = prev.previousSibling;
-            }
-            p = p.parentNode;
-          }
-          n = n.parentNode;
-        }
-        return null;
-      }
-
-      function placeCaretMarker(range){
-        try {
-          document.getElementById('ll-caret')?.remove();
-          const mark = document.createElement('span');
-          mark.id = 'll-caret';
-          mark.className = 'caret-mark';
-          const r = range.cloneRange();
-          r.collapse(true);
-          r.insertNode(mark);
-          return mark;
-        } catch(e) { return null; }
-      }
-
-      document.addEventListener('click', function(e){
-        const wrap = document.querySelector('.full-text');
-        if (!wrap) return;
-        if (!wrap.contains(e.target)) return;
-
-        let range = null;
-        if (document.caretRangeFromPoint) {
-          range = document.caretRangeFromPoint(e.clientX, e.clientY);
-        } else if (document.caretPositionFromPoint) {
-          const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
-          range = document.createRange();
-          range.setStart(pos.offsetNode, pos.offset);
-          range.collapse(true);
-        }
-        if (!range) return;
-
-        const anchor = getPrevSyncline(range.startContainer);
-        const baseAbs = anchor ? (parseInt(anchor.getAttribute('data-abs')||'0')||0) : 0;
-        const mergedLineAbs = baseAbs + 1; // anchors are after line breaks → prev line
-        // Map merged preview line back to original editor line if available
-        let origLineAbs = mergedLineAbs;
-        if (Array.isArray(window.__llM2O) && window.__llM2O.length && mergedLineAbs >= 1 && mergedLineAbs <= window.__llM2O.length) {
-          origLineAbs = window.__llM2O[mergedLineAbs - 1];
-        }
-
-        // try to extract word around caret
-        let word = '';
-        try {
-          const node = range.startContainer;
-          if (node && node.nodeType === 3) {
-            const t = node.textContent || '';
-            let i = range.startOffset;
-            let a = i, b = i;
-            const rx = /[\p{L}\p{N}_]/u;
-            while (a>0 && rx.test(t[a-1])) a--;
-            while (b<t.length && rx.test(t[b])) b++;
-            word = t.slice(a,b);
-          }
-        } catch(_) {}
-
-        const mark = placeCaretMarker(range);
-        if (mark) {
-          mark.scrollIntoView({block:'nearest', inline:'nearest'});
-        }
-
-        try { if (typeof updateDebug === 'function') updateDebug({event:'preview-click', mergedAbs: mergedLineAbs, origAbs: origLineAbs, word}); } catch(_) {}
-
-        if (window.__jbcefMoveCaret) {
-          try { window.__jbcefMoveCaret({ line: origLineAbs, word: word }); } catch(_) {}
-        }
-      }, false);
-    })();
   </script>
+
 </head>
 <body>
-  <div class="floating-toolbar" style="">
-    <button id="zoom-in" title="Zoom In">🔍+</button>
-    <button id="zoom-out" title="Zoom Out">🔍−</button>
-    <span style="margin-left:8px;opacity:.7;">Zoom</span>
+<div class="ll-topbar">
+  <button id="zoom-out" class="btn" title="Zoom Out">−</button>
+  <button id="zoom-in"  class="btn" title="Zoom In">+</button>
+  <div class="chapters">
+    <select id="ll-chapters"></select>
   </div>
+  <div class="spacer"></div>
+</div>
+
+
   <div class="wrap mj">
+    <div id="ll-scroll-sentinel" style="height:1px; margin:0; padding:0;"></div>
     <div class="full-text">$fullTextHtml</div>
   </div>
+  <div id="ll-spacer" style="height:0;"></div>
   <div id="ll-debug" title="LiveLaTeX debug HUD (press D to toggle)"></div>
+  
+
   <script>
     (function(){
       document.addEventListener('keydown', function(e){
@@ -490,6 +504,295 @@ object LatexHtml {
       }, false);
     })();
   </script>
+  
+  <script>
+  (function(){
+    function collectMarks() {
+      window.__llMarks = Array.from(document.querySelectorAll('.llmark'))
+        .map(el => ({ el, id: el.dataset.id || '', abs: +(el.dataset.abs || 0) }))
+        .filter(m => m.abs > 0)
+        .sort((a,b) => a.abs - b.abs);
+    }
+    window.__collectMarks = collectMarks;
+
+    let currentMarkId = null;
+    window.__scrollToMark = function(mark, mode) {
+      if (!mark) return;
+      if (mark.id === currentMarkId) return;  // idempotent: same semantic target
+      currentMarkId = mark.id;
+
+      // optional visual hint
+      try {
+        document.querySelectorAll('.llmark.__active').forEach(e => e.classList.remove('__active'));
+        mark.el.classList.add('__active');
+        mark.el.style.outline = '2px dashed #10b981';
+        mark.el.style.outlineOffset = '2px';
+        setTimeout(() => { mark.el.style.outline = 'none'; mark.el.classList.remove('__active'); }, 700);
+      } catch(_) {}
+
+      const r = mark.el.getBoundingClientRect();
+      const plannedTop = Math.max(0, window.scrollY + r.top - (mode === 'start' ? 8 : (window.innerHeight/2)));
+      window.scrollTo({ top: plannedTop });
+      // Keep hysteresis index aligned with the programmatic target
+      try {
+        const marks = window.__llMarks || [];
+        const idx = marks.findIndex(x => x && x.id === mark.id);
+        if (idx >= 0) window.__llActiveIdx = idx;
+      } catch(_){}
+
+      if (typeof updateDebug === 'function') updateDebug({event:'scrollToMark', id: mark.id, abs: mark.abs, mode});
+    };
+
+    window.addEventListener('DOMContentLoaded', collectMarks, false);
+    // Re-collect after MathJax typesets
+    document.addEventListener('DOMContentLoaded', () => setTimeout(collectMarks, 400));
+  })();
+  </script>
+
+
+  
+  <script>
+(function(){
+  // IntersectionObserver-based scroll spy with dwell-time debounce.
+  // Picks the mark most visible inside a top band, with a tiny dwell to prevent flapping.
+  const BAND_TOP = 0.12;     // top band starts 12% from viewport top
+  const BAND_BOTTOM = 0.70;  // bottom of focus band at 70%
+  const DWELL_MS = 140;      // how long a new candidate must dominate before switching
+  const EPS = 0.015;         // tiny ratio epsilon to avoid ties fighting
+
+  let io = null;
+  let visible = new Map();   // id -> { ratio, ts }
+  let currentId = null;
+  let pendingId = null;
+  let pendingSince = 0;
+  let _raf = 0;
+
+  function ensureMarks(){
+    if (!window.__llMarks || !window.__llMarks.length) {
+      if (typeof window.__collectMarks === 'function') window.__collectMarks();
+    }
+    return window.__llMarks || [];
+  }
+
+  function mergedAbsToOrig(mergedAbs){
+    if (Array.isArray(window.__llM2O) && window.__llM2O.length && mergedAbs>=1 && mergedAbs<=window.__llM2O.length) {
+      return window.__llM2O[mergedAbs-1]; // 1-based
+    }
+    return mergedAbs;
+  }
+
+  function bestByRatio(){
+    // choose max ratio inside band; if tie within EPS pick the lower element (later mark)
+    let best = null, bestRatio = -1;
+    for (const [id, v] of visible.entries()){
+      const r = v.ratio || 0;
+      if (r > bestRatio + EPS || (Math.abs(r - bestRatio) <= EPS && v.order > (best?.order ?? -1))) {
+        best = v; bestRatio = r;
+      }
+    }
+    return best;
+  }
+
+  function emitIfStable(){
+    const now = Date.now();
+    if (now < (window.__llGuards?.suppressEmitUntil || 0)) return;
+
+    const marks = ensureMarks(); if (!marks.length) return;
+
+    const candidate = bestByRatio();
+    if (!candidate) return;
+
+    if (candidate.id !== currentId) {
+      if (pendingId !== candidate.id) {
+        pendingId = candidate.id;
+        pendingSince = now;
+      }
+      if (now - pendingSince < DWELL_MS) return; // not stable long enough
+      // switch
+      currentId = pendingId;
+      pendingId = null;
+      try { if (typeof window.__selectMarkInTopbar === 'function') window.__selectMarkInTopbar(currentId); } catch(_){}
+      const m = marks.find(x => x.id === currentId);
+      if (!m) return;
+
+      // set echo guard so editor reply doesn't bounce us back
+      const g = window.__llGuards || (window.__llGuards = { suppressEmitUntil:0, echoId:null, echoUntil:0 });
+      g.echoId = m.id; g.echoUntil = now + 450;
+
+      const origAbs = mergedAbsToOrig(m.abs);
+      try { if (typeof window.__jbcefMoveCaret === 'function') window.__jbcefMoveCaret({ line: origAbs, markId: m.id }); } catch(_){}
+      try { window.postMessage({ type: 'preview-mark', id: m.id, origAbs }, '*'); } catch(_){}
+      try { if (typeof updateDebug === 'function') updateDebug({ event:'preview-scroll', id:m.id, mergedAbs:m.abs, origAbs }); } catch(_){}
+    }
+  }
+
+  function scheduleEmit(){
+    if (_raf) cancelAnimationFrame(_raf);
+    _raf = requestAnimationFrame(() => { _raf = 0; emitIfStable(); });
+  }
+
+  function setupObserver(){
+    // Focus band: only count visibility between BAND_TOP and BAND_BOTTOM.
+    const topPct = Math.round(BAND_TOP*100);
+    const bottomPct = Math.round((1-BAND_BOTTOM)*100);
+    const rootMargin = `${'$'}{-topPct}% 0px ${'$'}{-bottomPct}% 0px`;
+
+    io = new IntersectionObserver((entries) => {
+      const marks = ensureMarks();
+      for (const e of entries){
+        const el = e.target;
+        const id = el.dataset.id || '';
+        if (!id) continue;
+        if (e.isIntersecting) {
+          // ratio is how much of the mark's (tiny) box sits in the band — we boost with order so later ties win
+          if (!visible.has(id)) visible.set(id, { id, ratio: e.intersectionRatio || 0, order: marks.findIndex(x => x.id === id) });
+          const v = visible.get(id);
+          v.ratio = e.intersectionRatio || 0;
+          // Keep order cached
+        } else {
+          visible.delete(id);
+        }
+      }
+      scheduleEmit();
+    }, {
+      root: null,
+      rootMargin,
+      threshold: [0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1]
+    });
+
+    // Observe all mark sentinels (they’re zero-size; that’s fine — CHTML boxes exist)
+    const marks = ensureMarks();
+    marks.forEach(m => io.observe(m.el));
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    // (Re)collect marks after MathJax typesets
+    setTimeout(() => {
+      ensureMarks();
+      setupObserver();
+      // First pass
+      scheduleEmit();
+    }, 450);
+  });
+
+  window.addEventListener('resize', scheduleEmit);
+})();
+
+
+</script>
+
+
+<script>
+(function(){
+  function labelFromMark(m){
+    // Prefer the following heading’s text as label; fallback to id
+    const next = m.el.nextElementSibling;
+    let label = (next && /^h[2-5]$/i.test(next.tagName) ? (next.textContent||'').trim() : m.id) || m.id;
+    // Indent by level inferred from id prefix
+    const lvl = m.id.startsWith('subsubsection-') ? 3 : m.id.startsWith('subsection-') ? 2 : m.id.startsWith('section-') ? 1 : 0;
+    if (lvl === 2) label = '  • ' + label;
+    if (lvl === 3) label = '    ▹ ' + label;
+    return { label, lvl };
+  }
+
+  function populateChapters(){
+    const sel = document.getElementById('ll-chapters'); if (!sel) return;
+    if (!window.__llMarks || !window.__llMarks.length) {
+      if (typeof window.__collectMarks === 'function') window.__collectMarks();
+    }
+    const marks = window.__llMarks || [];
+    sel.innerHTML = marks.map(m => {
+      const lab = labelFromMark(m).label;
+      // Kotlin triple-quoted safety: avoid ${'$'}{...} by building strings at runtime
+      return '<option value="' + m.id + '">' + lab.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</option>';
+    }).join('');
+  }
+
+  function mergedAbsToOrig(mergedAbs){
+    if (Array.isArray(window.__llM2O) && window.__llM2O.length && mergedAbs>=1 && mergedAbs<=window.__llM2O.length) {
+      return window.__llM2O[mergedAbs-1];
+    }
+    return mergedAbs;
+  }
+
+  function jumpToMarkId(id){
+    try { window.llTopbarShow && window.llTopbarShow(); } catch(_){}
+
+        // >>> NEW GUARD: prevent feedback loop & ignore editor echo
+    const g = window.__llGuards || (window.__llGuards = { suppressEmitUntil:0, echoId:null, echoUntil:0 });
+    const now = Date.now();
+    g.suppressEmitUntil = now + 350;  // don't emit preview-mark during our programmatic scroll
+    g.echoId = id;                     // we expect the editor to echo this mark back
+    g.echoUntil = now + 450;           // ignore that echo briefly
+    // <<< NEW GUARD
+
+    // Scroll preview
+    window.postMessage({ type:'sync-mark', id, mode:'start' }, '*');
+
+    // Also notify editor
+    if (!window.__llMarks || !window.__llMarks.length) {
+      if (typeof window.__collectMarks === 'function') window.__collectMarks();
+    }
+    const m = (window.__llMarks || []).find(x => x.id === id);
+     if (m) {
+        try {
+          const marks = window.__llMarks || [];
+          const idx = marks.findIndex(x => x && x.id === (m && m.id));
+          if (idx >= 0) window.__llActiveIdx = idx;
+        } catch(_){}
+      const mergedAbs = m.abs;
+      const origAbs = (Array.isArray(window.__llM2O) && window.__llM2O.length >= mergedAbs)
+        ? window.__llM2O[mergedAbs - 1]
+        : mergedAbs;
+      try { if (typeof window.__jbcefMoveCaret === 'function') window.__jbcefMoveCaret({ line: origAbs, markId: id }); } catch(_){}
+      try { window.postMessage({ type:'preview-mark', id, origAbs }, '*'); } catch(_){}
+    }
+  }
+
+  // Keep select synced with current active mark (called from your preview scroll emitter)
+  window.__selectMarkInTopbar = function(id){
+    const sel = document.getElementById('ll-chapters'); if (!sel) return;
+    if (sel.value !== id) sel.value = id;
+  };
+
+  window.addEventListener('DOMContentLoaded', () => {
+    populateChapters();
+    // re-populate after typeset/layout
+    setTimeout(populateChapters, 450);
+
+    const sel = document.getElementById('ll-chapters');
+    if (sel) sel.addEventListener('change', e => jumpToMarkId(e.target.value));
+  });
+})();
+</script>
+
+
+  <script>
+  (function(){
+    function refreshNav(){
+      const nav = document.getElementById('ll-nav'); if (!nav) return;
+      if (!window.__llMarks || !window.__llMarks.length) { if (typeof window.__collectMarks==='function') window.__collectMarks(); }
+      const items = (window.__llMarks || []).map(m => {
+        const id = m.id;
+        const lvl = id.startsWith('subsubsection-') ? 3 : id.startsWith('subsection-') ? 2 : id.startsWith('section-') ? 1 : 0;
+        const next = m.el.nextElementSibling;
+        const label = (next && /^h[2-5]$/i.test(next.tagName) ? (next.textContent||'').trim() : id) || id;
+        return { id, label, lvl };
+      });
+      nav.innerHTML = items.map(i => `<a href="#" class="${'$'}{i.lvl===2?'lvl2':i.lvl===3?'lvl3':''}" data-id="${'$'}{i.id}">${'$'}{i.label}</a>`).join('');
+        nav.onclick = (e) => {
+          const a = e.target.closest('a'); if (!a) return;
+          e.preventDefault();
+          const id = a.dataset.id;
+          // Delegate so the guard + editor notify happen in one place
+          jumpToMarkId(id);
+        };
+
+    }
+    window.addEventListener('DOMContentLoaded', () => setTimeout(refreshNav, 450));
+  })();
+  </script>
+
 </body>
 </html>
 """.trimIndent()
@@ -497,18 +800,20 @@ object LatexHtml {
 
     // ──────────────────────── PIPELINE HELPERS ────────────────────────
 
-    private fun applyProseConversions(s: String, meta: TitleMeta): String {
+    private fun applyProseConversions(s: String, meta: TitleMeta, absOffset: Int): String {
         var t = s
+        t = convertLlmark(t, absOffset)
         t = convertMakeTitle(t, meta)         // ← NEW: expand \maketitle
         t = convertSiunitx(t)
         t = convertHref(t)
-        t = convertSections(t)
+        t = convertSections(t, absOffset)
         t = convertFigureEnvs(t)      // figures first
         t = convertIncludeGraphics(t) // standalone \includegraphics
         t = convertMulticols(t)
         t = convertTableEnvs(t)       // wrap table envs (keeps inner tabular)
         t = convertItemize(t)
         t = convertEnumerate(t)
+        t = convertDescription(t)
         t = convertTabulars(t)        // finally convert tabular -> <table>
         t = convertTheBibliography(t)
         t = stripAuxDirectives(t)
@@ -697,20 +1002,35 @@ object LatexHtml {
 
         val out = StringBuilder(html.length + 256)
         for (i in parts.indices) {
-            val chunk = parts[i]
-            if (!chunk.contains('<') && !chunk.contains('>')) {
-                // Split on 2+ newlines → paragraphs
-                val paras = chunk.trim()
-                    .split(Regex("""\n{2,}"""))
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .joinToString("") { p -> "<p>${latexProseToHtmlWithMath(p)}</p>" }
-                out.append(paras)
-            } else out.append(chunk)
+            val chunkRaw = parts[i]
+            if (!chunkRaw.contains('<') && !chunkRaw.contains('>')) {
+                val chunk = chunkRaw.trim()
+                if (chunk.isNotEmpty()) {
+                    if (Regex("""\n{2,}""").containsMatchIn(chunk)) {
+                        // Real paragraph breaks → wrap each paragraph
+                        val paras = chunk.split(Regex("""\n{2,}"""))
+                            .map { it.trim() }.filter { it.isNotEmpty() }
+                            .joinToString("") { p -> "<p>${latexProseToHtmlWithMath(p)}</p>" }
+                        out.append(paras)
+                    } else {
+                        // Inline-only text → DO NOT wrap in <p>
+                        out.append(latexProseToHtmlWithMath(chunk))
+                    }
+                }
+            } else {
+                out.append(chunkRaw)
+            }
             if (i < tags.size) out.append(tags[i])
         }
+
+        // Defensive: unwrap accidental <p> directly inside list/desc/figcaption
         return out.toString()
+            .replace(Regex("""<(li|dd|dt)>\s*<p>(.*?)</p>\s*</\1>""", RegexOption.DOT_MATCHES_ALL)) { m ->
+                "<${m.groupValues[1]}>${m.groupValues[2]}</${m.groupValues[1]}>"
+            }
+            .replace(Regex("""(<figcaption[^>]*>)\s*<p>(.*?)</p>\s*(</figcaption>)""", RegexOption.DOT_MATCHES_ALL), "$1$2$3")
     }
+
 
 
     // ───────────────────────────── MACROS ─────────────────────────────
@@ -796,29 +1116,34 @@ object LatexHtml {
 
     // ──────────────────────── PROSE CONVERSIONS ────────────────────────
 
-    private fun convertSections(s: String): String {
+    private fun convertSections(s: String, absOffset: Int): String {
+        fun inject(kind: String, tag: String, input: String): String {
+            val rx = Regex("""\\$kind\*?\{([^}]*)\}""")
+            return rx.replace(input) { m ->
+                val title = m.groupValues[1]
+                val id    = "$kind-${slugify(title)}"
+                val abs   = absOffset + input.substring(0, m.range.first).count { it == '\n' } + 1
+                val htm   = latexProseToHtmlWithMath(title)
+                """<span class="llmark" data-id="$id" data-abs="$abs"></span><$tag id="$id">$htm</$tag>"""
+            }
+        }
         var t = s
-        // \section, \subsection, \subsubsection (starred or not)
-        t = t.replace(Regex("""\\section\*?\{([^}]*)\}""")) {
-            "<h2>${latexProseToHtmlWithMath(it.groupValues[1])}</h2>"
+        t = inject("section", "h2", t)
+        t = inject("subsection", "h3", t)
+        t = inject("subsubsection", "h4", t)
+        // paragraph (optional)
+        t = Regex("""\\paragraph\{([^}]*)\}""").replace(t) { m ->
+            val title = m.groupValues[1]
+            val id    = "paragraph-${slugify(title)}"
+            val abs   = absOffset + t.substring(0, m.range.first).count { it == '\n' } + 1
+            val htm   = latexProseToHtmlWithMath(title)
+            """<span class="llmark" data-id="$id" data-abs="$abs"></span><h5 id="$id" style="margin:1em 0 .3em 0;">$htm</h5>"""
         }
-        t = t.replace(Regex("""\\subsection\*?\{([^}]*)\}""")) {
-            "<h3>${latexProseToHtmlWithMath(it.groupValues[1])}</h3>"
-        }
-        t = t.replace(Regex("""\\subsubsection\*?\{([^}]*)\}""")) {
-            """<h4 style="margin:1em 0 .4em 0;">${latexProseToHtmlWithMath(it.groupValues[1])}</h4>"""
-        }
-        t = t.replace(Regex("""\\paragraph\{([^}]*)\}""")) {
-            """<h5 style="margin:1em 0 .3em 0;">${latexProseToHtmlWithMath(it.groupValues[1])}</h5>"""
-        }
-
-
-// \texorpdfstring{math}{text} → use the *text* argument, formatted like prose
+        // \texorpdfstring: keep your prior choice (prefer text arg)
         t = t.replace(Regex("""\\texorpdfstring\{([^}]*)\}\{([^}]*)\}""")) {
             latexProseToHtmlWithMath(it.groupValues[2])
         }
-
-        // \appendix divider
+        // appendix divider
         t = t.replace(
             Regex("""\\appendix"""),
             """<hr style="border:none;border-top:1px solid var(--border);margin:16px 0;"/>"""
@@ -826,6 +1151,21 @@ object LatexHtml {
         return t
     }
 
+
+    private fun convertLlmark(s: String, absOffset: Int): String {
+        // \llmark{key}  or  \llmark[Title]{key}
+        val rx = Regex("""\\llmark(?:\[([^]]*)])?\{([^}]*)\}""")
+        return rx.replace(s) { m ->
+            val titleOpt = m.groupValues[1]
+            val key      = m.groupValues[2].ifBlank { "mark" }
+            val id       = "mark-${slugify(key)}"
+            val absLine  = absOffset + s.substring(0, m.range.first).count { it == '\n' } + 1
+            val capHtml  = if (titleOpt.isNotBlank())
+                """<div style="opacity:.7;margin:.2em 0;">${latexProseToHtmlWithMath(titleOpt)}</div>"""
+            else ""
+            """<span class="llmark" data-id="$id" data-abs="$absLine"></span>$capHtml"""
+        }
+    }
 
     private fun unescapeLatexSpecials(t0: String): String {
         var t = t0
@@ -872,7 +1212,7 @@ object LatexHtml {
             if (nextIdx == dollarIdx) {
                 val isDouble = s.startsWith("$$", dollarIdx)
                 val closeIdx = if (isDouble) s.indexOf("$$", dollarIdx + 2) else s.indexOf('$', dollarIdx + 1)
-                val end = if (closeIdx >= 0) closeIdx + if (isDouble) 2 else 1 else n
+                val end = if (closeIdx >= 0) closeIdx + (if (isDouble) 2 else 1) else n
                 sb.append(s.substring(dollarIdx, end))
                 i = end
             } else if (nextIdx == bracketIdx) {
@@ -900,43 +1240,52 @@ object LatexHtml {
         }
     }
 
-
     private fun convertItemize(s: String): String {
-        val rx = Regex("""\\begin\{itemize\}(.+?)\\end\{itemize\}""", RegexOption.DOT_MATCHES_ALL)
+        println("[DEBUG] convertItemize called with input:\n" + s)
+        val rx = Regex("""\\begin\{itemize\}(?:\[[^\]]*])?(.+?)\\end\{itemize\}""", RegexOption.DOT_MATCHES_ALL)
         return rx.replace(s) { m ->
-            val body  = m.groupValues[1]
+            val body = m.groupValues[1]
             val parts = Regex("""(?m)^\s*\\item\s*""")
-                .split(body)
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
+                .split(body).map { it.trim() }.filter { it.isNotEmpty() }
             if (parts.isEmpty()) return@replace ""
-            val lis = parts.joinToString("") { item ->
-                // Use latexProseToHtmlWithMath to handle both \textbf and math
-                val html = latexProseToHtmlWithMath(item)
-                "<li>$html</li>"
-            }
+            val lis = parts.joinToString("") { item -> "<li>${proseNoBr(item)}</li>" }
             """<ul style="margin:12px 0 12px 24px;">$lis</ul>"""
         }
     }
 
     private fun convertEnumerate(s: String): String {
-        val rx = Regex("""\\begin\{enumerate\}(.+?)\\end\{enumerate\}""", RegexOption.DOT_MATCHES_ALL)
+        println("[DEBUG] convertEnumerate called with input:\n" + s)
+        val rx = Regex("""\\begin\{enumerate\}(?:\[[^\]]*])?(.+?)\\end\{enumerate\}""", RegexOption.DOT_MATCHES_ALL)
         return rx.replace(s) { m ->
-            val body  = m.groupValues[1]
-            // FIX: Use correct regex for splitting items
+            val body = m.groupValues[1]
             val parts = Regex("""(?m)^\s*\\item\s*""")
-                .split(body)
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
+                .split(body).map { it.trim() }.filter { it.isNotEmpty() }
             if (parts.isEmpty()) return@replace ""
-            val lis = parts.joinToString("") { item ->
-                // Use latexProseToHtmlWithMath to handle both \textbf and math
-                val html = latexProseToHtmlWithMath(item)
-                "<li>$html</li>"
-            }
-            """<ol style=\"margin:12px 0 12px 24px;\">$lis</ol>"""
+            val lis = parts.joinToString("") { item -> "<li>${proseNoBr(item)}</li>" }
+            """<ol style="margin:12px 0 12px 24px;">$lis</ol>"""
         }
     }
+
+    private fun convertDescription(s: String): String {
+        val rx = Regex("""\\begin\{description\}(?:\[[^\]]*])?(.+?)\\end\{description\}""", RegexOption.DOT_MATCHES_ALL)
+        return rx.replace(s) { m ->
+            val body = m.groupValues[1]
+            val items = Regex("""(?m)^\s*\\item(?:\s*\[([^\]]*)])?\s*""").split(body).map { it.trim() }.filter { it.isNotEmpty() }
+            val labels = Regex("""(?m)^\s*\\item\s*\[([^\]]*)]""").findAll(body).map { it.groupValues[1] }.toList()
+
+            buildString {
+                append("""<dl style="margin:12px 0 12px 24px;">""")
+                for ((i, content) in items.withIndex()) {
+                    val label = labels.getOrNull(i) ?: ""
+                    val term  = if (label.isNotEmpty()) latexProseToHtmlWithMath(label) else ""
+                    val html  = proseNoBr(content) // ← inline, no <br>
+                    append("<dt><strong>$term</strong></dt><dd>$html</dd>")
+                }
+                append("</dl>")
+            }
+        }
+    }
+
 
     private data class ColSpec(val align: String?, val widthPct: Int?)
 
@@ -972,6 +1321,9 @@ object LatexHtml {
                 .replace(Regex("""(?m)^\s*\\hline\s*$"""), "")
                 .replace(Regex("""(?<!\\)\\\\\s*\[[^\]]*]"""), "\\\\") // turn \\[6pt] into \\
 
+            // Heal early HTML breaks (defensive): turn accidental <br> back into LaTeX \\
+            // so the row-splitter works and we don’t render spurious line breaks in cells.
+            body = body.replace(Regex("""(?i)<br\s*/?>"""), "\\\\")
             // Split rows on unescaped \\  (allow trailing spaces)
             val rows = Regex("""(?<!\\)\\\\\s*""").split(body)
                 .map { it.trim() }
@@ -1099,18 +1451,27 @@ object LatexHtml {
         s = s.replace(
             Regex("""\\begin\{abstract\}(.+?)\\end\{abstract\}""", RegexOption.DOT_MATCHES_ALL)
         ) { m ->
-            // Collapse single newlines → space to avoid accidental breaks;
-            // leave double-newline paragraph breaks intact (optional).
             val raw = m.groupValues[1].trim()
             val collapsedSingles = raw.replace(Regex("""(?<!\n)\n(?!\n)"""), " ")
-            val html = latexProseToHtmlWithMath(collapsedSingles)
+            val html = proseNoBr(collapsedSingles)
+
+            val merged =
+                if (Regex("""<p\b""", RegexOption.IGNORE_CASE).containsMatchIn(html)) {
+                    // If your stdlib supports replaceFirst:
+                    Regex("""(?i)(<p\b[^>]*>)""").replaceFirst(html, "${'$'}1<strong>Abstract.</strong>&nbsp;")
+                } else {
+                    "<strong>Abstract.</strong>&nbsp;$html"
+                }
 
             """
     <div class="abstract-block" style="padding:12px;border-left:3px solid var(--border); background:#6b728022; margin:12px 0;">
-      <strong>Abstract.</strong> $html
+      $merged
     </div>
     """.trimIndent()
         }
+
+
+
 
 
         // theorem-like
@@ -1134,7 +1495,9 @@ object LatexHtml {
 
         // Math environments to preserve verbatim (add bmatrix, pmatrix, etc.)
         val mathEnvs = "(?:equation\\*?|align\\*?|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?|bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|smallmatrix)"
-        val keepEnvs = "(?:$mathEnvs|tabular|table|figure|center|thebibliography)"
+// Keep prose envs that you’ll convert later:
+        val keepEnvs = "(?:$mathEnvs|tabular|table|figure|center|thebibliography|itemize|enumerate|description|multicols)"
+
 // NOTE: \w is a regex class — in a raw string use \w (not \\w)
         s = s.replace(Regex("""\\begin\{(?!$keepEnvs)\w+\}"""), "")
         s = s.replace(Regex("""\\end\{(?!$keepEnvs)\w+\}"""), "")
@@ -1174,6 +1537,12 @@ object LatexHtml {
             .replace(Regex("""\\&"""), "&")
         return t
     }
+
+    private fun fixInlineBoundarySpaces(html: String): String =
+        Regex(
+            """</(?:strong|em|u|small|code|span)>(?=(?:<(?!/)|[A-Za-z0-9(]))""",
+            RegexOption.IGNORE_CASE
+        ).replace(html) { it.value + " " }
 
 
     // ───────────────────────────── UTIL ─────────────────────────────
@@ -1301,6 +1670,9 @@ object LatexHtml {
         }
         return out.toString()
     }
+
+    private fun proseNoBr(s: String): String =
+        latexProseToHtmlWithMath(s).replace(Regex("(?i)<br\\s*/?>\\s*"), " ")
 
     private fun htmlEscapeAll(s: String): String =
         s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
@@ -1487,7 +1859,11 @@ object LatexHtml {
                 .trim()
 
             // Whatever remains (rare) → prose
-            val rest = if (body.isNotEmpty()) "<div>${latexProseToHtmlWithMath(body)}</div>" else ""
+            // Preserve raw LaTeX here; later passes (convertTabulars, etc.) will handle it.
+            val hasSubEnv = Regex("""\\begin\{""").containsMatchIn(body)
+            val rest = if (body.isNotEmpty()) {
+                if (hasSubEnv) "<div>$body</div>" else "<div>${latexProseToHtmlWithMath(body)}</div>"
+            } else ""
             """<figure style="margin:14px 0;text-align:center;">$imgHtml$captionHtml$rest</figure>"""
         }
     }

@@ -20,6 +20,8 @@ import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.Dimension
 import java.awt.Point
+import com.intellij.ui.jcef.JBCefBrowserBase
+
 
 class LatexPreviewService(private val project: Project) : Disposable {
 
@@ -85,32 +87,43 @@ class LatexPreviewService(private val project: Project) : Disposable {
         pageReady = false
 
         // Set up JS bridge for clicks from preview → move caret in editor
-        jsMoveCaret = JBCefJSQuery.create(b).also { query ->
-            Disposer.register(this, query)
-            query.addHandler { payload ->
-                try {
-                    val line = Regex("""\"line\"\s*:\s*(\d+)""").find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    val word = Regex("""\"word\"\s*:\s*\"(.*?)\"""").find(payload)?.groupValues?.getOrNull(1) ?: ""
-                    if (line != null) {
-                        ApplicationManager.getApplication().invokeLater {
-                            val fem = FileEditorManager.getInstance(project)
-                            val ed = fem.selectedTextEditor ?: return@invokeLater
-                            val doc = ed.document
-                            val lineIdx = (line - 1).coerceIn(0, doc.lineCount - 1)
-                            val start = doc.getLineStartOffset(lineIdx)
-                            val end = doc.getLineEndOffset(lineIdx)
-                            var caret = start
-                            if (word.isNotEmpty()) {
-                                val text = doc.charsSequence.subSequence(start, end).toString()
-                                val idx = text.indexOf(word)
-                                if (idx >= 0) caret = start + idx
+        // --- FIX: use the factory that takes JBCefBrowserBase
+        val base = b as JBCefBrowserBase
+        jsMoveCaret = try {
+            JBCefJSQuery.create(base).also { query ->
+                Disposer.register(this, query)
+                query.addHandler { payload ->
+                    try {
+                        val line = Regex("""\"line\"\s*:\s*(\d+)""").find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                        val word = Regex("""\"word\"\s*:\s*\"(.*?)\"""").find(payload)?.groupValues?.getOrNull(1) ?: ""
+                        if (line != null) {
+                            ApplicationManager.getApplication().invokeLater {
+                                val fem = FileEditorManager.getInstance(project)
+                                val ed = fem.selectedTextEditor ?: return@invokeLater
+                                val doc = ed.document
+                                val lineIdx = (line - 1).coerceIn(0, doc.lineCount - 1)
+                                val start = doc.getLineStartOffset(lineIdx)
+                                val end = doc.getLineEndOffset(lineIdx)
+                                var caret = start
+                                if (word.isNotEmpty()) {
+                                    val text = doc.charsSequence.subSequence(start, end).toString()
+                                    val idx = text.indexOf(word)
+                                    if (idx >= 0) caret = start + idx
+                                }
+                                ed.caretModel.moveToOffset(caret)
+                                ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
                             }
-                            ed.caretModel.moveToOffset(caret)
-                            ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
                         }
-                    }
-                } catch (_: Throwable) {}
-                JBCefJSQuery.Response("OK")
+                    } catch (_: Throwable) {}
+                    JBCefJSQuery.Response("OK")
+                }
+            }
+        } catch (t: Throwable) {
+            // Fallback for older IDEs where the Base overload may not exist yet
+            @Suppress("DEPRECATION")
+            JBCefJSQuery.create(b).also { query ->
+                Disposer.register(this, query)
+                query.addHandler { _ -> JBCefJSQuery.Response("OK") }
             }
         }
 
