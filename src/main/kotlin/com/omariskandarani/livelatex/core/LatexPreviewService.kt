@@ -89,7 +89,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
         // Set up JS bridge for clicks from preview → move caret in editor
         // --- FIX: use the factory that takes JBCefBrowserBase
         val base = b as JBCefBrowserBase
-        jsMoveCaret = try {
+        jsMoveCaret =
             JBCefJSQuery.create(base).also { query ->
                 Disposer.register(this, query)
                 query.addHandler { payload ->
@@ -118,14 +118,6 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     JBCefJSQuery.Response("OK")
                 }
             }
-        } catch (t: Throwable) {
-            // Fallback for older IDEs where the Base overload may not exist yet
-            @Suppress("DEPRECATION")
-            JBCefJSQuery.create(b).also { query ->
-                Disposer.register(this, query)
-                query.addHandler { _ -> JBCefJSQuery.Response("OK") }
-            }
-        }
 
         // Load-state tracker so we can flush queued JS once the page is ready
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {

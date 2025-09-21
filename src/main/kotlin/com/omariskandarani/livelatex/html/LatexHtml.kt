@@ -41,6 +41,8 @@ object LatexHtml {
         val userMacros    = extractNewcommands(srcNoComments)
         val macrosJs      = buildMathJaxMacros(userMacros)
         val titleMeta     = extractTitleMeta(srcNoComments)
+        val tikzPreamble  = collectTikzPreamble(srcNoComments)
+
 
         // Find body & absolute line offset of the first body line
         val beginIdx  = texSource.indexOf(BEGIN_DOCUMENT)
@@ -53,7 +55,9 @@ object LatexHtml {
         val body1 = stripLineComments(body0)
         val body2 = sanitizeForMathJaxProse(body1)
         val body2b = convertIncludeGraphics(body2) // <-- Add image conversion here
-        val body3 = applyProseConversions(body2b, titleMeta, absOffset)
+        val body2c = convertTikzPictures(body2b, srcNoComments)
+        val body2d = convertSstTikzMacros(body2c, srcNoComments)
+        val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments)
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)
         val body4c = fixInlineBoundarySpaces(body4)
@@ -800,21 +804,28 @@ object LatexHtml {
 
     // ──────────────────────── PIPELINE HELPERS ────────────────────────
 
-    private fun applyProseConversions(s: String, meta: TitleMeta, absOffset: Int): String {
+    private fun applyProseConversions(s: String, meta: TitleMeta, absOffset: Int,
+                                      fullSourceNoComments: String): String {
         var t = s
         t = convertLlmark(t, absOffset)
-        t = convertMakeTitle(t, meta)         // ← NEW: expand \maketitle
+        t = convertMakeTitle(t, meta)
         t = convertSiunitx(t)
         t = convertHref(t)
         t = convertSections(t, absOffset)
-        t = convertFigureEnvs(t)      // figures first
-        t = convertIncludeGraphics(t) // standalone \includegraphics
+        t = convertFigureEnvs(t)
+        t = convertIncludeGraphics(t)
         t = convertMulticols(t)
-        t = convertTableEnvs(t)       // wrap table envs (keeps inner tabular)
+
+        t = convertLongtablesToTables(t)                 // longtable → table/tabular
+        t = convertTcolorboxes(t)                        // ← NEW: render tcolorbox
+        t = convertTikzPictures(t, fullSourceNoComments) // compile tikz to SVG (cached)
+
+
+        t = convertTableEnvs(t)
         t = convertItemize(t)
         t = convertEnumerate(t)
         t = convertDescription(t)
-        t = convertTabulars(t)        // finally convert tabular -> <table>
+        t = convertTabulars(t)
         t = convertTheBibliography(t)
         t = stripAuxDirectives(t)
         t = t.replace(Regex("""\\label\{[^}]*}"""), "") // belt-and-suspenders
@@ -1115,6 +1126,76 @@ object LatexHtml {
 
 
     // ──────────────────────── PROSE CONVERSIONS ────────────────────────
+    private fun convertLongtable(text: String): String {
+        val out = StringBuilder(text.length + 512)
+        var i = 0
+        while (true) {
+            val start = text.indexOf("\\begin{longtable}", i)
+            if (start < 0) { out.append(text.substring(i)); break }
+
+            out.append(text.substring(i, start))
+
+            // Balanced colspec after \begin{longtable}
+            val colOpen = text.indexOf('{', start + "\\begin{longtable}".length)
+            val colClose = findBalancedBrace(text, colOpen)
+            if (colOpen < 0 || colClose < 0) {
+                // malformed – bail out safely
+                out.append(text.substring(start))
+                break
+            }
+            val spec = text.substring(colOpen + 1, colClose)
+
+            val endTag = text.indexOf("\\end{longtable}", colClose + 1)
+            if (endTag < 0) {
+                out.append(text.substring(start))
+                break
+            }
+
+            var body = text.substring(colClose + 1, endTag)
+
+            // Extract caption (and remove trailing \\ if present)
+            var captionHtml = ""
+            Regex("""\\caption\{([^}]*)\}""").find(body)?.let { cap ->
+                captionHtml =
+                    """<figcaption style="opacity:.8;margin:6px 0 10px;">${escapeHtmlKeepBackslashes(cap.groupValues[1])}</figcaption>"""
+                body = Regex("""\\caption\{[^}]*\}\s*\\\\\s*""").replace(body, "") // caption + row break
+                body = body.replace(cap.value, "") // fallback: just in case there was no \\ after
+            }
+
+            // Remove duplicate header (continued pages) and paging tokens
+            body = Regex("""\\endfirsthead.*?\\endhead""", RegexOption.DOT_MATCHES_ALL).replace(body, "")
+            body = body
+                .replace("\\endfirsthead", "")
+                .replace("\\endhead", "")
+                .replace("\\endfoot", "")
+                .replace("\\endlastfoot", "")
+                .replace(Regex("""\\label\{[^}]*\}"""), "") // belts-and-suspenders
+
+            // Hand off to existing tabular converter by synthesizing a tabular block.
+            val asTabular = "\\begin{tabular}{$spec}\n$body\n\\end{tabular}"
+
+            // Wrap like your table figures do (tabular converter will run later).
+            out.append("""<figure style="margin:14px 0;">$asTabular$captionHtml</figure>""")
+
+            i = endTag + "\\end{longtable}".length
+        }
+        return out.toString()
+    }
+
+    private fun collectTikzPreamble(srcNoComments: String): String {
+        val preamble = srcNoComments.substringBefore("\\begin{document}")
+        val libs = Regex("""\\usetikzlibrary\{[^}]*}""").findAll(preamble).joinToString("\n") { it.value }
+        val sets = Regex("""\\tikzset\{[^}]*}""").findAll(preamble).joinToString("\n") { it.value }
+        val needsTikzCd = Regex("""\\begin\{tikzcd}|\\usepackage\{tikz-cd}""").containsMatchIn(preamble)
+        return buildString {
+            appendLine("\\usepackage{tikz}")
+            if (needsTikzCd) appendLine("\\usepackage{tikz-cd}")
+            if (libs.isNotBlank()) appendLine(libs)
+            if (sets.isNotBlank()) appendLine(sets)
+        }
+    }
+
+
 
     private fun convertSections(s: String, absOffset: Int): String {
         fun inject(kind: String, tag: String, input: String): String {
@@ -1190,45 +1271,109 @@ object LatexHtml {
      * Convert LaTeX prose to HTML, preserving math regions ($...$, \[...\], \(...\)).
      * Only escapes HTML and converts text formatting in non-math regions.
      */
-// Keep math regions intact; only run the formatter on non-math spans.
+    private val MATH_ENVS = setOf(
+        "equation","equation*","align","align*","aligned","gather","gather*",
+        "multline","multline*","flalign","flalign*","alignat","alignat*",
+        "bmatrix","pmatrix","vmatrix","Bmatrix","Vmatrix","smallmatrix",
+        "matrix","cases","split"
+    )
+
     private fun latexProseToHtmlWithMath(s: String): String {
+        fun tryWrap(cmd: String, openIdx: Int): String? {
+            if (!s.regionMatches(openIdx, "\\$cmd", 0, cmd.length + 1)) return null
+            var j = openIdx + cmd.length + 1
+            // Optional whitespace
+            while (j < s.length && s[j].isWhitespace()) j++
+            if (j >= s.length || s[j] != '{') return null
+            val close = findBalancedBraceAllowMath(s, j)
+            if (close < 0) return null
+            val inner = s.substring(j + 1, close)
+            val before = s.substring(0, openIdx)
+            val after  = s.substring(close + 1)
+            val tag = when (cmd) {
+                "textbf"       -> "strong"
+                "emph", "textit", "itshape" -> "em"
+                "underline", "uline" -> "u"
+                "small", "footnotesize" -> "small"
+                else -> return null
+            }
+            // Recurse on the inner with full math-preserving pipeline
+            return before + "<$tag>" + latexProseToHtmlWithMath(inner) + "</$tag>" + latexProseToHtmlWithMath(after)
+        }
+
+        // Try each wrapper at the earliest backslash, to avoid O(n^2).
+        run {
+            var i = s.indexOf('\\')
+            while (i >= 0) {
+                for (cmd in arrayOf("textbf","emph","textit","itshape","underline","uline","small","footnotesize")) {
+                    val rep = tryWrap(cmd, i)
+                    if (rep != null) return rep // whole string rebuilt; we’re done
+                }
+                i = s.indexOf('\\', i + 1)
+            }
+        }
+
         val sb = StringBuilder()
         var i = 0
         val n = s.length
+
+        fun startsAt(idx: Int, tok: String): Boolean =
+            idx >= 0 && idx + tok.length <= n && s.regionMatches(idx, tok, 0, tok.length)
+
         while (i < n) {
-            val dollarIdx = generateSequence(s.indexOf('$', i)) { prev ->
-                val next = s.indexOf('$', prev + 1)
-                if (next >= 0 && isEscaped(s, next)) s.indexOf('$', next + 1) else next
-            }.firstOrNull { it < 0 || !isEscaped(s, it) } ?: -1
-            val bracketIdx = s.indexOf("\\[", i)
-            val parenIdx   = s.indexOf("\\(", i)
-            val nextIdx = listOf(dollarIdx, bracketIdx, parenIdx).filter { it >= 0 }.minOrNull() ?: n
+            // Next inline/display math delimiters
+            val nextDollar = run {
+                var j = s.indexOf('$', i)
+                while (j >= 0 && j < n && isEscaped(s, j)) j = s.indexOf('$', j + 1)
+                j
+            }
+            val nextBracket = s.indexOf("\\[", i)
+            val nextParen   = s.indexOf("\\(", i)
+            val nextBegin   = s.indexOf("\\begin{", i)
 
-            // Non-math chunk
-            sb.append(formatInlineProseNonMath(s.substring(i, nextIdx)))
-            if (nextIdx == n) break
+            // choose earliest of the four (>=0)
+            val candidates = listOf(nextDollar, nextBracket, nextParen, nextBegin).filter { it >= 0 }
+            val next = if (candidates.isEmpty()) n else candidates.minOrNull()!!
 
-            // Math chunk (preserve verbatim so MathJax can parse it)
-            if (nextIdx == dollarIdx) {
-                val isDouble = s.startsWith("$$", dollarIdx)
-                val closeIdx = if (isDouble) s.indexOf("$$", dollarIdx + 2) else s.indexOf('$', dollarIdx + 1)
+            // non-math chunk
+            sb.append(formatInlineProseNonMath(s.substring(i, next)))
+
+            if (next == n) break
+
+            // handle math spans
+            if (next == nextDollar) {
+                val isDouble = startsAt(next, "$$")
+                val closeIdx = if (isDouble) s.indexOf("$$", next + 2) else s.indexOf('$', next + 1)
                 val end = if (closeIdx >= 0) closeIdx + (if (isDouble) 2 else 1) else n
-                sb.append(s.substring(dollarIdx, end))
-                i = end
-            } else if (nextIdx == bracketIdx) {
-                val closeIdx = s.indexOf("\\]", bracketIdx + 2)
+                sb.append(s.substring(next, end)); i = end; continue
+            }
+            if (next == nextBracket) {
+                val closeIdx = s.indexOf("\\]", next + 2)
                 val end = if (closeIdx >= 0) closeIdx + 2 else n
-                sb.append(s.substring(bracketIdx, end))
-                i = end
-            } else { // paren
-                val closeIdx = s.indexOf("\\)", parenIdx + 2)
+                sb.append(s.substring(next, end)); i = end; continue
+            }
+            if (next == nextParen) {
+                val closeIdx = s.indexOf("\\)", next + 2)
                 val end = if (closeIdx >= 0) closeIdx + 2 else n
-                sb.append(s.substring(parenIdx, end))
-                i = end
+                sb.append(s.substring(next, end)); i = end; continue
+            }
+            // \begin{env} … \end{env}
+            if (next == nextBegin) {
+                val nameOpen = next + "\\begin{".length
+                val nameClose = s.indexOf('}', nameOpen)
+                val env = if (nameClose > nameOpen) s.substring(nameOpen, nameClose) else ""
+                if (env in MATH_ENVS) {
+                    val endTok = "\\end{$env}"
+                    val endAt = s.indexOf(endTok, nameClose + 1).let { if (it < 0) n else it + endTok.length }
+                    sb.append(s.substring(next, endAt)); i = endAt; continue
+                }
+                // not a math env → treat as prose
+                sb.append("\\begin{"); i = nameOpen
             }
         }
         return sb.toString()
     }
+
 
     private fun convertMulticols(s: String): String {
         val rx = Regex("""\\begin\{multicols\}\{(\d+)\}(.+?)\\end\{multicols\}""",
@@ -1267,27 +1412,217 @@ object LatexHtml {
     }
 
     private fun convertDescription(s: String): String {
-        val rx = Regex("""\\begin\{description\}(?:\[[^\]]*])?(.+?)\\end\{description\}""", RegexOption.DOT_MATCHES_ALL)
-        return rx.replace(s) { m ->
-            val body = m.groupValues[1]
-            val items = Regex("""(?m)^\s*\\item(?:\s*\[([^\]]*)])?\s*""").split(body).map { it.trim() }.filter { it.isNotEmpty() }
-            val labels = Regex("""(?m)^\s*\\item\s*\[([^\]]*)]""").findAll(body).map { it.groupValues[1] }.toList()
+        // Match description env; keep DOT_MATCHES_ALL so body spans newlines.
+        val rxEnv = Regex("""\\begin\{description\}(?:\[[^\]]*])?(.+?)\\end\{description\}""", RegexOption.DOT_MATCHES_ALL)
+        return rxEnv.replace(s) { envMatch ->
+            val body = envMatch.groupValues[1]
 
-            buildString {
-                append("""<dl style="margin:12px 0 12px 24px;">""")
-                for ((i, content) in items.withIndex()) {
-                    val label = labels.getOrNull(i) ?: ""
-                    val term  = if (label.isNotEmpty()) latexProseToHtmlWithMath(label) else ""
-                    val html  = proseNoBr(content) // ← inline, no <br>
-                    append("<dt><strong>$term</strong></dt><dd>$html</dd>")
+            // Each \item with optional [label], up to next \item or end
+            val rxItem = Regex("""(?ms)^\s*\\item(?:\s*\[([^\]]*)])?\s*(.*?)\s*(?=^\s*\\item|\z)""")
+
+            val items = rxItem.findAll(body).map { m ->
+                val rawLabel   = m.groupValues[1] // may be empty
+                val rawContent = m.groupValues[2]
+
+                // Peel a single top-level \textbf{...}/\emph{...}/\textit{...} so math inside doesn’t break it
+                val (peeled, tag) = peelTopLevelTextWrapper(rawLabel)
+                val labelHtmlInner = latexProseToHtmlWithMath(peeled)
+                val labelHtml = when (tag) {
+                    "strong" ->
+                        if (labelHtmlInner.contains("<strong>", ignoreCase = true)) labelHtmlInner
+                        else "<strong>$labelHtmlInner</strong>"
+                    "em" ->
+                        if (labelHtmlInner.contains("<em>", ignoreCase = true)) labelHtmlInner
+                        else "<em>$labelHtmlInner</em>"
+                    else -> labelHtmlInner
                 }
-                append("</dl>")
-            }
+
+                val contentHtml = latexProseToHtmlWithMath(rawContent)
+
+                // Ensure the term is bold overall (without double-wrapping)
+                val termHtml = when {
+                    labelHtml.isBlank() -> ""
+                    labelHtml.contains("<strong>", ignoreCase = true) -> labelHtml
+                    else -> "<strong>$labelHtml</strong>"
+                }
+
+                "<dt>$termHtml</dt><dd>$contentHtml</dd>"
+            }.joinToString("")
+
+            """<dl style="margin:12px 0 12px 24px;">$items</dl>"""
         }
     }
 
 
+    // Strip a single *top-level* \textbf{...}/\emph{...}/\textit{...} wrapper (if present),
+// even if its contents include inline/display math. Returns (inner, tag) where tag is "strong"/"em".
+    private fun peelTopLevelTextWrapper(raw: String): Pair<String, String?> {
+        fun peel(cmd: String, tag: String): Pair<String,String?>? {
+            val rx = Regex("""^\s*\\$cmd\s*\{""")
+            val m = rx.find(raw) ?: return null
+            val open = m.range.last
+            val close = findBalancedBrace(raw, open)
+            if (close < 0) return null
+            // Ensure there’s nothing but optional whitespace after the brace
+            val tail = raw.substring(close + 1).trim()
+            if (tail.isNotEmpty()) return null
+            val inner = raw.substring(open + 1, close)
+            return inner to tag
+        }
+        return peel("textbf","strong")
+            ?: peel("emph","em")
+            ?: peel("textit","em")
+            ?: (raw to null)
+    }
+
+
     private data class ColSpec(val align: String?, val widthPct: Int?)
+
+    private fun convertTcolorboxes(s: String): String {
+        val rx = Regex("""\\begin\{tcolorbox\}(?:\[((?:\\]|[^\]])*?)\])?(.+?)\\end\{tcolorbox\}""",
+            RegexOption.DOT_MATCHES_ALL)
+        return rx.replace(s) { m ->
+            val opts = (m.groupValues.getOrNull(1) ?: "").trim()
+            val body = m.groupValues[2].trim()
+
+            val kv = parseTcolorOptions(opts) // mapOf("title"->"...","colback"->"...","colframe"->"...")
+
+            val titleHtml = kv["title"]?.let { latexProseToHtmlWithMath(it) } ?: ""
+            val colBack   = kv["colback"]?.let { xcolorToCss(it) } ?: "#f8fafc"   // soft gray/blue default
+            val colFrame  = kv["colframe"]?.let { xcolorToCss(it) } ?: "#1e3a8a"  // deep blue default
+
+            val inner = latexProseToHtmlWithMath(body)
+
+            buildString {
+                append("<div class=\"tcb\" style=\"")
+                append("background:").append(colBack).append(';')
+                append("border:1px solid ").append(colFrame).append(';')
+                append("border-left-width:4px;border-radius:8px;")
+                append("padding:10px 12px;margin:12px 0;\">")
+                if (titleHtml.isNotEmpty()) {
+                    append("<div class=\"tcb-title\" style=\"font-weight:600;margin-bottom:6px;\">")
+                    append(titleHtml).append("</div>")
+                }
+                append("<div class=\"tcb-body\">").append(inner).append("</div></div>")
+            }
+        }
+    }
+
+    private fun parseTcolorOptions(s: String): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        var i = 0
+
+        fun skipWs() { while (i < s.length && s[i].isWhitespace()) i++ }
+
+        while (i < s.length) {
+            skipWs()
+            val eq = s.indexOf('=', i)
+            if (eq < 0) break
+
+            val key = s.substring(i, eq).trim()
+            var j = eq + 1
+            // value may be {…} or bare up to next top-level comma
+            skipWs()
+
+            val value: String
+            if (j < s.length && s[j] == '{') {
+                val close = findBalancedBrace(s, j)  // you already have this helper
+                value = if (close > j) s.substring(j + 1, close) else ""
+                i = if (close > j) close + 1 else s.length
+            } else {
+                var depth = 0
+                var k = j
+                while (k < s.length) {
+                    when (s[k]) {
+                        '{' -> depth++
+                        '}' -> depth = maxOf(0, depth - 1)
+                        ',' -> if (depth == 0) break
+                    }
+                    k++
+                }
+                value = s.substring(j, k).trim()
+                i = if (k < s.length && s[k] == ',') k + 1 else k
+            }
+
+            if (key.isNotEmpty()) out[key] = value
+        }
+        return out
+    }
+
+    // Balanced { ... } that tolerates $...$, \[...\], \(...\) and nested braces.
+    private fun findBalancedBraceAllowMath(s: String, open: Int): Int {
+        if (open < 0 || open >= s.length || s[open] != '{') return -1
+        var i = open
+        var depth = 0
+        var inDollar = false
+        var inDoubleDollar = false
+        var inBracket = false
+        var inParen = false
+
+        fun startsAt(idx: Int, tok: String) =
+            idx >= 0 && idx + tok.length <= s.length && s.regionMatches(idx, tok, 0, tok.length)
+
+        while (i < s.length) {
+            // toggle $$ first
+            if (startsAt(i, "$$")) { inDoubleDollar = !inDoubleDollar; i += 2; continue }
+            // single $
+            if (!inDoubleDollar && s[i] == '$') { inDollar = !inDollar; i++; continue }
+            // \[ \] \( \)
+            if (!inDollar && !inDoubleDollar) {
+                if (startsAt(i, "\\[")) { inBracket = true; i += 2; continue }
+                if (startsAt(i, "\\]") && inBracket) { inBracket = false; i += 2; continue }
+                if (startsAt(i, "\\(")) { inParen = true; i += 2; continue }
+                if (startsAt(i, "\\)") && inParen) { inParen = false; i += 2; continue }
+            }
+            if (!inDollar && !inDoubleDollar && !inBracket && !inParen) {
+                when (s[i]) {
+                    '{' -> { depth++; if (depth == 1 && i != open) {/* nested arg */} }
+                    '}' -> { depth--; if (depth == 0) return i }
+                    '\\' -> { if (i + 1 < s.length) i++ } // skip escaped next char
+                }
+            } else {
+                if (s[i] == '\\' && i + 1 < s.length) i++ // skip escapes inside math too
+            }
+            i++
+        }
+        return -1
+    }
+
+    // Minimal xcolor mix: "blue!5!white" or plain "blue"
+    private fun xcolorToCss(x: String): String {
+        fun base(c: String): IntArray = when (c.lowercase()) {
+            "black"-> intArrayOf(0,0,0)
+            "white"-> intArrayOf(255,255,255)
+            "red"  -> intArrayOf(220,38,38)
+            "green"-> intArrayOf(22,163,74)
+            "blue" -> intArrayOf(37,99,235)
+            "cyan" -> intArrayOf(6,182,212)
+            "magenta","violet","purple" -> intArrayOf(168,85,247)
+            "yellow"-> intArrayOf(234,179,8)
+            "orange"-> intArrayOf(249,115,22)
+            "gray","grey"-> intArrayOf(156,163,175)
+            "brown"-> intArrayOf(150,95,59)
+            else -> intArrayOf(30,58,138) // fallback deep-blue
+        }
+        val m = Regex("""^\s*([A-Za-z]+)(?:!([0-9]{1,3})!([A-Za-z]+))?\s*$""").matchEntire(x)
+        if (m != null) {
+            val c1 = base(m.groupValues[1])
+            val pct = m.groupValues[2].toIntOrNull()
+            val c2Name = m.groupValues[3]
+            val rgb = if (pct != null && c2Name.isNotEmpty()) {
+                val t = pct.coerceIn(0,100)/100.0
+                val c2 = base(c2Name)
+                intArrayOf(
+                    (c1[0]*(1-t) + c2[0]*t).toInt(),
+                    (c1[1]*(1-t) + c2[1]*t).toInt(),
+                    (c1[2]*(1-t) + c2[2]*t).toInt()
+                )
+            } else c1
+            return String.format("#%02x%02x%02x", rgb[0], rgb[1], rgb[2])
+        }
+        return "#1e3a8a"
+    }
+
 
     // --- Tables ---------------------------------------------------------------
 
@@ -1493,10 +1828,12 @@ object LatexHtml {
         // Split problematic align environments with multiple \tag{...} into separate blocks
         s = convertAlignWithMultipleTagsToBlocks(s)
 
-        // Math environments to preserve verbatim (add bmatrix, pmatrix, etc.)
-        val mathEnvs = "(?:equation\\*?|align\\*?|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?|bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|smallmatrix)"
-// Keep prose envs that you’ll convert later:
-        val keepEnvs = "(?:$mathEnvs|tabular|table|figure|center|thebibliography|itemize|enumerate|description|multicols)"
+        val mathEnvs =
+            "(?:equation\\*?|align\\*?|aligned\\*?|aligned|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?|bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|smallmatrix|matrix|cases|split)"
+// Keep prose/envs we transform later:
+        val keepEnvs =
+            "(?:$mathEnvs|tabular|table|longtable|figure|center|tikzpicture|tcolorbox|thebibliography|itemize|enumerate|description|multicols)"
+
 
 // NOTE: \w is a regex class — in a raw string use \w (not \\w)
         s = s.replace(Regex("""\\begin\{(?!$keepEnvs)\w+\}"""), "")
@@ -1716,8 +2053,10 @@ object LatexHtml {
      */
     private fun injectLineAnchors(s: String, absOffset: Int, everyN: Int = 3): String {
         val mathEnvs = setOf(
-            "equation","equation*","align","align*","gather","gather*",
-            "multline","multline*","flalign","flalign*","alignat","alignat*"
+            "equation","equation*","align","align*","aligned","aligned*",
+            "gather","gather*","multline","multline*","flalign","flalign*",
+            "alignat","alignat*","bmatrix","pmatrix","vmatrix","Bmatrix","Vmatrix",
+            "smallmatrix","matrix","cases","split"
         )
         var i = 0
         var line = 0
@@ -1834,7 +2173,11 @@ object LatexHtml {
         return rx.replace(s) { m ->
             var body = m.groupValues[1]
 
-            // Capture first \includegraphics in the figure
+            // Strip common figure-local layout tweaks so they don't print
+            body = body.replace(Regex("""(?m)^\s*\\setlength\{\\tabcolsep\}\{[^}]*}.*$"""), "")
+                .replace(Regex("""(?m)^\s*\\renewcommand\{\\arraystretch\}\{[^}]*}.*$"""), "")
+
+            // Capture first \includegraphics (keep your existing behavior)
             var imgHtml = ""
             val inc = Regex("""\\includegraphics(?:\[[^\]]*])?\{([^}]*)\}""").find(body)
             if (inc != null) {
@@ -1846,24 +2189,33 @@ object LatexHtml {
                 body = body.replace(inc.value, "")
             }
 
-            // Caption
+            // Balanced \caption{...} that allows math and nested braces
             var captionHtml = ""
-            Regex("""\\caption\{([^}]*)\}""").find(body)?.let { c ->
-                captionHtml = """<figcaption style="opacity:.8;margin:6px 0 10px;">${escapeHtmlKeepBackslashes(c.groupValues[1])}</figcaption>"""
-                body = body.replace(c.value, "")
+            run {
+                val capIdx = body.indexOf("\\caption{")
+                if (capIdx >= 0) {
+                    val open = body.indexOf('{', capIdx + "\\caption".length)
+                    val close = findBalancedBraceAllowMath(body, open)
+                    if (open >= 0 && close > open) {
+                        val capTex = body.substring(open + 1, close)
+                        captionHtml = """<figcaption style="opacity:.8;margin:6px 0 10px;">${latexProseToHtmlWithMath(capTex)}</figcaption>"""
+                        // remove the whole \caption{...} from figure body
+                        body = body.removeRange(capIdx, close + 1)
+                    }
+                }
             }
 
-            // Drop common LaTeX-only bits
+            // Drop LaTeX-only bits
             body = body.replace(Regex("""\\centering"""), "")
                 .replace(Regex("""\\label\{[^}]*\}"""), "")
                 .trim()
 
-            // Whatever remains (rare) → prose
-            // Preserve raw LaTeX here; later passes (convertTabulars, etc.) will handle it.
+            // Whatever remains → let later passes handle (e.g., tabular→table)
             val hasSubEnv = Regex("""\\begin\{""").containsMatchIn(body)
             val rest = if (body.isNotEmpty()) {
                 if (hasSubEnv) "<div>$body</div>" else "<div>${latexProseToHtmlWithMath(body)}</div>"
             } else ""
+
             """<figure style="margin:14px 0;text-align:center;">$imgHtml$captionHtml$rest</figure>"""
         }
     }
@@ -1941,6 +2293,295 @@ object LatexHtml {
         // default
         return "max-width:100%;height:auto;"
     }
+
+    // —— Config / cache ————————————————————————————————————————————————
+    private val tikzCacheDir: File by lazy {
+        val dir = File(System.getProperty("user.home"), ".livelatex/tikz-cache")
+        dir.mkdirs(); dir
+    }
+    private fun sha256Hex(s: String): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val bytes = md.digest(s.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+    private fun fileUrl(f: File) = f.toURI().toString()
+
+    // Try to find tools once and cache the result
+    private data class TikzTools(val dvisvgm: String?, val pdf2svg: String?)
+    private var _tikzTools: TikzTools? = null
+    private fun findTikzTools(): TikzTools {
+        _tikzTools?.let { return it }
+        fun which(cmd: String): String? {
+            val isWin = System.getProperty("os.name").lowercase().contains("win")
+            val proc = ProcessBuilder(if (isWin) listOf("where", cmd) else listOf("which", cmd))
+                .redirectErrorStream(true).start()
+            val out = proc.inputStream.bufferedReader().readText().trim()
+            val ok = proc.waitFor() == 0 && out.isNotBlank()
+            return if (ok) out.lineSequence().firstOrNull()?.trim() else null
+        }
+        val tools = TikzTools(
+            dvisvgm = which("dvisvgm"),
+            pdf2svg = which("pdf2svg")
+        )
+        _tikzTools = tools
+        return tools
+    }
+
+    private fun run(cmd: List<String>, cwd: File, timeoutMs: Long = 60_000): Pair<Boolean,String> {
+        val pb = ProcessBuilder(cmd).directory(cwd).redirectErrorStream(true)
+
+        // >>> Add TEXINPUTS so pdflatex finds local *.tex/ TikZ libs in your project
+        currentBaseDir?.let { base ->
+            val sep = if (System.getProperty("os.name").contains("win", true)) ";" else ":"
+            val path = File(base).absolutePath
+            // trailing separator keeps the default search path active
+            pb.environment()["TEXINPUTS"] = path + sep + File(path, "tex").absolutePath + sep
+        }
+        // <<<
+
+        val p = pb.start()
+        val out = StringBuilder()
+        val t = Thread { p.inputStream.bufferedReader().forEachLine { out.appendLine(it) } }
+        t.start()
+        val ok = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        if (!ok) { p.destroyForcibly(); return false to "Timeout running: $cmd\n$out" }
+        return (p.exitValue() == 0) to out.toString()
+    }
+
+    private fun renderTikzToSvg(preamble: String, tikzEnvBlock: String): File? {
+        val texDoc = """
+        \documentclass[tikz,border=2pt]{standalone}
+        \usepackage{amsmath,amssymb}
+        $preamble
+        \begin{document}
+        $tikzEnvBlock
+        \end{document}
+    """.trimIndent()
+
+        val h = sha256Hex(texDoc)
+        val work = File(tikzCacheDir, h).apply { mkdirs() }
+        val tex = File(work, "$h.tex")
+        val pdf = File(work, "$h.pdf")
+        val svg = File(work, "$h.svg")
+
+        // Cache hit
+        if (svg.exists()) return svg
+
+        tex.writeText(texDoc)
+
+        // Compile → PDF
+        val (ok1, log1) = run(
+            listOf("pdflatex", "-interaction=nonstopmode", "-halt-on-error",
+                "-output-directory", work.absolutePath, tex.absolutePath),
+            work
+        )
+        if (!ok1 || !pdf.exists()) {
+            File(work, "build.log").writeText(log1)
+            if (log1.contains("tikzlibrarysstknots.code.tex") && log1.contains("not found", true)) {
+                // Surface a clear message in the fallback <pre>
+                return null
+            }
+            return null
+        }
+
+
+        // PDF → SVG
+        val tools = findTikzTools()
+        val (ok2, log2) =
+            if (tools.dvisvgm != null)
+                run(listOf(tools.dvisvgm, "--pdf", "--no-fonts", "--exact", "-n", pdf.absolutePath, "-o", svg.absolutePath), work)
+            else if (tools.pdf2svg != null)
+                run(listOf(tools.pdf2svg, pdf.absolutePath, svg.absolutePath), work)
+            else false to "Neither dvisvgm nor pdf2svg is available."
+
+        if (!ok2 || !svg.exists()) {
+            File(work, "convert.log").writeText(log2)
+            return null
+        }
+        return svg
+    }
+
+    private fun convertLongtablesToTables(s: String): String {
+        val rx = Regex("""\\begin\{longtable\}\{(.*?)\}(.+?)\\end\{longtable\}""", RegexOption.DOT_MATCHES_ALL)
+        return rx.replace(s) { m ->
+            val colspec = m.groupValues[1]
+            var body    = m.groupValues[2]
+
+            // Pull out caption (if any)
+            val capRe = Regex("""\\caption\{([^}]*)\}\s*\\\\?""")
+            var caption = ""
+            capRe.find(body)?.let { cap ->
+                caption = cap.value           // keep as \caption{...} for your table wrapper
+                body    = body.replace(cap.value, "")
+            }
+
+            // Drop longtable-only directives and booktabs lines
+            body = body
+                .replace(Regex("""\\endfirsthead|\\endhead|\\endfoot|\\endlastfoot"""), "")
+                .replace(Regex("""\\toprule|\\midrule|\\bottomrule"""), "")
+                .trim()
+
+            // Hand off to your existing converters by turning it into a normal table+tabular
+            """
+\begin{table}
+$caption
+\begin{tabular}{$colspec}
+$body
+\end{tabular}
+\end{table}
+        """.trimIndent()
+        }
+    }
+
+
+    // --- path where we cache compiled SVGs
+    private fun tikzCacheDir(): File {
+        val base = currentBaseDir?.let(::File) ?: File(".")
+        val dir  = File(base, ".livelatex-cache/tikz")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun sha1(s: String): String {
+        val md = java.security.MessageDigest.getInstance("SHA-1")
+        val b  = md.digest(s.toByteArray(Charsets.UTF_8))
+        return b.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun convertTikzPictures(htmlLike: String, fullSourceNoComments: String): String {
+        val rx = Regex("""\\begin\{tikzpicture}(?:\[[^\]]*])?(.+?)\\end\{tikzpicture}""",
+            RegexOption.DOT_MATCHES_ALL)
+
+        // 2a) harvest user macros and \usetikzlibrary from the whole source
+        val userMacros = extractNewcommands(fullSourceNoComments)
+        val texMacroDefs = buildTexNewcommands(userMacros)   // defined below
+        val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
+
+        return rx.replace(htmlLike) { m ->
+            val body = m.groupValues[1].trim()
+
+            // 2b) heuristics for libs required by the *snippet itself*
+            val autoLibs = buildSet {
+                if (Regex("""-(\{|)Latex""").containsMatchIn(body)) add("arrows.meta")
+                if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(body)) add("positioning")
+                if (Regex("""\\begin\{knot}|\bflip crossing/""").containsMatchIn(body)) {
+                    addAll(listOf("knots","hobby","intersections","decorations.pathreplacing","shapes.geometric","spath3"))
+                }
+            }
+
+            val libs = (srcLibs + autoLibs).toSortedSet().joinToString(",")
+
+            val texDoc = """
+\documentclass[tikz,border=1pt]{standalone}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{tikz}
+\usetikzlibrary{$libs}
+$texMacroDefs
+\providecommand{\swirlarrow}{\rightsquigarrow} % fallback
+\begin{document}
+\begin{tikzpicture}
+$body
+\end{tikzpicture}
+\end{document}
+        """.trimIndent()
+
+            val key = sha1(texDoc)  // cache invalidates when macros/libs/body change
+            val cache = tikzCacheDir()
+            val svg = File(cache, "$key.svg")
+            if (svg.exists()) {
+                return@replace """<span class="tikz-wrap" style="display:block;margin:12px 0;">${svg.readText()}</span>"""
+            }
+
+            // build in an isolated work dir
+            val work = File(cache, key).apply { mkdirs() }
+            val tex = File(work, "fig.tex").apply { writeText(texDoc) }
+
+            // 2c) if user referenced custom tikz libraries (e.g., sstknots),
+            // copy tikzlibrary<name>.code.tex next to fig.tex so TeX can find it
+            ensureLocalTikzLibs(srcLibs, work)
+
+            fun run(cmd: List<String>): Pair<Int,String> {
+                val pb = ProcessBuilder(cmd).directory(work).redirectErrorStream(true)
+                val p = pb.start()
+                val log = p.inputStream.bufferedReader().readText()
+                return p.waitFor() to log
+            }
+
+            // pdflatex (or tectonic if you prefer) → dvisvgm
+            val (pcode, plog) = run(listOf("pdflatex","-interaction=nonstopmode","-halt-on-error","fig.tex"))
+            if (pcode != 0 || !File(work,"fig.pdf").exists()) {
+                val msg = htmlEscapeAll(plog.take(1200))
+                return@replace """<div class="tikz-error" style="color:#b91c1c;">[TikZ compile failed]<pre>$msg</pre></div>"""
+            }
+            val (scode, slog) = run(listOf("dvisvgm","--pdf","--no-fonts","-n","-o","fig.svg","fig.pdf"))
+            if (scode != 0 || !File(work,"fig.svg").exists()) {
+                val msg = htmlEscapeAll(slog.take(1200))
+                return@replace """<div class="tikz-error" style="color:#b91c1c;">[dvisvgm failed]<pre>$msg</pre></div>"""
+            }
+
+            val svgText = File(work,"fig.svg").readText()
+            svg.writeText(svgText) // cache
+            """<span class="tikz-wrap" style="display:block;margin:12px 0;">$svgText</span>"""
+        }
+    }
+
+
+
+    // Detect and render macro calls like \SSTdown, \SSTHopfLink[...]{...}{...}, etc.
+    private fun convertSstTikzMacros(s: String, srcNoComments: String): String {
+        // If user didn’t \usetikzlibrary{sstknots} but uses \SST* macros, add it.
+        val preSeen = collectTikzPreamble(srcNoComments)
+        val needsSst = Regex("""\\SST[A-Za-z]""").containsMatchIn(s) &&
+                !Regex("""\\usetikzlibrary\{[^}]*\bsstknots\b""").containsMatchIn(preSeen)
+        val preamble = if (needsSst) preSeen + "\n\\usetikzlibrary{sstknots}\n" else preSeen
+
+        // Heuristic: match a \SSTName with optional [..] and up to 3 braces (your macros use ≤3)
+        val rx = Regex("""\\SST[A-Za-z]+(?:\[[^\]]*])?(?:\{[^{}]*}){0,3}""")
+        return rx.replace(s) { m ->
+            val svg = renderTikzToSvg(preamble, m.value)
+            if (svg != null)
+                """<img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;margin:10px auto;"/>"""
+            else
+                """<pre style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">[TikZ render failed; see cache logs]\n${escapeHtmlKeepBackslashes(m.value)}</pre>"""
+        }
+    }
+
+    private fun buildTexNewcommands(macros: Map<String, Macro>): String {
+        if (macros.isEmpty()) return ""
+        val sb = StringBuilder()
+        for ((name, m) in macros) {
+            val nargs = m.nargs.coerceAtLeast(0)
+            if (nargs == 0) sb.append("\\newcommand{\\$name}{${m.def}}\n")
+            else            sb.append("\\newcommand{\\$name}[$nargs]{${m.def}}\n")
+        }
+        return sb.toString()
+    }
+
+    private fun collectUsetikzlibsFromSource(src: String): Set<String> =
+        Regex("""\\usetikzlibrary\{([^}]*)}""")
+            .findAll(src)
+            .flatMap { it.groupValues[1].split(',') }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+
+    private fun ensureLocalTikzLibs(libs: Set<String>, workDir: File) {
+        val base = currentBaseDir?.let(::File) ?: return
+        for (lib in libs) {
+            // Only try custom-looking names (not core ones)
+            if (lib.matches(Regex("""[a-zA-Z][a-zA-Z0-9\-]*"""))) {
+                val fname = "tikzlibrary${lib}.code.tex"
+                val candidates = listOf(
+                    File(base, fname),
+                    File(base, "tikz/$fname"),
+                    File(base, "tex/$fname")
+                )
+                val srcFile = candidates.firstOrNull { it.exists() } ?: continue
+                srcFile.copyTo(File(workDir, fname), overwrite = true)
+            }
+        }
+    }
+
 
     /** Recursively inline all \input{...} and \include{...} files. */
     fun inlineInputs(source: String, baseDir: String, seen: MutableSet<String> = mutableSetOf()): String {
