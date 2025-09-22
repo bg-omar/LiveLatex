@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter
  * - Inserts invisible line anchors to sync scroll with editor
  */
 object LatexHtml {
-
+    private val lazyTikzJobs = java.util.Collections.synchronizedMap(LinkedHashMap<String, String>())
     // Last computed line maps between original main file lines and merged (inlined) lines
     private var lineMapOrigToMergedJson: String? = null
     private var lineMapMergedToOrigJson: String? = null
@@ -37,6 +37,7 @@ object LatexHtml {
             .trim('-')
 
     fun wrap(texSource: String): String {
+        lazyTikzJobs.clear()
         val srcNoComments = stripLineComments(texSource)
         val userMacros    = extractNewcommands(srcNoComments)
         val macrosJs      = buildMathJaxMacros(userMacros)
@@ -55,7 +56,7 @@ object LatexHtml {
         val body1 = stripLineComments(body0)
         val body2 = sanitizeForMathJaxProse(body1)
         val body2b = convertIncludeGraphics(body2) // <-- Add image conversion here
-        val body2c = convertTikzPictures(body2b, srcNoComments)
+        val body2c = convertTikzPictures(body2b, srcNoComments, lazy = true)
         val body2d = convertSstTikzMacros(body2c, srcNoComments)
         val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments)
         val body3b = convertParagraphsOutsideTags(body3)
@@ -803,7 +804,7 @@ object LatexHtml {
         const label = (next && /^h[2-5]$/i.test(next.tagName) ? (next.textContent||'').trim() : id) || id;
         return { id, label, lvl };
       });
-      nav.innerHTML = items.map(i => `<a href="#" class="${'$'}{i.lvl===2?'lvl2':i.lvl===3?'lvl3':''}" data-id="${'$'}{i.id}">${'$'}{i.label}</a>`).join('');
+      nav.innerHTML = items.map(i => `<a href="#" class="${'$'}{i.lvl==\\\\\\\\\\\\\\\\\\\\\\\\\=2?'lvl2':i.lvl===3?'lvl3':''}" data-id="${'$'}{i.id}">${'$'}{i.label}</a>`).join('');
         nav.onclick = (e) => {
           const a = e.target.closest('a'); if (!a) return;
           e.preventDefault();
@@ -816,7 +817,53 @@ object LatexHtml {
     window.addEventListener('DOMContentLoaded', () => setTimeout(refreshNav, 450));
   })();
   </script>
+<script>
+(function(){
+  function setStatus(el, msg) {
+    const s = el.querySelector('.tikz-status');
+    if (s) s.textContent = msg;
+  }
 
+  // Click handler: ask host to render by key
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest && e.target.closest('.tikz-load');
+    if (!btn) return;
+    const key = btn.dataset.tikzKey;
+    if (!key) return;
+    const holder = btn.closest('.tikz-lazy');
+    btn.disabled = true;
+    setStatus(holder, 'Rendering…');
+
+    try {
+      // Ask the host (your Kotlin side) to render this key.
+      // Your host already listens to preview messages (you post 'preview-mark' etc).
+      // Handle this new 'tikz-render' similarly in host, then post a 'tikz-render-result'.
+      window.postMessage({ type: 'tikz-render', key }, '*');
+    } catch(_) {}
+  }, true);
+
+  // Host → page: receive render result
+  window.addEventListener('message', function(ev){
+    const d = ev.data || {};
+    if (d && d.type === 'tikz-render-result' && d.key) {
+      const holder = document.querySelector('.tikz-lazy[data-tikz-key="'+d.key+'"]');
+      if (!holder) return;
+
+      if (d.ok && d.svgText) {
+        holder.outerHTML = '<span class="tikz-wrap" style="display:block;margin:12px 0;">' + d.svgText + '</span>';
+      } else if (d.ok && d.url) {
+        holder.outerHTML = '<img src="'+d.url+'" alt="tikz" style="max-width:100%;height:auto;display:block;margin:10px auto;"/>';
+      } else {
+        const msg = (d.error || 'TikZ render failed').toString().slice(0, 2000);
+        holder.innerHTML =
+          '<pre class="tikz-error" style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">'
+          + msg.replace(/[<>&]/g, s=>({ '<':'&lt;','>':'&gt;','&':'&amp;' }[s])) + '</pre>';
+      }
+    }
+  }, false);
+})();
+</script>
+'\'\
 </body>
 </html>
 """.trimIndent()
@@ -838,7 +885,7 @@ object LatexHtml {
 
         t = convertLongtablesToTables(t)                 // longtable → table/tabular
         t = convertTcolorboxes(t)                        // ← NEW: render tcolorbox
-        t = convertTikzPictures(t, fullSourceNoComments) // compile tikz to SVG (cached)
+        t = convertTikzPictures(t, fullSourceNoComments, lazy = true) // compile tikz to SVG (cached)
 
 
         t = convertTableEnvs(t)
@@ -1072,32 +1119,62 @@ object LatexHtml {
     private fun extractNewcommands(s: String): Map<String, Macro> {
         val out = LinkedHashMap<String, Macro>()
 
-        // --- Improved \newcommand parser ---
-        val rxNewStart = Regex("""\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)])?(?:\[[^\]]*])?\{""")
-        var pos = 0
-        while (true) {
-            val m = rxNewStart.find(s, pos) ?: break
-            val name = m.groupValues[1]
-            val nargs = m.groupValues[2].ifEmpty { "0" }.toInt()
-            val bodyOpen = m.range.last
-            val bodyClose = findBalancedBrace(s, bodyOpen)
-            if (bodyClose < 0) {
-                pos = m.range.last + 1
-                continue // skip malformed
+        fun parseCommand(cmd: String) {
+            // \newcommand{\foo}[2][default]{...}
+            val rx = Regex("""\\$cmd\s*\{\\([A-Za-z@]+)\}(?:\s*\[(\d+)])?(?:\s*\[[^\]]*])?\s*\{""")
+            var pos = 0
+            while (true) {
+                val m = rx.find(s, pos) ?: break
+                val name = m.groupValues[1]
+                val nargs = m.groupValues[2].ifEmpty { "0" }.toInt()
+                val bodyOpen = m.range.last
+                val bodyClose = findBalancedBrace(s, bodyOpen)
+                if (bodyClose < 0) { pos = bodyOpen + 1; continue }
+                val body = s.substring(bodyOpen + 1, bodyClose).trim()
+                out[name] = Macro(body, nargs)
+                pos = bodyClose + 1
             }
-            val body = s.substring(bodyOpen + 1, bodyClose).trim()
-            out[name] = Macro(body, nargs)
-            pos = bodyClose + 1
+        }
+        parseCommand("newcommand")
+        parseCommand("renewcommand")
+        parseCommand("providecommand")
+
+        // \def\foo{...}
+        run {
+            val rx = Regex("""\\def\\([A-Za-z@]+)\s*\{""")
+            var pos = 0
+            while (true) {
+                val m = rx.find(s, pos) ?: break
+                val name = m.groupValues[1]
+                val open = m.range.last
+                val close = findBalancedBrace(s, open)
+                if (close < 0) { pos = open + 1; continue }
+                val body = s.substring(open + 1, close).trim()
+                out.putIfAbsent(name, Macro(body, 0))
+                pos = close + 1
+            }
         }
 
-        // \def\foo{...} (unchanged)
-        val rxDef = Regex("""\\def\\([A-Za-z@]+)\{(.+?)\}""", RegexOption.DOT_MATCHES_ALL)
-        rxDef.findAll(s).forEach { m ->
-            out.putIfAbsent(m.groupValues[1], Macro(m.groupValues[2].trim(), 0))
+        // \DeclareMathOperator{\Foo}{Foo}  and  \DeclareMathOperator*{\Foo}{Foo}
+        run {
+            val rx = Regex("""\\DeclareMathOperator\*?\s*\{\\([A-Za-z@]+)\}\s*\{""")
+            var pos = 0
+            while (true) {
+                val m = rx.find(s, pos) ?: break
+                val name = m.groupValues[1]
+                val open = m.range.last
+                val close = findBalancedBrace(s, open)
+                if (close < 0) { pos = open + 1; continue }
+                val opText = s.substring(open + 1, close).trim()
+                // MathJax equivalent
+                out.putIfAbsent(name, Macro("\\operatorname{$opText}", 0))
+                pos = close + 1
+            }
         }
 
         return out
     }
+
 
     /** Build MathJax tex.macros (JSON-like) from user + base shims. */
     private fun buildMathJaxMacros(user: Map<String, Macro>): String {
@@ -1118,6 +1195,7 @@ object LatexHtml {
             // siunitx placeholders (convertSiunitx does the formatting)
             "si"   to Macro("\\mathrm{#1}", 1),
             "num"  to Macro("{#1}", 1),
+            "textrm" to Macro("\\mathrm{#1}", 1),
 
             // handy aliases
             "Lam"  to Macro("\\Lambda", 0),
@@ -2594,7 +2672,8 @@ $body
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    private fun convertTikzPictures(s: String, fullSourceNoComments: String): String {
+    private fun convertTikzPictures(s: String, fullSourceNoComments: String,
+                                    lazy: Boolean = false): String {
         val blocks = extractEnvBlocksBalanced(s, "tikzpicture")
         if (blocks.isEmpty()) return s
 
@@ -2634,9 +2713,24 @@ $fullBlock
             val key = sha1(texDoc)
             val cache = tikzCacheDir()
             val svgFile = File(cache, "$key.svg")
+
             val replacement: String = if (svgFile.exists()) {
+                // Cache hit: inline immediately
                 """<span class="tikz-wrap" style="display:block;margin:12px 0;">${svgFile.readText()}</span>"""
+            } else if (lazy) {
+                // Lazy: don't compile now. Remember the job and show a button.
+                lazyTikzJobs[key] = texDoc
+                """
+    <span class="tikz-lazy" data-tikz-key="$key" style="display:block;margin:12px 0;">
+      <button class="tikz-load" data-tikz-key="$key"
+              style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;">
+        Render TikZ
+      </button>
+      <div class="tikz-status" style="opacity:.7;margin-top:6px;">Click to render. (cached once)</div>
+    </span>
+    """.trimIndent()
             } else {
+                // Eager path (your old compile-now code) — keep as fallback if you still call it anywhere without lazy=true
                 // compile
                 val work = File(cache, key).apply { mkdirs() }
                 File(work, "fig.tex").writeText(texDoc)
@@ -2671,6 +2765,51 @@ $fullBlock
     }
 
 
+    /** Compile a queued lazy TikZ job by key into the cache. Returns the SVG File on success, null on failure. */
+    @JvmStatic
+    fun renderLazyTikzKeyToSvg(key: String): File? {
+        val texDoc = synchronized(lazyTikzJobs) { lazyTikzJobs[key] } ?: return null
+
+        val cache = tikzCacheDir()
+        val svg = File(cache, "${sha1(texDoc)}.svg")
+        if (svg.exists()) return svg
+
+        val work = File(cache, "job-$key").apply { mkdirs() }
+        val tex  = File(work, "fig.tex")
+        val pdf  = File(work, "fig.pdf")
+        tex.writeText(texDoc)
+
+        // Ensure local TikZ libs are discoverable (same env var trick you already use)
+        // (Your run(...) adds TEXINPUTS from currentBaseDir — great.)
+
+        val (ok1, log1) = run(
+            listOf("pdflatex","-interaction=nonstopmode","-halt-on-error","fig.tex"),
+            work
+        )
+        if (!ok1 || !pdf.exists()) {
+            File(work,"build.log").writeText(log1)
+            return null
+        }
+
+        val tools = findTikzTools()
+        val (ok2, log2) =
+            if (tools.dvisvgm != null)
+                run(listOf(tools.dvisvgm!!,"--pdf","--no-fonts","--exact","-n","-o","fig.svg","fig.pdf"), work)
+            else if (tools.pdf2svg != null)
+                run(listOf(tools.pdf2svg!!,"fig.pdf","fig.svg"), work)
+            else false to "Neither dvisvgm nor pdf2svg is available."
+        if (!ok2) {
+            File(work,"convert.log").writeText(log2)
+            return null
+        }
+
+        val produced = File(work,"fig.svg")
+        if (produced.exists()) {
+            svg.writeText(produced.readText()) // move into cache under stable name
+            return svg
+        }
+        return null
+    }
 
 
     // Detect and render macro calls like \SSTdown, \SSTHopfLink[...]{...}{...}, etc.
