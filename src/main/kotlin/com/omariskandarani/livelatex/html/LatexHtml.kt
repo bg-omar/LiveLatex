@@ -382,45 +382,43 @@ object LatexHtml {
 
 <script>
   (function(){
-    let rafHandle = 0;
-    let pending = null;
-    let lastKey = '';
-    let lastTs = 0;
-
     window.addEventListener('message', (ev) => {
       const d = ev.data || {};
       if (d && d.type === 'sync-line' && Number.isFinite(d.abs)) {
         let mergedAbs = d.abs;
-        if (Array.isArray(window.__llO2M) && window.__llO2M.length && mergedAbs>=1 && mergedAbs<=window.__llO2M.length) {
+        if (Array.isArray(window.__llO2M) && window.__llO2M.length &&
+            mergedAbs>=1 && mergedAbs<=window.__llO2M.length) {
           mergedAbs = window.__llO2M[mergedAbs-1];
         }
+
         if (!window.__llMarks || !window.__llMarks.length) {
           if (typeof window.__collectMarks === 'function') window.__collectMarks();
         }
-        const marks = window.__llMarks || [];
-        if (marks.length) {
-          // binary search to pick mark ...
-          let lo=0, hi=marks.length-1, ans=0;
-          while (lo<=hi) { const mid=(lo+hi)>>1; if (marks[mid].abs<=mergedAbs){ ans=mid; lo=mid+1; } else hi=mid-1; }
-          const mark = marks[ans];
-          try { if (mark) window.__llActiveIdx = ans; } catch(_){}
+        const allMarks  = window.__llMarks || [];
+        const realMarks = allMarks.filter(m => !m.synthetic); // <— ignore synthetic here
 
-          // >>> NEW: ignore echoes and suppress outbound emissions briefly
+        if (realMarks.length) {
+          // === mark-based scroll (unchanged, but use realMarks) ===
+          let lo=0, hi=realMarks.length-1, ans=0;
+          while (lo<=hi){ const mid=(lo+hi)>>1; if (realMarks[mid].abs<=mergedAbs){ ans=mid; lo=mid+1; } else hi=mid-1; }
+          const mark = realMarks[ans];
+          try { if (mark) window.__llActiveIdx = ans; } catch(_){}
           const g = window.__llGuards || (window.__llGuards = { suppressEmitUntil:0, echoId:null, echoUntil:0 });
           const now = Date.now();
-          if (mark && g.echoId === mark.id && now < g.echoUntil) {
-            return; // ignore editor echo for the same mark
-          }
-          g.suppressEmitUntil = now + 350; // don't emit while we perform programmatic scroll
-    
+          if (mark && g.echoId === mark.id && now < g.echoUntil) return;
+          g.suppressEmitUntil = now + 350;
           if (typeof window.__scrollToMark === 'function') {
-            if (typeof updateDebug === 'function') updateDebug({event:'host-sync', origAbs:d.abs, mergedAbs, targetMark: mark?.id || null});
+            try { if (typeof updateDebug==='function') updateDebug({event:'host-sync', origAbs:d.abs, mergedAbs, targetMark: mark?.id || null}); } catch(_){}
             window.__scrollToMark(mark, d.mode || 'center');
           }
-          // End NEW
+        } else {
+          // === fallback to syncline anchors ===
+          if (window.sync && typeof window.sync.scrollToAbs === 'function') {
+            window.sync.scrollToAbs(mergedAbs, d.mode || 'center', { fallback:'syncline' });
+          }
         }
       }
-    
+
       if (d && d.type === 'sync-mark' && typeof d.id === 'string') {
         if (!window.__llMarks || !window.__llMarks.length) {
           if (typeof window.__collectMarks === 'function') window.__collectMarks();
@@ -431,15 +429,14 @@ object LatexHtml {
           const idx = marks.findIndex(x => x && x.id === (m && m.id));
           if (idx >= 0) window.__llActiveIdx = idx;
         } catch(_){}
-        // >>> NEW: same guards for explicit mark jumps
         const g = window.__llGuards || (window.__llGuards = { suppressEmitUntil:0, echoId:null, echoUntil:0 });
         g.suppressEmitUntil = Date.now() + 350;
-    
         if (typeof window.__scrollToMark === 'function') window.__scrollToMark(m, d.mode || 'center');
       }
     }, false);
   })();
 </script>
+
   <script>
   (function () {
     const STEP = 1.15, MIN = 0.5, MAX = 3.0;
@@ -513,7 +510,12 @@ object LatexHtml {
   (function(){
     function collectMarks() {
       window.__llMarks = Array.from(document.querySelectorAll('.llmark'))
-        .map(el => ({ el, id: el.dataset.id || '', abs: +(el.dataset.abs || 0) }))
+        .map(el => ({
+          el,
+          id:  el.dataset.id || '',
+          abs: +(el.dataset.abs || 0),
+          synthetic: el.dataset.synthetic === '1' || el.classList.contains('llmark--synthetic')
+        }))
         .filter(m => m.abs > 0)
         .sort((a,b) => a.abs - b.abs);
     }
@@ -552,6 +554,24 @@ object LatexHtml {
     document.addEventListener('DOMContentLoaded', () => setTimeout(collectMarks, 400));
   })();
   </script>
+
+<script>
+  (function(){
+    window.addEventListener('DOMContentLoaded', () => {
+      const hasMarks = (window.__llMarks && window.__llMarks.length) || document.querySelector('.llmark');
+      const firstSyncline = document.querySelector('.syncline');
+      if (!hasMarks && firstSyncline) {
+        const m = document.createElement('span');
+        m.className = 'llmark llmark--synthetic';
+        m.dataset.id = 'doc-start';
+        m.dataset.abs = firstSyncline.dataset.abs || '1';
+        m.dataset.synthetic = '1';                // <— add this
+        firstSyncline.parentNode.insertBefore(m, firstSyncline);
+        if (typeof window.__collectMarks === 'function') window.__collectMarks();
+      }
+    });
+  })();
+</script>
 
 
   
