@@ -68,7 +68,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview") ?: return
                     val file = event.newFile
                     if (file?.name?.endsWith(".tex") == true) {
-                        // toolWindow.show() Do NOT auto-show the tool window; only update width and listeners
+                        toolWindow.show()
                         toolWindow.setWidth(400)
                         rebindToSelectedEditor()
                     } else {
@@ -212,11 +212,9 @@ class LatexPreviewService(private val project: Project) : Disposable {
         val doc = editor?.document
         val vf = if (doc != null) FileDocumentManager.getInstance().getFile(doc) else null
         val ext = vf?.extension?.lowercase()
-        val html = if (vf == null || ext !in setOf("tex", "ltx", "latex")) {
-            LatexHtml.wrap("<p style='opacity:0.66'>Open a <code>.tex</code> file to preview.</p>")
-        } else {
-            // If inlining inputs, see note below about line mapping.
-            LatexHtml.wrapWithInputs(doc!!.text, vf.path)
+        val html = when (ext) {
+            "tex", "ltx", "latex", "tikz" -> LatexHtml.wrapWithInputs(doc!!.text, vf.path)
+            else -> LatexHtml.wrap("<p style='opacity:.66'>Open a <code>.tex</code> file to preview.</p>")
         }
         renderHtml(html, caretLine)
     }

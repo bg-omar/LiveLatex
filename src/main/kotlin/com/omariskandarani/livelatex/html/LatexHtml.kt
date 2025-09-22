@@ -115,14 +115,14 @@ object LatexHtml {
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset=\"UTF-8\">
+  <meta charset="UTF-8">
   <title>LaTeX Preview</title>
-  <meta http-equiv=\"Content-Security-Policy\"
-        content=\"default-src 'self' 'unsafe-inline' data: blob: https://cdn.jsdelivr.net;
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline' data: blob: https://cdn.jsdelivr.net;
                  script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net;
                  style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;
                  img-src * data: blob:;
-                 font-src https://cdn.jsdelivr.net data:;\">
+                 font-src https://cdn.jsdelivr.net data:;">
   <script>
     // Line maps injected from Kotlin (orig->merged, merged->orig)
     window.__llO2M = ${lineMapOrigToMergedJson ?: "[]"};
@@ -1453,6 +1453,132 @@ object LatexHtml {
         }
     }
 
+    // 1) Grab raw preamble (everything before \begin{document}), minus \documentclass
+    private fun extractRawPreamble(full: String): String {
+        val pre = full.substringBefore("\\begin{document}", "")
+        return pre.replace(Regex("""\\documentclass(\[[^\]]*])?\{[^}]+}"""), "").trim()
+    }
+
+    // 2) Balanced extractor for tikzpicture blocks (handles nesting)
+    private fun extractEnvBlocksBalanced(s: String, env: String): List<String> {
+        val out = mutableListOf<String>()
+        val beginTok = "\\begin{$env}"
+        val endTok   = "\\end{$env}"
+        var i = 0
+        while (true) {
+            val b = s.indexOf(beginTok, i)
+            if (b < 0) break
+            var j = b + beginTok.length
+            var depth = 1
+            while (j < s.length) {
+                val nb = s.indexOf(beginTok, j)
+                val ne = s.indexOf(endTok, j)
+                if (ne < 0) break // malformed; bail
+                if (nb >= 0 && nb < ne) {
+                    depth++
+                    j = nb + beginTok.length
+                } else {
+                    depth--
+                    j = ne + endTok.length
+                    if (depth == 0) { out += s.substring(b, j); break }
+                }
+            }
+            i = j
+        }
+        return out
+    }
+
+    // 3) Slightly beef up your compiler: make sure it can see custom tikz libs in work dir
+//    (This is a small tweak to your existing renderTikzToSvg.)
+    private fun renderTikzToSvgWithLocalLibs(preamble: String, tikzEnvBlock: String): File? {
+        val texDoc = """
+        \documentclass[tikz,border=2pt]{standalone}
+        \usepackage{amsmath,amssymb,bm}
+        % ensure TikZ present even if the source used \RequirePackage
+        \usepackage{tikz}
+        $preamble
+        \begin{document}
+        $tikzEnvBlock
+        \end{document}
+    """.trimIndent()
+
+        val h = sha256Hex(texDoc)
+        val work = File(tikzCacheDir, h).apply { mkdirs() }
+        val tex  = File(work, "$h.tex")
+        val pdf  = File(work, "$h.pdf")
+        val svg  = File(work, "$h.svg")
+
+        if (svg.exists()) return svg
+
+        tex.writeText(texDoc)
+
+        // Copy custom tikz libraries (e.g., tikzlibrarysstknots.code.tex) if present near the source
+        val libs = collectUsetikzlibsFromSource(preamble)
+        ensureLocalTikzLibs(libs, work)
+
+        val (ok1, log1) = run(
+            listOf("pdflatex","-interaction=nonstopmode","-halt-on-error",
+                "-output-directory", work.absolutePath, tex.absolutePath),
+            work
+        )
+        if (!ok1 || !pdf.exists()) {
+            File(work, "build.log").writeText(log1)
+            return null
+        }
+
+        val tools = findTikzTools()
+        val (ok2, log2) =
+            if (tools.dvisvgm != null)
+                run(listOf(tools.dvisvgm, "--pdf", "--no-fonts", "--exact", "-n",
+                    pdf.absolutePath, "-o", svg.absolutePath), work)
+            else if (tools.pdf2svg != null)
+                run(listOf(tools.pdf2svg, pdf.absolutePath, svg.absolutePath), work)
+            else false to "Neither dvisvgm nor pdf2svg is available."
+        if (!ok2 || !svg.exists()) {
+            File(work, "convert.log").writeText(log2)
+            return null
+        }
+        return svg
+    }
+
+    // 4) Public entry: render *any* .tex file’s tikz pictures to HTML (inline SVGs)
+    fun renderTikzFileToHtml(texPath: String): String {
+        val f = File(texPath)
+        if (!f.exists()) return "<div style='opacity:.7'>File not found: ${f.name}</div>"
+        val full = f.readText()
+
+        // Make TeX look in the file’s folder (and ./tex) for custom libs/macros
+        currentBaseDir = f.parent
+
+        val preRaw   = extractRawPreamble(full)
+        val preClean = buildString {
+            append(preRaw).append('\n')
+            // Ensure TikZ is loaded even if the file used \RequirePackage{tikz}
+            if (!Regex("""\\(use|Require)package\{tikz}""").containsMatchIn(preRaw))
+                append("\\usepackage{tikz}\n")
+        }
+
+        // Use the *original* file (not comment-stripped) to preserve coordinates etc.
+        val blocks = extractEnvBlocksBalanced(full, "tikzpicture")
+        if (blocks.isEmpty()) return "<div style='opacity:.7'>No \\begin{tikzpicture} blocks found.</div>"
+
+        val html = StringBuilder(blocks.size * 256)
+        for (b in blocks) {
+            val svg = renderTikzToSvgWithLocalLibs(preClean, b)
+            if (svg != null) {
+                html.append("""<span class="tikz-wrap" style="display:block;margin:12px 0;">${svg.readText()}</span>""")
+            } else {
+                html.append(
+                    """<pre class="tikz-error" style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">
+[TikZ compile failed; see cache logs in ${tikzCacheDir.absolutePath}]
+${escapeHtmlKeepBackslashes(b)}
+</pre>"""
+                )
+            }
+        }
+        return html.toString()
+    }
+
 
     // Strip a single *top-level* \textbf{...}/\emph{...}/\textit{...} wrapper (if present),
 // even if its contents include inline/display math. Returns (inner, tag) where tag is "strong"/"em".
@@ -2448,19 +2574,23 @@ $body
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    private fun convertTikzPictures(htmlLike: String, fullSourceNoComments: String): String {
-        val rx = Regex("""\\begin\{tikzpicture}(?:\[[^\]]*])?(.+?)\\end\{tikzpicture}""",
-            RegexOption.DOT_MATCHES_ALL)
+    private fun convertTikzPictures(s: String, fullSourceNoComments: String): String {
+        val blocks = extractEnvBlocksBalanced(s, "tikzpicture")
+        if (blocks.isEmpty()) return s
 
-        // 2a) harvest user macros and \usetikzlibrary from the whole source
+        // Harvest libs/macros once
         val userMacros = extractNewcommands(fullSourceNoComments)
-        val texMacroDefs = buildTexNewcommands(userMacros)   // defined below
+        val texMacroDefs = buildTexNewcommands(userMacros)
         val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
 
-        return rx.replace(htmlLike) { m ->
-            val body = m.groupValues[1].trim()
+        var out = s
+        for (fullBlock in blocks) {
+            // pull [..] options + inner body
+            val optMatch = Regex("""\\begin\{tikzpicture}(?:\[([^\]]*)])?(.+?)\\end\{tikzpicture}""",
+                RegexOption.DOT_MATCHES_ALL).find(fullBlock) ?: continue
+            val body = optMatch.groupValues[2].trim()
 
-            // 2b) heuristics for libs required by the *snippet itself*
+            // Heuristics for extra libs used in the snippet
             val autoLibs = buildSet {
                 if (Regex("""-(\{|)Latex""").containsMatchIn(body)) add("arrows.meta")
                 if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(body)) add("positioning")
@@ -2468,7 +2598,6 @@ $body
                     addAll(listOf("knots","hobby","intersections","decorations.pathreplacing","shapes.geometric","spath3"))
                 }
             }
-
             val libs = (srcLibs + autoLibs).toSortedSet().joinToString(",")
 
             val texDoc = """
@@ -2477,53 +2606,50 @@ $body
 \usepackage{tikz}
 \usetikzlibrary{$libs}
 $texMacroDefs
-\providecommand{\swirlarrow}{\rightsquigarrow} % fallback
 \begin{document}
-\begin{tikzpicture}
-$body
-\end{tikzpicture}
+$fullBlock
 \end{document}
         """.trimIndent()
 
-            val key = sha1(texDoc)  // cache invalidates when macros/libs/body change
+            val key = sha1(texDoc)
             val cache = tikzCacheDir()
-            val svg = File(cache, "$key.svg")
-            if (svg.exists()) {
-                return@replace """<span class="tikz-wrap" style="display:block;margin:12px 0;">${svg.readText()}</span>"""
+            val svgFile = File(cache, "$key.svg")
+            val replacement: String = if (svgFile.exists()) {
+                """<span class="tikz-wrap" style="display:block;margin:12px 0;">${svgFile.readText()}</span>"""
+            } else {
+                // compile
+                val work = File(cache, key).apply { mkdirs() }
+                File(work, "fig.tex").writeText(texDoc)
+                ensureLocalTikzLibs(srcLibs, work)
+                fun run(cmd: List<String>): Pair<Int,String> {
+                    val pb = ProcessBuilder(cmd).directory(work).redirectErrorStream(true)
+                    val p = pb.start()
+                    val log = p.inputStream.bufferedReader().readText()
+                    return p.waitFor() to log
+                }
+                val (pcode, plog) = run(listOf("pdflatex","-interaction=nonstopmode","-halt-on-error","fig.tex"))
+                val okPdf = pcode == 0 && File(work, "fig.pdf").exists()
+                val tools = findTikzTools()
+                val (scode, slog) =
+                    if (okPdf && tools.dvisvgm != null) run(listOf(tools.dvisvgm!!,"--pdf","--no-fonts","-n","-o","fig.svg","fig.pdf"))
+                    else if (okPdf && tools.pdf2svg != null) run(listOf(tools.pdf2svg!!,"fig.pdf","fig.svg"))
+                    else (-1 to "No SVG tool found.")
+
+                if (okPdf && scode == 0 && File(work, "fig.svg").exists()) {
+                    val svgText = File(work,"fig.svg").readText()
+                    svgFile.writeText(svgText)
+                    """<span class="tikz-wrap" style="display:block;margin:12px 0;">$svgText</span>"""
+                } else {
+                    val msg = htmlEscapeAll((if (!okPdf) plog else slog).take(1600))
+                    """<pre class="tikz-error" style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">[TikZ compile failed]\n$msg</pre>"""
+                }
             }
 
-            // build in an isolated work dir
-            val work = File(cache, key).apply { mkdirs() }
-            val tex = File(work, "fig.tex").apply { writeText(texDoc) }
-
-            // 2c) if user referenced custom tikz libraries (e.g., sstknots),
-            // copy tikzlibrary<name>.code.tex next to fig.tex so TeX can find it
-            ensureLocalTikzLibs(srcLibs, work)
-
-            fun run(cmd: List<String>): Pair<Int,String> {
-                val pb = ProcessBuilder(cmd).directory(work).redirectErrorStream(true)
-                val p = pb.start()
-                val log = p.inputStream.bufferedReader().readText()
-                return p.waitFor() to log
-            }
-
-            // pdflatex (or tectonic if you prefer) → dvisvgm
-            val (pcode, plog) = run(listOf("pdflatex","-interaction=nonstopmode","-halt-on-error","fig.tex"))
-            if (pcode != 0 || !File(work,"fig.pdf").exists()) {
-                val msg = htmlEscapeAll(plog.take(1200))
-                return@replace """<div class="tikz-error" style="color:#b91c1c;">[TikZ compile failed]<pre>$msg</pre></div>"""
-            }
-            val (scode, slog) = run(listOf("dvisvgm","--pdf","--no-fonts","-n","-o","fig.svg","fig.pdf"))
-            if (scode != 0 || !File(work,"fig.svg").exists()) {
-                val msg = htmlEscapeAll(slog.take(1200))
-                return@replace """<div class="tikz-error" style="color:#b91c1c;">[dvisvgm failed]<pre>$msg</pre></div>"""
-            }
-
-            val svgText = File(work,"fig.svg").readText()
-            svg.writeText(svgText) // cache
-            """<span class="tikz-wrap" style="display:block;margin:12px 0;">$svgText</span>"""
+            out = out.replace(fullBlock, replacement)
         }
+        return out
     }
+
 
 
 
