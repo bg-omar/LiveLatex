@@ -37,18 +37,36 @@ class InsertReferenceActionGroup : ActionGroup(), DumbAware {
         }
 
         // Find bibliography file name(s) from \bibliography{FILENAME}
-        val bibCommandRegex = Regex("""\\\\bibliography\{([^}]+)}""")
+        val bibCommandRegex = Regex("\\\\bibliography\\{([^}]+)\\}")
         val bibCommandMatch = bibCommandRegex.find(docText)
         val bibFileNames = bibCommandMatch?.groupValues?.get(1)?.split(',')?.map { it.trim() } ?: emptyList()
-        val projectBasePath = e.project?.basePath
         val bibKeys = mutableSetOf<String>()
+        val bibEntryMap = mutableMapOf<String, String>()
+        val project = e.project ?: return (labelGroupActions).toTypedArray()
+        val projectBasePath = project.basePath
+        fun findBibFile(bibFileName: String): File? {
+            if (projectBasePath != null) {
+                val direct = File(projectBasePath, "$bibFileName.bib")
+                if (direct.exists()) return direct
+                return File(projectBasePath).walkTopDown().find { it.name == "$bibFileName.bib" }
+            }
+            val local = File("$bibFileName.bib")
+            return if (local.exists()) local else null
+        }
         for (bibFileName in bibFileNames) {
-            val bibFilePath = if (projectBasePath != null) "$projectBasePath/$bibFileName.bib" else "$bibFileName.bib"
-            val bibFile = File(bibFilePath)
-            if (bibFile.exists()) {
-                val bibText = bibFile.readText()
-                val bibEntryRegex = Regex("""@\w+\{\s*([^,]+),""")
-                bibEntryRegex.findAll(bibText).forEach { bibKeys.add(it.groupValues[1]) }
+            val bibFile = findBibFile(bibFileName)
+            val bibText = bibFile?.readText()
+            if (bibText != null) {
+                // More robust BibTeX entry key extraction and mapping
+                val bibEntryRegex = Regex("@\\w+\\s*\\{\\s*([^,\\s]+)[^}]*\\}(.*?)(?=@|\\z)", RegexOption.DOT_MATCHES_ALL)
+                bibEntryRegex.findAll(bibText).forEach { match ->
+                    val key = match.groupValues[1].trim()
+                    val entryStart = match.range.first
+                    val nextEntryStart = match.range.last + 1
+                    val entryText = bibText.substring(entryStart, nextEntryStart)
+                    bibKeys.add(key)
+                    bibEntryMap[key] = match.value.trim()
+                }
             }
         }
         val sortedBibKeys = bibKeys.sorted()
@@ -66,6 +84,9 @@ class InsertReferenceActionGroup : ActionGroup(), DumbAware {
                 }
                 return sortedBibKeys.map { key ->
                     object : AnAction(key) {
+                        init {
+                            templatePresentation.description = bibEntryMap[key] ?: ""
+                        }
                         override fun actionPerformed(e: AnActionEvent) {
                             insertAtCaret(editor, "\\cite{$key}")
                         }

@@ -64,11 +64,12 @@
             <action id="LiveLaTeX.Text.Cite" class="com.omariskandarani.livelatex.actions.MakeTextCiteAction" text="cite = \\cite{TEXT}"/>
         </group>
         
-        <action id="LiveLaTeX.InsertReference"
-                class="com.omariskandarani.livelatex.actions.InsertReferenceActionGroup"
-                text="Insert Reference…"
-                description="Insert a reference (\\ref or \\cite) from available labels and BibTeX entries">
+        <group id="LiveLaTeX.InsertReference"
+               class="com.omariskandarani.livelatex.actions.InsertReferenceActionGroup"
+               text="Insert Reference…"
+               description="Insert a reference (\\ref or \\cite) from available labels and BibTeX entries"
+               popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-        </action>
+        </group>
     </actions>
 </idea-plugin>
