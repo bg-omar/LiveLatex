@@ -103,6 +103,135 @@ class TikzCanvasDialog(
     private var tool = Tool.KNOT
     private var dirty = false
 
+    // ── Presets ─────────────────────────────────────────────────────────────────
+    private data class Preset(
+        val name: String,
+        val ptsUnits: List<Pair<Double, Double>> = emptyList(),         // primary closed path (Hobby)
+        val circlesUnits: List<Triple<Double, Double, Double>> = emptyList(), // (cx, cy, rUnits)
+        val flipList: String? = null                                     // optional default flip crossing list
+    )
+
+    private fun unitsToPixelsPoints(units: List<Pair<Double,Double>>): List<Point> {
+        val cx = canvas.width / 2; val cy = canvas.height / 2
+        return units.map { (ux, uy) -> Point(cx + fromUnits(ux), cy - fromUnits(uy)) }
+    }
+    private fun unitsToPixelsCircles(units: List<Triple<Double,Double,Double>>): List<Circ> {
+        val cx = canvas.width / 2; val cy = canvas.height / 2
+        return units.map { (ux, uy, r) -> Circ(Point(cx + fromUnits(ux), cy - fromUnits(uy)), r) }
+    }
+
+    // simple star/rosette polygon in unit space (outer/inner), closed (last==first)
+    private fun starPolygon(n: Int, rOuter: Double, rInner: Double, startDeg: Double = 90.0): List<Pair<Double,Double>> {
+        val out = ArrayList<Pair<Double,Double>>(2*n + 1)
+        val toRad = Math.PI / 180.0
+        for (k in 0 until n) {
+            val aOuter = (startDeg + 360.0 * k / n) * toRad
+            val aInner = (startDeg + 360.0 * k / n + 180.0 / n) * toRad
+            out += (rOuter * kotlin.math.cos(aOuter)) to (rOuter * kotlin.math.sin(aOuter))
+            out += (rInner * kotlin.math.cos(aInner)) to (rInner * kotlin.math.sin(aInner))
+        }
+        out += out.first()
+        return out
+    }
+
+    private val presets: List<Preset> = listOf(
+        Preset(
+            "★ Trefoil (3₁)",
+            ptsUnits = starPolygon(n = 3, rOuter = 2.0, rInner = 1.0)
+        ),
+        Preset(
+            "★ Trefoil (3₁) — split",
+            ptsUnits = starPolygon(n = 3, rOuter = 2.0, rInner = 1.0)
+        ),
+        Preset(
+            "★ Figure-eight (4₁)",
+            ptsUnits = listOf(
+                -2.0 to -2.0,
+                -2.0 to  2.0,
+                 1.0 to -0.5,
+                -1.0 to -0.5,
+                 2.0 to  2.0,
+                 2.0 to -2.0,
+                -1.0 to  0.5,
+                 1.0 to  0.5,
+                -2.0 to -2.0
+            ),
+            flipList = "2,4,6,8,10,12,14"
+        ),
+        Preset(
+            "★ Cinquefoil (5₁)",
+            ptsUnits = starPolygon(n = 5, rOuter = 2.0, rInner = 1.1),
+            flipList = "2,4,6,8,10"
+        ),
+        Preset(
+            "★ 5₂ (Up Quark)",
+            ptsUnits = listOf(
+                2.0 to -1.5,
+                1.5 to  1.0,
+                0.0 to  2.0,
+               -2.0 to  1.0,
+               -1.0 to -1.5,
+                0.5 to -2.0,
+               -1.25 to -2.25,
+               -2.0 to -1.5,
+               -1.5 to  1.0,
+                0.0 to  2.0,
+                2.0 to  1.0,
+                1.0 to -1.5,
+               -0.5 to -2.0,
+                1.25 to -2.25,
+                2.0 to -1.5
+            ),
+            flipList = "2,4,6,8,10,12,14,16,18"
+        ),
+        Preset(
+            "★ 6₁ (Stevedore / Down Quark)",
+            ptsUnits = listOf(
+                 0.0 to  2.0,
+                -2.0 to  2.0,
+                -1.5 to -1.0,
+                 0.5 to -2.0,
+                -1.5 to -2.0,
+                -2.5 to -0.5,
+                -2.0 to  1.0,
+                 0.0 to  3.0,
+                 2.0 to  1.0,
+                 2.5 to -0.5,
+                 1.5 to -2.0,
+                -0.5 to -2.0,
+                 1.5 to -1.0,
+                 2.0 to  2.0,
+                 0.0 to  2.0
+            ),
+            flipList = "2,4,6,8,10,12"
+        ),
+        Preset(
+            "★ Septafoil (7₁)",
+            ptsUnits = starPolygon(n = 7, rOuter = 2.0, rInner = 1.3)
+        ),
+        Preset(
+            "★ Hopf link",
+            circlesUnits = listOf(
+                Triple( 1.0, 0.0, 2.0),
+                Triple(-1.0, 0.0, 2.0)
+            )
+        ),
+        Preset(
+            "★ Borromean rings",
+            circlesUnits = listOf(
+                Triple( 1.0, 0.0, 2.0),
+                Triple(-1.0, 0.0, 2.0),
+                Triple( 0.0, kotlin.math.sqrt(3.0), 2.0)
+            )
+        )
+    )
+
+    // convert unit-space preset into pixel points centered on canvas
+    private fun unitsToPixels(units: List<Pair<Double,Double>>): List<Point> {
+        val cx = canvas.width / 2; val cy = canvas.height / 2
+        return units.map { (ux, uy) -> Point(cx + fromUnits(ux), cy - fromUnits(uy)) }
+    }
+
     // in-progress
     private var tmpA: Point? = null   // for line/circle first click
     private var circlePreview: Circ? = null
@@ -122,6 +251,7 @@ class TikzCanvasDialog(
     private var autoMoveGrab: Boolean = false           // true when we clicked on an exist.
     private var longPressFired: Boolean = false // Add near other press state
     private var longPressReady: Boolean = false // readiness flag for long-press add
+    private var initialPresetLoaded = false
 
     // --------- UI controls ----------
     private lateinit var rootPanel: JPanel
@@ -130,6 +260,10 @@ class TikzCanvasDialog(
         isEditable = true
         preferredSize = Dimension(220, preferredSize.height)
         toolTipText = "Saved knots (MRU, max 9). Type a new title to save."
+        addActionListener {
+            val s = currentTitle().trim()
+            if (s.isNotBlank() && s != "— saved —") doLoadSelected()
+        }
     }
     private val saveBtn = JButton("Save")
     private val loadBtn = JButton("Load")
@@ -329,9 +463,21 @@ class TikzCanvasDialog(
     init {
         title = "TikZ Knot"
         initUI()
-        init()
-        setSize(1200, 800)
+        init() // DialogWrapper init
+        setSize((Toolkit.getDefaultToolkit().screenSize.width * 0.8).toInt(), (Toolkit.getDefaultToolkit().screenSize.height * 0.8).toInt())
         initialTikz?.let { importCoordinates(it) }
+
+        canvas.addComponentListener(object : java.awt.event.ComponentAdapter() {
+            override fun componentResized(e: java.awt.event.ComponentEvent?) {
+                if (!initialPresetLoaded && presets.isNotEmpty()) {
+                    titleCombo.selectedIndex = 0
+                    doLoadSelected()
+                    initialPresetLoaded = true
+                    // Optional: remove listener if it should only ever fire once
+                    // canvas.removeComponentListener(this)
+                }
+            }
+        })
     }
 
     private fun drawShapes(g2: Graphics2D) {
@@ -389,6 +535,7 @@ class TikzCanvasDialog(
         }
         twoStrandSettings = TwoStrandSettingsService.getInstance().state.copy()
         twoStrandBox = JCheckBox("Twist", /*selected=*/true)
+        refreshTitlesCombo()
 
 
         // --- Two-strand Setups row ---
@@ -403,8 +550,9 @@ class TikzCanvasDialog(
         tfClrB = JTextField(twoStrandSettings.clrB, 14)
 
         val setupsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            add(twoStrandBox);
             add(JLabel("Amp"));   add(spAmp)
-            add(JLabel("Turns"));          add(spTurns)
+            add(JLabel("Twists"));          add(spTurns)
             add(JLabel("Samples"));        add(spSamples)
             add(JLabel("Width"));          add(tfWth)
             add(JLabel("Core"));           add(tfCore)
@@ -412,12 +560,6 @@ class TikzCanvasDialog(
             add(JLabel("A"));              add(tfClrA)
             add(JLabel("B"));              add(tfClrB)
         }
-
-        setupsRow.add(Box.createHorizontalStrut(12))
-        setupsRow.add(twoStrandBox)
-
-
-        // mode row
 
         val modeRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
             add(JLabel("Title:")); add(titleCombo)
@@ -444,7 +586,8 @@ class TikzCanvasDialog(
         header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
         header.add(setupsRow)
         header.add(toolsRow)
-//        header.add(modeRow)
+        header.add(modeRow)
+        header.add(fileRow)
 
         rootPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createEmptyBorder(6, 6, 6, 6)
@@ -737,9 +880,21 @@ class TikzCanvasDialog(
     // ---------- save/load ----------
     private fun currentTitle(): String = (titleCombo.editor.item?.toString() ?: "").trim()
     private fun refreshTitlesCombo(select: String? = null) {
-        val names = store.names().toTypedArray()
-        titleCombo.model = DefaultComboBoxModel(names)
-        if (select != null && names.contains(select)) titleCombo.selectedItem = select
+        val presetNames = presets.map { it.name }
+        val savedNames = store.names()
+        val items = mutableListOf<String>().apply {
+            addAll(presetNames)
+            if (savedNames.isNotEmpty()) {
+                add("— saved —")
+                addAll(savedNames)
+            }
+        }
+        titleCombo.model = DefaultComboBoxModel(items.toTypedArray())
+        if (select != null && items.contains(select)) {
+            titleCombo.selectedItem = select
+        } else if (items.isNotEmpty()) {
+            titleCombo.selectedIndex = 0
+        }
     }
     private fun autoTitle(): String {
         val base = "Untitled"
@@ -749,8 +904,11 @@ class TikzCanvasDialog(
         return "$base $i"
     }
     private fun doSave(explicit: Boolean) {
-        var title = currentTitle()
-        if (title.isBlank()) { title = autoTitle(); titleCombo.editor.item = title }
+        var title = currentTitle().trim()
+        if (title.isBlank() || presets.any { it.name == title } || title == "— saved —") {
+            title = autoTitle()
+            titleCombo.editor.item = title
+        }
         store.save(title, knotPts)
         refreshTitlesCombo(title); dirty = false
         if (explicit) JOptionPane.showMessageDialog(rootPanel, "Saved \"$title\".")
@@ -763,13 +921,41 @@ class TikzCanvasDialog(
     }
     private fun doLoadSelected() {
         maybeAutoSave()
-        val title = currentTitle()
-        if (title.isBlank()) { JOptionPane.showMessageDialog(rootPanel, "Choose a title to load."); return }
+        val title = currentTitle().trim()
+        if (title.isBlank() || title == "— saved —") {
+            JOptionPane.showMessageDialog(rootPanel, "Choose a title to load."); return
+        }
+
+        val preset = presets.firstOrNull { it.name == title }
+        if (preset != null) {
+            // clear canvas
+            knotPts.clear()
+            shapes.clear()
+
+            // load main path (if any)
+            if (preset.ptsUnits.isNotEmpty()) {
+                knotPts.addAll(unitsToPixelsPoints(preset.ptsUnits))
+            }
+            // load circles (if any)
+            if (preset.circlesUnits.isNotEmpty()) {
+                shapes.addAll(unitsToPixelsCircles(preset.circlesUnits))
+            }
+            // optional default flips for classic export
+            flipField.text = preset.flipList ?: ""
+
+            dirty = true
+            canvas.repaint()
+            return
+        }
+
+        // Saved
         val pts = store.load(title) ?: run {
             JOptionPane.showMessageDialog(rootPanel, "No saved knot named \"$title\"."); return
         }
-        knotPts.clear(); knotPts.addAll(pts.map { Point(it) }); dirty = false; canvas.repaint()
+        knotPts.clear(); knotPts.addAll(pts.map { Point(it) })
+        dirty = false; canvas.repaint()
     }
+
     private fun doDeleteSelected() {
         val title = currentTitle(); if (title.isBlank()) return
         if (JOptionPane.showConfirmDialog(rootPanel, "Delete \"$title\"?", "Delete",
