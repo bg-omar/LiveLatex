@@ -1,45 +1,92 @@
 package com.omariskandarani.livelatex.actions
 
-import com.intellij.openapi.components.PersistentStateComponent
-import com.intellij.openapi.components.State
-import com.intellij.openapi.components.Storage
-import com.intellij.openapi.components.Service
-import java.awt.Point
-import java.util.ArrayDeque
+import com.intellij.openapi.components.*
+import com.intellij.openapi.project.Project
 
-@State(name = "TikzKnotStore", storages = [Storage("tikzKnotStore.xml")])
+/**
+ * Stores a small MRU set of named knot point lists per project.
+ * NOTE: State must use bean-serializable types (no java.awt.Point).
+ */
 @Service(Service.Level.PROJECT)
-class TikzKnotStore : PersistentStateComponent<TikzKnotStore.State> {
-    private val mru = ArrayDeque<Pair<String, List<Point>>>() // most recent first
-    private val MAX = 9
+@State(
+    name = "LiveLatexTikzKnotStore",
+    storages = [Storage("LiveLatexTikzKnotStore.xml")]
+)
+class TikzKnotStore(private val project: Project) : PersistentStateComponent<TikzKnotStore.State> {
 
-    data class Knot(val name: String, val points: List<Point>)
-    data class State(var knots: List<Knot> = emptyList())
+    // --- Serializable beans (NO AWT POINTS) ---
+    data class PointBean(var x: Int = 0, var y: Int = 0)
+    data class Entry(var name: String = "", var points: MutableList<PointBean> = mutableListOf())
 
-    override fun getState(): State {
-        return State(mru.map { Knot(it.first, it.second) })
+    data class State(
+        var entries: MutableList<Entry> = mutableListOf(),
+        var maxItems: Int = 9
+    )
+
+    // in-memory (never null)
+    private var state: State = State()
+
+    // --- PersistentStateComponent ---
+    override fun getState(): State = state
+
+    override fun loadState(s: State) {
+        // Be defensive against corrupted / partial data
+        try {
+            val clean = State(
+                entries = s.entries.orEmpty().mapNotNull { e ->
+                    if (e.name.isBlank()) return@mapNotNull null
+                    val pts = e.points.orEmpty().mapNotNull { p ->
+                        // guard for nulls / wrong numbers
+                        if (p == null) null else PointBean(p.x, p.y)
+                    }.toMutableList()
+                    Entry(e.name, pts)
+                }.toMutableList(),
+                maxItems = if (s.maxItems <= 0) 9 else s.maxItems
+            )
+            state = clean
+        } catch (_: Throwable) {
+            // fallback to empty state if anything explodes
+            state = State()
+        }
     }
 
-    override fun loadState(state: State) {
-        mru.clear()
-        state.knots.forEach { mru.addLast(it.name to it.points.map { p -> Point(p) }) }
+    // --- Public API used by the dialog ---
+
+    fun names(): List<String> = state.entries.map { it.name }
+
+    fun save(title: String, points: List<java.awt.Point>) {
+        val t = title.trim()
+        if (t.isEmpty()) return
+
+        // convert to beans
+        val beans = points.map { PointBean(it.x, it.y) }.toMutableList()
+
+        // upsert at front (MRU)
+        val existingIdx = state.entries.indexOfFirst { it.name == t }
+        if (existingIdx >= 0) {
+            state.entries.removeAt(existingIdx)
+        }
+        state.entries.add(0, Entry(t, beans))
+
+        // trim
+        while (state.entries.size > state.maxItems) {
+            state.entries.removeLast()
+        }
     }
 
-    fun save(name: String, pts: List<Point>) {
-        val clean = pts.map { Point(it) }
-        val it = mru.iterator()
-        while (it.hasNext()) if (it.next().first == name) it.remove()
-        mru.addFirst(name to clean)
-        while (mru.size > MAX) mru.removeLast()
+    fun load(title: String): List<java.awt.Point>? {
+        val e = state.entries.firstOrNull { it.name == title.trim() } ?: return null
+        return e.points.map { java.awt.Point(it.x, it.y) }
     }
 
-    fun load(name: String): List<Point>? =
-        mru.firstOrNull { it.first == name }?.second?.map { Point(it) }
-
-    fun delete(name: String) {
-        val it = mru.iterator()
-        while (it.hasNext()) if (it.next().first == name) it.remove()
+    fun delete(title: String) {
+        val idx = state.entries.indexOfFirst { it.name == title.trim() }
+        if (idx >= 0) state.entries.removeAt(idx)
     }
 
-    fun names(): List<String> = mru.map { it.first }
+    // (optional) expose maxItems tweak
+    fun setMaxItems(n: Int) {
+        state.maxItems = n.coerceAtLeast(1)
+        while (state.entries.size > state.maxItems) state.entries.removeLast()
+    }
 }

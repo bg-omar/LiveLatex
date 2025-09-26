@@ -40,6 +40,8 @@ class TikzCanvasDialog(
         const val SUB = STEP / 4      // 0.25 unit
         private const val GRID_UNITS = 4
         private const val PICK_R = 10
+        const val LONG_PRESS_MS = 220       // hold to add
+        const val MOVE_TOL2 = PICK_R * PICK_R * 4 // reuse your pick radius *2
     }
 
 
@@ -112,6 +114,15 @@ class TikzCanvasDialog(
     private var dragKnotIndex: Int = -1
     private var dragKind: String = ""  // for circle radius, etc.
 
+    // press/drag state for knot interactions
+    private var pressStartMs: Long = 0L
+    private var pressButton: Int = 0
+    private var pressRaw: Point? = null                 // unsnapped original press
+    private var provisionalAdd: Point? = null           // shown while holding to add (snapped)
+    private var autoMoveGrab: Boolean = false           // true when we clicked on an exist.
+    private var longPressFired: Boolean = false // Add near other press state
+    private var longPressReady: Boolean = false // readiness flag for long-press add
+
     // --------- UI controls ----------
     private lateinit var rootPanel: JPanel
 
@@ -148,11 +159,6 @@ class TikzCanvasDialog(
     private val rbCircle = JRadioButton("Circle")
     private val rbDot = JRadioButton("Dot")
     private val rbText = JRadioButton("Text")
-
-    private val modeGroup = ButtonGroup()
-    private val rbAdd = JRadioButton("Add", true)
-    private val rbMove = JRadioButton("Move")
-    private val rbDel = JRadioButton("Delete")
 
     private val twinBox = JCheckBox("Twin", false)
     private val twinOffset = JSpinner(SpinnerNumberModel(0.25, 0.25, 2.0, 0.25)).apply {
@@ -286,6 +292,14 @@ class TikzCanvasDialog(
                 g2.color = JBColor(Color(0x1C4DB9), Color(0x1C4DB9))
                 g2.drawString(label, p.x + 10, p.y - 4)
             }
+            // provisional add point while holding
+            provisionalAdd?.let { p0 ->
+                val fill = if (longPressReady) JBColor(Color(0x10B981), Color(0x34D399))  // green-ish when armed
+                           else JBColor(Color(0x2563EB), Color(0x93C5FD))                 // blue while holding
+                g2.color = fill
+                g2.fillOval(p0.x - 4, p0.y - 4, 8, 8)
+                g2.drawOval(p0.x - 6, p0.y - 6, 12, 12)
+            }
 
             // previews
             g2.color = JBColor(Color(0x1F2937), Color(0xEAECEF))
@@ -359,7 +373,7 @@ class TikzCanvasDialog(
         rbText.addActionListener { tool = Tool.TEXT }
 
         val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
-            add(JLabel("Tool:"))
+            add(JLabel(""))
             add(rbKnot); add(rbLine); add(rbCircle); add(rbDot); add(rbText)
             add(Box.createHorizontalStrut(12))
             add(JLabel("Knot color:")); add(knotColor)
@@ -369,13 +383,10 @@ class TikzCanvasDialog(
             add(JLabel("Text:")); add(textDefault)
             add(Box.createHorizontalStrut(12))
             add(JLabel("Guides:")); add(showPointsBox)
-            add(Box.createHorizontalStrut(12))
-            add(JLabel("Twin:")); add(twinBox); add(twinOffset)
         }
         twoStrandSettings = TwoStrandSettingsService.getInstance().state.copy()
-        twoStrandBox = JCheckBox("Two-strand export (A/B) with overpass mask", /*selected=*/true)
-        toolsRow.add(Box.createHorizontalStrut(12))
-        toolsRow.add(twoStrandBox)
+        twoStrandBox = JCheckBox("Twist", /*selected=*/true)
+
 
         // --- Two-strand Setups row ---
         spAmp     = JSpinner(SpinnerNumberModel(twoStrandSettings.amp,    0.0,  5.0, 0.01))
@@ -389,7 +400,7 @@ class TikzCanvasDialog(
         tfClrB = JTextField(twoStrandSettings.clrB, 14)
 
         val setupsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            add(JLabel("Setups:  Amp"));   add(spAmp)
+            add(JLabel("Amp"));   add(spAmp)
             add(JLabel("Turns"));          add(spTurns)
             add(JLabel("Samples"));        add(spSamples)
             add(JLabel("Width"));          add(tfWth)
@@ -399,17 +410,13 @@ class TikzCanvasDialog(
             add(JLabel("B"));              add(tfClrB)
         }
 
-
+        setupsRow.add(Box.createHorizontalStrut(12))
+        setupsRow.add(twoStrandBox)
 
 
         // mode row
-        listOf(rbAdd, rbMove, rbDel).forEach { modeGroup.add(it) }
-        rbAdd.addActionListener { mode = EditMode.ADD }
-        rbMove.addActionListener { mode = EditMode.MOVE }
-        rbDel.addActionListener { mode = EditMode.DELETE }
+
         val modeRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            add(JLabel("Edit:")); add(rbAdd); add(rbMove); add(rbDel)
-            add(Box.createHorizontalStrut(12))
             add(JLabel("Title:")); add(titleCombo)
             add(saveBtn); add(loadBtn); add(newBtn); add(deleteBtn)
         }
@@ -423,7 +430,7 @@ class TikzCanvasDialog(
         header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
         header.add(setupsRow)
         header.add(toolsRow)
-        header.add(modeRow)
+//        header.add(modeRow)
 
         rootPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createEmptyBorder(6, 6, 6, 6)
@@ -440,17 +447,44 @@ class TikzCanvasDialog(
     // ---------- Mouse handling ----------
     private fun onPress(e: MouseEvent) {
         val p = snap(e.point)
+        pressStartMs = System.currentTimeMillis()
+        pressButton = e.button
+        pressRaw = e.point
+        provisionalAdd = null
+        autoMoveGrab = false
+        longPressFired = false // Add near other press state
+        longPressReady = false // reset readiness on press
+
         when (tool) {
-            Tool.KNOT -> when (mode) {
-                EditMode.ADD -> { knotPts += p; markDirty() }
-                EditMode.DELETE -> {
-                    val i = nearest(knotPts, e.point) ?: return
-                    knotPts.removeAt(i); markDirty()
+            Tool.KNOT -> {
+                // Right-click deletes nearest point
+                if (SwingUtilities.isRightMouseButton(e) || e.button == MouseEvent.BUTTON3 || e.isPopupTrigger) {
+                    nearestKnot(e.point)?.let { idx ->
+                        knotPts.removeAt(idx)
+                        markDirty()
+                        canvas.repaint()
+                    }
+                    return
                 }
-                EditMode.MOVE -> {
-                    dragKnotIndex = nearest(knotPts, e.point) ?: -1
+
+                // Left-click behavior
+                if (SwingUtilities.isLeftMouseButton(e) || e.button == MouseEvent.BUTTON1) {
+                    // If we clicked an existing point, auto-grab to move
+                    val near = nearestKnot(e.point)
+                    if (near != null) {
+                        dragKnotIndex = near
+                        autoMoveGrab = true
+                        return
+                    }
+
+                    // Potential add: show provisional while holding
+                    provisionalAdd = p
+                    canvas.repaint()
+                    // NOTE: we only actually add on release IF held long enough
                 }
             }
+
+            // original behavior for other tools
             Tool.DOT -> when (mode) {
                 EditMode.ADD -> { shapes += Dot(p); markDirty() }
                 EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("center"))
@@ -476,43 +510,173 @@ class TikzCanvasDialog(
     private fun onDrag(e: MouseEvent) {
         val p = snap(e.point)
         when (tool) {
-            Tool.KNOT -> if (mode == EditMode.MOVE && dragKnotIndex >= 0) {
-                knotPts[dragKnotIndex] = p; markDirty()
-            }
-            Tool.LINE -> if (mode == EditMode.ADD) {
-                linePreview?.let { it.b = p; canvas.repaint() }
-            } else if (mode == EditMode.MOVE) {
-                handleShapeDrag(p)
-            }
-            Tool.CIRCLE -> if (mode == EditMode.ADD) {
-                circlePreview?.let {
-                    it.rUnits = quantQ(p.distance(it.c) / STEP)
+            Tool.KNOT -> {
+                if (autoMoveGrab || mode == EditMode.MOVE) {
+                    if (dragKnotIndex >= 0) {
+                        knotPts[dragKnotIndex] = p
+                        markDirty()
+                        canvas.repaint()
+                    }
+                } else if (pressButton == MouseEvent.BUTTON1) {
+                    provisionalAdd = p
+                    // Only flag readiness; do NOT add here
+                    longPressReady = (System.currentTimeMillis() - pressStartMs) >= LONG_PRESS_MS
                     canvas.repaint()
                 }
-            } else if (mode == EditMode.MOVE) {
-                handleShapeDrag(p)
             }
-            Tool.DOT, Tool.TEXT -> if (mode == EditMode.MOVE) {
-                handleShapeDrag(p)
+            Tool.LINE -> {
+                if (mode == EditMode.ADD) {
+                    linePreview?.let { it.b = p; canvas.repaint() }
+                } else if (mode == EditMode.MOVE) {
+                    handleShapeDrag(p)
+                }
+            }
+
+            Tool.CIRCLE -> {
+                if (mode == EditMode.ADD) {
+                    circlePreview?.let {
+                        it.rUnits = quantQ(p.distance(it.c) / STEP)
+                        canvas.repaint()
+                    }
+                } else if (mode == EditMode.MOVE) {
+                    handleShapeDrag(p)
+                }
+            }
+
+            Tool.DOT, Tool.TEXT -> {
+                if (mode == EditMode.MOVE) handleShapeDrag(p)
+                else if (pressButton == MouseEvent.BUTTON1) {
+                    provisionalAdd = p
+                    longPressReady = (System.currentTimeMillis() - pressStartMs) >= LONG_PRESS_MS
+                    canvas.repaint()
+                }
             }
         }
+
+        // ── long-press “commit once” per gesture ────────────────────────────
+        val now = System.currentTimeMillis()
+        val dt = now - pressStartMs
+        if (!longPressFired && dt >= LONG_PRESS_MS) {
+            when (tool) {
+                Tool.KNOT -> {
+                    provisionalAdd = p
+                    if (!autoMoveGrab) {
+                        val idx = nearest(knotPts, p)
+                        val isDuplicate = idx != null && p.distanceSq(knotPts[idx]) <= MOVE_TOL2
+                        if (!isDuplicate) {
+                            knotPts += p
+                            markDirty()
+                            canvas.repaint()
+                        }
+                    }
+                    longPressFired = true
+                }
+
+                Tool.DOT -> {
+                    shapes += Dot(p)
+                    markDirty()
+                    canvas.repaint()
+                    longPressFired = true
+                }
+
+                Tool.TEXT -> {
+                    val text = JOptionPane.showInputDialog(rootPanel, "Text:", textDefault.text)
+                    if (text != null) {
+                        shapes += Label(p, text)
+                        markDirty()
+                        canvas.repaint()
+                    }
+                    longPressFired = true
+                }
+
+                Tool.LINE -> {
+                    // Start a line on long-press (ADD mode). Drag updates endpoint above.
+                    if (mode == EditMode.ADD && tmpA == null && linePreview == null) {
+                        tmpA = p
+                        linePreview = LineSeg(p, p)
+                        canvas.repaint()
+                        // finalize at onRelease as you already do
+                    }
+                    longPressFired = true
+                }
+
+                Tool.CIRCLE -> {
+                    // Start a circle on long-press (ADD mode). Drag updates radius above.
+                    if (mode == EditMode.ADD && tmpA == null && circlePreview == null) {
+                        tmpA = p
+                        circlePreview = Circ(p, 0.0)
+                        canvas.repaint()
+                        // finalize at onRelease as you already do
+                    }
+                    longPressFired = true
+                }
+            }
+        }
+    }
+
+    private fun resetPressState() {
+        provisionalAdd = null
+        autoMoveGrab = false
+        longPressReady = false
+        dragKnotIndex = -1
+        drag = null
     }
 
     private fun onRelease(e: MouseEvent) {
         val p = snap(e.point)
         when (tool) {
-            Tool.LINE -> if (mode == EditMode.ADD) {
-                linePreview?.let { shapes += LineSeg(it.a, p) }
-                linePreview = null; tmpA = null; markDirty()
-            } else drag = null
-            Tool.CIRCLE -> if (mode == EditMode.ADD) {
-                circlePreview?.let {
-                    shapes += Circ(it.c, max(0.0, quantQ(p.distance(it.c) / STEP)))
+            Tool.KNOT -> {
+                // If we were dragging an existing point, just end the drag
+                if (autoMoveGrab || mode == EditMode.MOVE) {
+                    // no-op; dragKnotIndex cleared in reset
+                } else if (pressButton == MouseEvent.BUTTON1 && longPressReady) {
+                    // Commit add on release if the press lasted long enough
+                    val candidate = provisionalAdd ?: p
+                    addKnotIfNotDuplicate(candidate)
                 }
-                circlePreview = null; tmpA = null; markDirty()
-            } else drag = null
-            Tool.KNOT -> dragKnotIndex = -1
-            Tool.DOT, Tool.TEXT -> drag = null
+                resetPressState()
+            }
+            Tool.DOT -> {
+                if (longPressReady) {
+                    shapes += Dot(p)
+                    markDirty()
+                }
+                resetPressState()
+            }
+            Tool.TEXT -> {
+                if (longPressReady) {
+                    val text = JOptionPane.showInputDialog(rootPanel, "Text:", textDefault.text)
+                    if (text != null) {
+                        shapes += Label(p, text)
+                        markDirty()
+                    }
+                }
+                resetPressState()
+            }
+            Tool.LINE -> {
+                if (mode == EditMode.ADD) {
+                    if (linePreview != null && tmpA != null) {
+                        linePreview?.let { shapes += LineSeg(it.a, p) }
+                        markDirty()
+                    }
+                    linePreview = null
+                    tmpA = null
+                }
+                resetPressState()
+            }
+            Tool.CIRCLE -> {
+                if (mode == EditMode.ADD) {
+                    if (circlePreview != null && tmpA != null) {
+                        circlePreview?.let {
+                            shapes += Circ(it.c, max(0.0, quantQ(p.distance(it.c) / STEP)))
+                            markDirty()
+                        }
+                    }
+                    circlePreview = null
+                    tmpA = null
+                }
+                resetPressState()
+            }
         }
         canvas.repaint()
     }
@@ -907,6 +1071,27 @@ class TikzCanvasDialog(
             if (shapes[i].hit(raw, tol2) != null) return i
         }
         return null
+    }
+
+    // Returns index of nearest knot point within MOVE_TOL2, else null
+    private fun nearestKnot(raw: Point): Int? {
+        if (knotPts.isEmpty()) return null
+        var bestIdx = -1
+        var best = Int.MAX_VALUE
+        for (i in knotPts.indices) {
+            val d2 = knotPts[i].distanceSq(raw).toInt()
+            if (d2 < best) { best = d2; bestIdx = i }
+        }
+        return if (best <= MOVE_TOL2) bestIdx else null
+    }
+
+    // Add point if not duplicate of last
+    private fun addKnotIfNotDuplicate(p: Point) {
+        val last = knotPts.lastOrNull()
+        if (last == null || last != p) {
+            knotPts += p
+            markDirty()
+        }
     }
 
 

@@ -37,6 +37,7 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
     """.trimIndent()
 
         val dialog = TikzCanvasDialog(project, initialTikz = selection)
+
         if (!dialog.showAndGet()) return
         val body = dialog.resultTikz ?: return
 
@@ -115,10 +116,12 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
                 Messages.showInfoMessage(project, "TikZ preamble inserted at top of document.", "TikZ Preamble Added")
             }
         }
+        dialog.show()
     }
 
 
     override fun update(e: AnActionEvent) {
+        val editor = e.getData(CommonDataKeys.EDITOR)
         val vFile = e.getData(CommonDataKeys.VIRTUAL_FILE)
         val ok = vFile?.extension?.lowercase() in setOf("tex", "sty", "tikz")
         e.presentation.isEnabledAndVisible = ok

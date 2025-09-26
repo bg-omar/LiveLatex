@@ -60,7 +60,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
     init {
         Disposer.register(project, this)
 
-        // React to editor-tab changes: show/hide preview + rebind listeners
+        // React to editor-tab changes: update preview + rebind listeners, but do NOT auto-show toolwindow
         project.messageBus.connect(this).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
@@ -68,7 +68,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview") ?: return
                     val file = event.newFile
                     if (file?.name?.endsWith(".tex") == true) {
-                        toolWindow.show()
+                        // Do NOT auto-show toolwindow
                         toolWindow.setWidth(400)
                         rebindToSelectedEditor()
                     } else {

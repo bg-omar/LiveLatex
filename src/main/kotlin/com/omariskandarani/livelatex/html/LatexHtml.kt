@@ -2225,6 +2225,7 @@ ${escapeHtmlKeepBackslashes(b)}
         return out.toString()
     }
 
+
     private fun applyInlineFormattingOutsideTags_NoTables(html: String): String {
         val rx = Regex("(<[^>]+>)")
         val parts = rx.split(html)
