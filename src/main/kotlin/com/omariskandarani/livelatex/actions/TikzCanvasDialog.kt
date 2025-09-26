@@ -82,6 +82,17 @@ class TikzCanvasDialog(
     var resultTikz: String? = null
         private set
 
+    // Two-strand settings (bound to persistent service)
+    private lateinit var twoStrandSettings: TwoStrandSettings
+
+    private lateinit var spAmp: JSpinner
+    private lateinit var spTurns: JSpinner
+    private lateinit var spSamples: JSpinner
+    private lateinit var tfWth: JTextField
+    private lateinit var tfCore: JTextField
+    private lateinit var tfMask: JTextField
+    private lateinit var tfClrA: JTextField
+    private lateinit var tfClrB: JTextField
 
     // --------- services / state ----------
     private val store = project.getService(TikzKnotStore::class.java)
@@ -116,6 +127,10 @@ class TikzCanvasDialog(
 
     private val flipField = JTextField().apply { columns = 14 }
     private val showPointsBox = JCheckBox("Guides", true)
+
+
+    private lateinit var twoStrandBox: JCheckBox
+
 
     private val knotColor = JComboBox(arrayOf("black","red","blue","green","teal","orange","purple","gray")).apply {
         selectedItem = "black"
@@ -182,6 +197,10 @@ class TikzCanvasDialog(
 
     // canvas
     private val canvas = object : JPanel() {
+        // track canvas center to keep model aligned on resize
+        private var lastCx: Int = -1
+        private var lastCy: Int = -1
+
         init {
             background = JBColor(Color(0xF8F9FB), Color(0x23272E))
             preferredSize = Dimension(1200, 800)
@@ -192,6 +211,26 @@ class TikzCanvasDialog(
                 override fun mouseReleased(e: MouseEvent) = onRelease(e)
             }
             addMouseListener(ma); addMouseMotionListener(ma)
+
+            // keep geometry aligned when the center shifts (e.g., width-only resize)
+            addComponentListener(object : java.awt.event.ComponentAdapter() {
+                override fun componentResized(e: java.awt.event.ComponentEvent) {
+                    val newCx = width / 2
+                    val newCy = height / 2
+                    if (lastCx == -1 && lastCy == -1) {
+                        lastCx = newCx
+                        lastCy = newCy
+                        return
+                    }
+                    val dx = newCx - lastCx
+                    val dy = newCy - lastCy
+                    if (dx != 0 || dy != 0) {
+                        translateAll(dx, dy)
+                        lastCx = newCx
+                        lastCy = newCy
+                    }
+                }
+            })
         }
         override fun paintComponent(g: Graphics) {
             super.paintComponent(g)
@@ -333,6 +372,35 @@ class TikzCanvasDialog(
             add(Box.createHorizontalStrut(12))
             add(JLabel("Twin:")); add(twinBox); add(twinOffset)
         }
+        twoStrandSettings = TwoStrandSettingsService.getInstance().state.copy()
+        twoStrandBox = JCheckBox("Two-strand export (A/B) with overpass mask", /*selected=*/true)
+        toolsRow.add(Box.createHorizontalStrut(12))
+        toolsRow.add(twoStrandBox)
+
+        // --- Two-strand Setups row ---
+        spAmp     = JSpinner(SpinnerNumberModel(twoStrandSettings.amp,    0.0,  5.0, 0.01))
+        spTurns   = JSpinner(SpinnerNumberModel(twoStrandSettings.turns,  0.0, 20.0, 0.25))
+        spSamples = JSpinner(SpinnerNumberModel(twoStrandSettings.samples, 50, 2000, 10))
+
+        tfWth  = JTextField(twoStrandSettings.wth,   6)
+        tfCore = JTextField(twoStrandSettings.core,  8)
+        tfMask = JTextField(twoStrandSettings.mask,  6)
+        tfClrA = JTextField(twoStrandSettings.clrA, 14)
+        tfClrB = JTextField(twoStrandSettings.clrB, 14)
+
+        val setupsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            add(JLabel("Setups:  Amp"));   add(spAmp)
+            add(JLabel("Turns"));          add(spTurns)
+            add(JLabel("Samples"));        add(spSamples)
+            add(JLabel("Width"));          add(tfWth)
+            add(JLabel("Core"));           add(tfCore)
+            add(JLabel("Mask"));           add(tfMask)
+            add(JLabel("A"));              add(tfClrA)
+            add(JLabel("B"));              add(tfClrB)
+        }
+
+
+
 
         // mode row
         listOf(rbAdd, rbMove, rbDel).forEach { modeGroup.add(it) }
@@ -353,6 +421,7 @@ class TikzCanvasDialog(
 
         val header = JPanel()
         header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
+        header.add(setupsRow)
         header.add(toolsRow)
         header.add(modeRow)
 
@@ -564,14 +633,147 @@ class TikzCanvasDialog(
     }
 
     override fun doOKAction() {
-        resultTikz = exportBody(
-            pts = knotPts, // see #3 below
-            showPoints = showPointsBox.isSelected,
-            flipCrossings = flipField.text.trim(),
-            knotColor = null,         // or e.g. colorField.text.takeIf { it.isNotBlank() }
-            wrapInFigure = false
-        )
+        // 1) Read UI into settings
+        twoStrandSettings.amp     = (spAmp.value as Number).toDouble()
+        twoStrandSettings.turns   = (spTurns.value as Number).toDouble()
+        twoStrandSettings.samples = (spSamples.value as Number).toInt()
+        twoStrandSettings.wth     = tfWth.text.trim().ifEmpty { "2.5pt" }
+        twoStrandSettings.core    = tfCore.text.trim().ifEmpty { "black" }
+        twoStrandSettings.mask    = tfMask.text.trim().ifEmpty { "5.0pt" }
+        twoStrandSettings.clrA    = tfClrA.text.trim().ifEmpty { "black!60!black" }
+        twoStrandSettings.clrB    = tfClrB.text.trim().ifEmpty { "red!70!black" }
+
+        // 2) Persist to service
+        TwoStrandSettingsService.getInstance().loadState(twoStrandSettings)
+
+        // 3) Export body (branch)
+        resultTikz = if (twoStrandBox.isSelected) {
+            exportBodyTwoStrand(
+                pts = knotPts,
+                amp = twoStrandSettings.amp,
+                turns = twoStrandSettings.turns,
+                samples = twoStrandSettings.samples,
+                wth = twoStrandSettings.wth,
+                core = twoStrandSettings.core,
+                mask = twoStrandSettings.mask,
+                clrA = twoStrandSettings.clrA,
+                clrB = twoStrandSettings.clrB
+            )
+        } else {
+            exportBody(
+                pts = knotPts,
+                showPoints = showPointsBox.isSelected,
+                flipCrossings = flipField.text.trim(),
+                knotColor = null,
+                wrapInFigure = false
+            )
+        }
         super.doOKAction()
+    }
+
+    private fun exportBodyTwoStrand(
+        pts: List<Point>,
+        amp: Double = 0.13,
+        turns: Double = 4.0,
+        samples: Int = 400,
+        wth: String = "2.5pt",
+        core: String = "black",
+        mask: String = "5.0pt",
+        clrA: String = "black!60!black",
+        clrB: String = "red!70!black"
+    ): String {
+        if (pts.isEmpty()) return "% No knot points."
+
+        // Canvas grid -> integer grid coordinates (same convention as exportBody)
+        val step = STEP
+        val cx = canvas.width / 2
+        val cy = canvas.height / 2
+        data class G(val x: Int, val y: Int)
+        fun toGrid(p: Point) = G((p.x - cx) / step, -((p.y - cy) / step))
+
+        // De-duplicate consecutive duplicates to avoid ...P5..P5...
+        val dedup = ArrayList<Point>(pts.size)
+        for (p in pts) if (dedup.isEmpty() || dedup.last() != p) dedup += p
+        if (dedup.size < 2) return "% Need at least 2 points."
+
+        val gpts = dedup.map(::toGrid)
+        val first = gpts.first()
+        val n = gpts.size
+
+        val sb = StringBuilder()
+
+        sb.appendLine("\\begin{tikzpicture}[use Hobby shortcut, line cap=round, line join=round, scale=1.05]")
+        sb.appendLine()
+        sb.appendLine("% ---- controls ----")
+        sb.appendLine("\\def\\Amp{${formatQ(amp)}}")
+        sb.appendLine("\\def\\Turns{${formatQ(turns)}}        % can be non-integer; extrema logic still works")
+        sb.appendLine("\\def\\Samples{$samples}")
+        sb.appendLine("\\def\\Wth{$wth}")
+        sb.appendLine("\\def\\Core{$core}     % set to page color for clean masking")
+        sb.appendLine("\\def\\Mask{$mask}")
+        sb.appendLine("\\def\\ClrA{$clrA}")
+        sb.appendLine("\\def\\ClrB{$clrB}")
+        sb.appendLine()
+        sb.appendLine("\\tikzset{")
+        sb.appendLine("  fat strand/.style={")
+        sb.appendLine("    draw=#1, line width=\\Wth,")
+        sb.appendLine("    double=\\Core, double distance=1.2*\\Wth")
+        sb.appendLine("  }")
+        sb.appendLine("}")
+        sb.appendLine()
+        sb.appendLine("% ---- coordinates ----")
+        for (i in 0 until n) {
+            val q = gpts[i]
+            sb.appendLine("\\coordinate (P${i + 1}) at (${q.x}, ${q.y});")
+        }
+        sb.appendLine("\\coordinate (P${n + 1}) at (${first.x}, ${first.y}); % = P1")
+        sb.appendLine("\\def\\KPATH{([closed] P1)..${(2..(n + 1)).joinToString("..") { "(P$it)" }}}")
+        sb.appendLine()
+        sb.appendLine("% ---- build two offset coordinate lists ----")
+        sb.appendLine("\\newcommand{\\MakeStrandCoords}[5]{%")
+        sb.appendLine("  \\pgfmathtruncatemacro{\\Ns}{#2}")
+        sb.appendLine("  \\def\\Phase{0}\\ifx#5B\\def\\Phase{0.5}\\fi")
+        sb.appendLine("  \\foreach \\i in {0,...,\\Ns}{%")
+        sb.appendLine("    \\pgfmathsetmacro{\\s}{\\i/\\Ns}%")
+        sb.appendLine("    \\pgfmathsetmacro{\\y}{#3*sin(360*(#4*\\s + \\Phase))}%")
+        sb.appendLine("    \\path[postaction={decorate, decoration={markings,")
+        sb.appendLine("      mark=at position \\s with {\\coordinate (#5\\i) at (0,\\y);}}}] #1;%")
+        sb.appendLine("  }%")
+        sb.appendLine("}")
+        sb.appendLine("\\MakeStrandCoords{\\KPATH}{\\Samples}{\\Amp}{\\Turns}{A}")
+        sb.appendLine("\\MakeStrandCoords{\\KPATH}{\\Samples}{\\Amp}{\\Turns}{B}")
+        sb.appendLine()
+        sb.appendLine("% ---- segment drawer with overpass mask ----")
+        sb.appendLine("\\newcommand{\\drawSeg}[4]{% name(A/B), i, color, over(0/1)")
+        sb.appendLine("  \\ifnum#4=1")
+        sb.appendLine("    \\draw[preaction={draw=\\Core, line width=\\Mask}, fat strand=#3]")
+        sb.appendLine("      (#1#2) .. (#1\\the\\numexpr#2+1\\relax);")
+        sb.appendLine("  \\else")
+        sb.appendLine("    \\draw[fat strand=#3]")
+        sb.appendLine("      (#1#2) .. (#1\\the\\numexpr#2+1\\relax);")
+        sb.appendLine("  \\fi")
+        sb.appendLine("}")
+        sb.appendLine()
+        sb.appendLine("% ---- swap at offset extrema (least visible) ----")
+        sb.appendLine("\\pgfmathtruncatemacro{\\Last}{\\Samples-1}")
+        sb.appendLine("\\foreach \\k in {0,...,\\Last}{")
+        sb.appendLine("  \\pgfmathsetmacro{\\s}{\\k/\\Samples}")
+        sb.appendLine("  % block index changes at s = (1/4 + n/2)/Turns  <=> when 2*Turns*s crosses half-integers")
+        sb.appendLine("  \\pgfmathtruncatemacro{\\blk}{floor(2*\\Turns*\\s + 0.5)}")
+        sb.appendLine("  \\ifodd\\blk")
+        sb.appendLine("    % B over, A under")
+        sb.appendLine("    \\drawSeg{A}{\\k}{\\ClrA}{0}")
+        sb.appendLine("    \\drawSeg{B}{\\k}{\\ClrB}{1}")
+        sb.appendLine("  \\else")
+        sb.appendLine("    % A over, B under")
+        sb.appendLine("    \\drawSeg{B}{\\k}{\\ClrB}{0}")
+        sb.appendLine("    \\drawSeg{A}{\\k}{\\ClrA}{1}")
+        sb.appendLine("  \\fi")
+        sb.appendLine("}")
+        sb.appendLine()
+        sb.appendLine("\\end{tikzpicture}")
+
+        return sb.toString()
     }
 
     private fun exportBody(
@@ -622,8 +824,14 @@ class TikzCanvasDialog(
             add("consider self intersections")
             add("clip width=5pt, clip radius=3pt")
             add("ignore endpoint intersections=false")
-            if (flipCrossings.isNotBlank()) add("flip crossing/.list={$flipCrossings}")
-            add("draft mode=crossings % uncomment to see numbers")
+            if (flipCrossings.isNotBlank()) {
+                add("flip crossing/.list={$flipCrossings}")
+            } else {
+                // If empty, add all even numbers up to n+2
+                val evenList = (2..(n + 2) step 2).joinToString(",")
+                add("flip crossing/.list={$evenList}")
+            }
+            add("% ----draft mode=crossings % uncomment to see numbers")
         }
         sb.append(
             "    \\begin{knot}[\n" +
@@ -642,7 +850,7 @@ class TikzCanvasDialog(
 
         // Optional guides — use n+1 because we emitted P{n+1}=P1
         if (showPoints) {
-            sb.append("    \\SSTGuidesPoints{P}{${n + 1}}\n")
+            sb.append("% ---- \\SSTGuidesPoints{P}{${n + 1}}\n")
         }
 
         // TODO (optional): append exported primitives (labels, dots, lines, circles) here
@@ -658,6 +866,12 @@ class TikzCanvasDialog(
     // ---------- math / utils ----------
     private enum class EditMode { ADD, MOVE, DELETE }
     private enum class Tool { KNOT, LINE, CIRCLE, DOT, TEXT }
+
+    // helper to print clean numbers like 0.13 or 4
+    private fun formatQ(x: Double): String {
+        val xi = x.toInt()
+        return if (abs(x - xi) < 1e-9) xi.toString() else "%.6g".format(x)
+    }
 
     private fun snap(p: Point): Point {
         val cx = canvas.width / 2; val cy = canvas.height / 2
@@ -713,5 +927,32 @@ class TikzCanvasDialog(
     private fun Point.distance(o: Point): Double {
         val dx = (x - o.x).toDouble(); val dy = (y - o.y).toDouble()
         return sqrt(dx * dx + dy * dy)
+    }
+
+    // Translate all geometry by dx, dy (canvas center shift)
+    private fun translateAll(dx: Int, dy: Int) {
+        if (dx == 0 && dy == 0) return
+        // knot points
+        for (i in 0 until knotPts.size) {
+            val p = knotPts[i]
+            knotPts[i] = Point(p.x + dx, p.y + dy)
+        }
+        // shapes
+        for (s in shapes) {
+            when (s) {
+                is Dot -> s.p = Point(s.p.x + dx, s.p.y + dy)
+                is Label -> s.p = Point(s.p.x + dx, s.p.y + dy)
+                is LineSeg -> {
+                    s.a = Point(s.a.x + dx, s.a.y + dy)
+                    s.b = Point(s.b.x + dx, s.b.y + dy)
+                }
+                is Circ -> s.c = Point(s.c.x + dx, s.c.y + dy)
+            }
+        }
+        // previews
+        tmpA = tmpA?.let { Point(it.x + dx, it.y + dy) }
+        linePreview = linePreview?.let { LineSeg(Point(it.a.x + dx, it.a.y + dy), Point(it.b.x + dx, it.b.y + dy)) }
+        circlePreview = circlePreview?.let { Circ(Point(it.c.x + dx, it.c.y + dy), it.rUnits) }
+        canvas.repaint()
     }
 }

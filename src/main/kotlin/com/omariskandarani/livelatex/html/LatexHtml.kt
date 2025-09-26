@@ -5,6 +5,14 @@ import java.nio.file.Paths
 import java.util.regex.Matcher
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.LinkedHashMap
+import kotlin.text.Regex
+import kotlin.text.RegexOption
+import kotlin.text.lowercase
+import kotlin.text.substring
+import kotlin.text.trimIndent
+import kotlin.text.replace
+import kotlin.text.lines
 
 /**
  * Minimal LaTeX → HTML previewer for prose + MathJax math.
