@@ -139,6 +139,9 @@ class TikzCanvasDialog(
     private val flipField = JTextField().apply { columns = 14 }
     private val showPointsBox = JCheckBox("Guides", true)
 
+    private val saveSetupBtn = JButton("Save Setup")
+    private val loadSetupBtn = JButton("Load Setup")
+
 
     private lateinit var twoStrandBox: JCheckBox
 
@@ -426,6 +429,17 @@ class TikzCanvasDialog(
         deleteBtn.addActionListener { doDeleteSelected() }
         newBtn.addActionListener { doNew() }
 
+        // Add Save Setup and Load Setup buttons to fileRow
+        val fileRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            add(JLabel("Title:")); add(titleCombo)
+            add(saveBtn); add(loadBtn); add(newBtn); add(deleteBtn)
+            add(Box.createHorizontalStrut(12))
+            add(saveSetupBtn); add(loadSetupBtn)
+        }
+
+        saveSetupBtn.addActionListener { saveSetupToFile() }
+        loadSetupBtn.addActionListener { loadSetupFromFile() }
+
         val header = JPanel()
         header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
         header.add(setupsRow)
@@ -531,7 +545,6 @@ class TikzCanvasDialog(
                     handleShapeDrag(p)
                 }
             }
-
             Tool.CIRCLE -> {
                 if (mode == EditMode.ADD) {
                     circlePreview?.let {
@@ -542,7 +555,6 @@ class TikzCanvasDialog(
                     handleShapeDrag(p)
                 }
             }
-
             Tool.DOT, Tool.TEXT -> {
                 if (mode == EditMode.MOVE) handleShapeDrag(p)
                 else if (pressButton == MouseEvent.BUTTON1) {
@@ -558,27 +570,12 @@ class TikzCanvasDialog(
         val dt = now - pressStartMs
         if (!longPressFired && dt >= LONG_PRESS_MS) {
             when (tool) {
-                Tool.KNOT -> {
-                    provisionalAdd = p
-                    if (!autoMoveGrab) {
-                        val idx = nearest(knotPts, p)
-                        val isDuplicate = idx != null && p.distanceSq(knotPts[idx]) <= MOVE_TOL2
-                        if (!isDuplicate) {
-                            knotPts += p
-                            markDirty()
-                            canvas.repaint()
-                        }
-                    }
-                    longPressFired = true
-                }
-
                 Tool.DOT -> {
                     shapes += Dot(p)
                     markDirty()
                     canvas.repaint()
                     longPressFired = true
                 }
-
                 Tool.TEXT -> {
                     val text = JOptionPane.showInputDialog(rootPanel, "Text:", textDefault.text)
                     if (text != null) {
@@ -588,27 +585,26 @@ class TikzCanvasDialog(
                     }
                     longPressFired = true
                 }
-
                 Tool.LINE -> {
                     // Start a line on long-press (ADD mode). Drag updates endpoint above.
                     if (mode == EditMode.ADD && tmpA == null && linePreview == null) {
                         tmpA = p
                         linePreview = LineSeg(p, p)
                         canvas.repaint()
-                        // finalize at onRelease as you already do
                     }
                     longPressFired = true
                 }
-
                 Tool.CIRCLE -> {
                     // Start a circle on long-press (ADD mode). Drag updates radius above.
                     if (mode == EditMode.ADD && tmpA == null && circlePreview == null) {
                         tmpA = p
                         circlePreview = Circ(p, 0.0)
                         canvas.repaint()
-                        // finalize at onRelease as you already do
                     }
                     longPressFired = true
+                }
+                Tool.KNOT -> {
+                    // no-op: handled only on release
                 }
             }
         }
@@ -632,7 +628,12 @@ class TikzCanvasDialog(
                 } else if (pressButton == MouseEvent.BUTTON1 && longPressReady) {
                     // Commit add on release if the press lasted long enough
                     val candidate = provisionalAdd ?: p
-                    addKnotIfNotDuplicate(candidate)
+                    val idx = nearest(knotPts, candidate)
+                    val isDuplicate = idx != null && candidate.distanceSq(knotPts[idx]) <= MOVE_TOL2
+                    if (!isDuplicate) {
+                        knotPts += candidate
+                        markDirty()
+                    }
                 }
                 resetPressState()
             }
@@ -1139,5 +1140,66 @@ class TikzCanvasDialog(
         linePreview = linePreview?.let { LineSeg(Point(it.a.x + dx, it.a.y + dy), Point(it.b.x + dx, it.b.y + dy)) }
         circlePreview = circlePreview?.let { Circ(Point(it.c.x + dx, it.c.y + dy), it.rUnits) }
         canvas.repaint()
+    }
+
+    private fun saveSetupToFile() {
+        val chooser = JFileChooser()
+        if (chooser.showSaveDialog(rootPanel) == JFileChooser.APPROVE_OPTION) {
+            val file = chooser.selectedFile
+            val props = java.util.Properties()
+            // Save knot points
+            props["knot.count"] = knotPts.size.toString()
+            knotPts.forEachIndexed { i, p ->
+                props["knot.$i.x"] = p.x.toString()
+                props["knot.$i.y"] = p.y.toString()
+            }
+            // Save settings
+            props["amp"] = spAmp.value.toString()
+            props["turns"] = spTurns.value.toString()
+            props["samples"] = spSamples.value.toString()
+            props["wth"] = tfWth.text
+            props["core"] = tfCore.text
+            props["mask"] = tfMask.text
+            props["clrA"] = tfClrA.text
+            props["clrB"] = tfClrB.text
+            props["flip"] = flipField.text
+            props["knotColor"] = knotColor.selectedItem?.toString() ?: ""
+            props["showPoints"] = showPointsBox.isSelected.toString()
+            props["twin"] = twinBox.isSelected.toString()
+            props["twinOffset"] = twinOffset.value.toString()
+            props.store(java.io.FileOutputStream(file), "Tikz Setup")
+        }
+    }
+
+    private fun loadSetupFromFile() {
+        val chooser = JFileChooser()
+        if (chooser.showOpenDialog(rootPanel) == JFileChooser.APPROVE_OPTION) {
+            val file = chooser.selectedFile
+            val props = java.util.Properties()
+            props.load(java.io.FileInputStream(file))
+            // Load knot points
+            val count = props.getProperty("knot.count")?.toIntOrNull() ?: 0
+            knotPts.clear()
+            for (i in 0 until count) {
+                val x = props.getProperty("knot.$i.x")?.toIntOrNull() ?: 0
+                val y = props.getProperty("knot.$i.y")?.toIntOrNull() ?: 0
+                knotPts += Point(x, y)
+            }
+            // Load settings
+            spAmp.value = props.getProperty("amp")?.toDoubleOrNull() ?: spAmp.value
+            spTurns.value = props.getProperty("turns")?.toDoubleOrNull() ?: spTurns.value
+            spSamples.value = props.getProperty("samples")?.toIntOrNull() ?: spSamples.value
+            tfWth.text = props.getProperty("wth") ?: tfWth.text
+            tfCore.text = props.getProperty("core") ?: tfCore.text
+            tfMask.text = props.getProperty("mask") ?: tfMask.text
+            tfClrA.text = props.getProperty("clrA") ?: tfClrA.text
+            tfClrB.text = props.getProperty("clrB") ?: tfClrB.text
+            flipField.text = props.getProperty("flip") ?: flipField.text
+            knotColor.selectedItem = props.getProperty("knotColor") ?: knotColor.selectedItem
+            showPointsBox.isSelected = props.getProperty("showPoints")?.toBoolean() ?: showPointsBox.isSelected
+            twinBox.isSelected = props.getProperty("twin")?.toBoolean() ?: twinBox.isSelected
+            twinOffset.value = props.getProperty("twinOffset")?.toDoubleOrNull() ?: twinOffset.value
+            canvas.repaint()
+        }
     }
 }

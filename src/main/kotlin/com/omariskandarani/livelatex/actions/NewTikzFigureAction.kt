@@ -34,7 +34,7 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
   \fi
 }
 % ------- TikZ Preamble -------
-    """.trimIndent()
+        """.trimIndent()
 
         val dialog = TikzCanvasDialog(project, initialTikz = selection)
 
@@ -57,13 +57,11 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
                 m.groupValues[1].split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { add(it) }
             }
         }
-
         // Determine which minimal libs are missing
         val missingMinimal = minimalLibs - existingLibs
 
+        var preambleInserted = false
         WriteCommandAction.runWriteCommandAction(project) {
-            var preambleInserted = false
-
             // If the file is basically empty of TikZ config, insert the full preamble once after \documentclass
             val hasAnyUsetikz = allLibsRegex.containsMatchIn(document.text)
             if (!hasRequireTikz(document.text) && !hasAnyUsetikz) {
@@ -104,7 +102,7 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
     \foreach \i [remember=\i as \lasti (initially 1)] in {2,...,#2,1} { (#1\lasti)--(#1\i) };
 }
 % ------- TikZ Guide Lines -------
-                """.trimIndent()
+                    """.trimIndent()
                     document.insertString(pos, helper + "\n\n")
                 }
             }
@@ -112,8 +110,16 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
             // Insert the generated TikZ at caret
             val caret = editor.caretModel.currentCaret
             document.insertString(caret.offset, "\n$body\n")
-            if (preambleInserted) {
-                Messages.showInfoMessage(project, "TikZ preamble inserted at top of document.", "TikZ Preamble Added")
+        }
+
+        // UI outside write action
+        if (preambleInserted) {
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                com.intellij.openapi.ui.Messages.showInfoMessage(
+                    project,
+                    "TikZ preamble inserted at top of document.",
+                    "TikZ Preamble Added"
+                )
             }
         }
         dialog.show()
