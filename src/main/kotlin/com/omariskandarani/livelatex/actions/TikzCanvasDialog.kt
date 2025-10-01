@@ -137,11 +137,21 @@ class TikzCanvasDialog(
     private val presets: List<Preset> = listOf(
         Preset(
             "★ Trefoil (3₁)",
-            ptsUnits = starPolygon(n = 3, rOuter = 2.0, rInner = 1.0)
-        ),
-        Preset(
-            "★ Trefoil (3₁) — split",
-            ptsUnits = starPolygon(n = 3, rOuter = 2.0, rInner = 1.0)
+            ptsUnits = listOf(
+                0.0 to  2.0,
+                -1.0 to  1.0,
+                -1.0 to  0.0,
+                1.0 to -1.0,
+                2.0 to  0.0,
+                0.0 to  0.75,
+                -2.0 to  0.0,
+                -1.0 to -1.0,
+                1.0 to  0.0,
+                1.0 to  1.0,
+                0.0 to  2.0,
+                0.0 to  2.0
+            ),
+            flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
             "★ Figure-eight (4₁)",
@@ -160,8 +170,21 @@ class TikzCanvasDialog(
         ),
         Preset(
             "★ Cinquefoil (5₁)",
-            ptsUnits = starPolygon(n = 5, rOuter = 2.0, rInner = 1.1),
-            flipList = "2,4,6,8,10"
+            ptsUnits = listOf(
+                -0.25 to  1.75,
+                -1.25 to -0.50,
+                -0.75 to -1.0,
+                1.50 to  0.50,
+                1.25 to  1.0,
+                -1.25 to  1.0,
+                -1.50 to  0.50,
+                0.75 to -1.0,
+                1.25 to -0.50,
+                0.25 to  1.75,
+                -0.25 to  1.75,
+                -0.25 to  1.75
+            ),
+            flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
             "★ 5₂ (Up Quark)",
@@ -203,11 +226,29 @@ class TikzCanvasDialog(
                  2.0 to  2.0,
                  0.0 to  2.0
             ),
-            flipList = "2,4,6,8,10,12"
+            flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
             "★ Septafoil (7₁)",
-            ptsUnits = starPolygon(n = 7, rOuter = 2.0, rInner = 1.3)
+            ptsUnits = listOf(
+                -0.25 to  2.0,
+                -1.50 to  0.50,
+                -1.50 to  0.0,
+                0.50 to -1.0,
+                1.0  to -0.75,
+                1.25 to  1.25,
+                0.75 to  1.75,
+                -0.75 to  1.75,
+                -1.25 to  1.25,
+                -1.0  to -0.75,
+                -0.50 to -1.0,
+                1.50 to  0.0,
+                1.50 to  0.50,
+                0.25 to  2.0,
+                -0.25 to  2.0,
+                -0.25 to  2.0
+            ),
+            flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
             "★ Hopf link",
@@ -610,7 +651,7 @@ class TikzCanvasDialog(
         provisionalAdd = null
         autoMoveGrab = false
         longPressFired = false // Add near other press state
-        longPressReady = false // reset readiness on press
+        longPressReady = false // readiness flag for long-press add
 
         when (tool) {
             Tool.KNOT -> {
@@ -1039,15 +1080,15 @@ class TikzCanvasDialog(
         val step = STEP
         val cx = canvas.width / 2
         val cy = canvas.height / 2
-        data class G(val x: Int, val y: Int)
-        fun toGrid(p: Point) = G((p.x - cx) / step, -((p.y - cy) / step))
+        data class G(val x: Double, val y: Double)
+        fun toGridQ(p: Point) = G(quantQ((p.x - cx).toDouble() / step), quantQ(-((p.y - cy).toDouble() / step)))
 
         // De-duplicate consecutive duplicates to avoid ...P5..P5...
         val dedup = ArrayList<Point>(pts.size)
         for (p in pts) if (dedup.isEmpty() || dedup.last() != p) dedup += p
         if (dedup.size < 2) return "% Need at least 2 points."
 
-        val gpts = dedup.map(::toGrid)
+        val gpts = dedup.map(::toGridQ)
         val first = gpts.first()
         val n = gpts.size
 
@@ -1056,8 +1097,8 @@ class TikzCanvasDialog(
         sb.appendLine("\\begin{tikzpicture}[use Hobby shortcut, line cap=round, line join=round, scale=1.05]")
         sb.appendLine()
         sb.appendLine("% ---- controls ----")
-        sb.appendLine("\\def\\Amp{${formatQ(amp)}}")
-        sb.appendLine("\\def\\Turns{${formatQ(turns)}}        % can be non-integer; extrema logic still works")
+        sb.appendLine("\\def\\Amp{${fmtQ(amp)}}")
+        sb.appendLine("\\def\\Turns{${fmtQ(turns)}}        % can be non-integer; extrema logic still works")
         sb.appendLine("\\def\\Samples{$samples}")
         sb.appendLine("\\def\\Wth{$wth}")
         sb.appendLine("\\def\\Core{$core}     % set to page color for clean masking")
@@ -1075,9 +1116,9 @@ class TikzCanvasDialog(
         sb.appendLine("% ---- coordinates ----")
         for (i in 0 until n) {
             val q = gpts[i]
-            sb.appendLine("\\coordinate (P${i + 1}) at (${q.x}, ${q.y});")
+            sb.appendLine("\\coordinate (P${i + 1}) at (${fmtQ(q.x)}, ${fmtQ(q.y)});")
         }
-        sb.appendLine("\\coordinate (P${n + 1}) at (${first.x}, ${first.y}); % = P1")
+        sb.appendLine("\\coordinate (P${n + 1}) at (${fmtQ(first.x)}, ${fmtQ(first.y)}); % = P1")
         sb.appendLine("\\def\\KPATH{([closed] P1)..${(2..(n + 1)).joinToString("..") { "(P$it)" }}}")
         sb.appendLine()
         sb.appendLine("% ---- build two offset coordinate lists ----")
@@ -1136,17 +1177,17 @@ class TikzCanvasDialog(
     ): String {
         if (pts.isEmpty()) return "% No knot points."
 
-        // Canvas grid -> integer grid coordinates
+        // Canvas grid -> quantized grid coordinates
         val step = STEP
         val cx = canvas.width / 2
         val cy = canvas.height / 2
-        data class G(val x: Int, val y: Int)
-        fun toGrid(p: Point) = G((p.x - cx) / step, -((p.y - cy) / step))
+        data class G(val x: Double, val y: Double)
+        fun toGridQ(p: Point) = G(quantQ((p.x - cx).toDouble() / step), quantQ(-((p.y - cy).toDouble() / step)))
 
         // De-duplicate consecutive duplicates to avoid ...P5..P5...
         val dedup = ArrayList<Point>(pts.size)
         for (p in pts) if (dedup.isEmpty() || dedup.last() != p) dedup += p
-        val gpts = dedup.map(::toGrid)
+        val gpts = dedup.map(::toGridQ)
         val n = gpts.size
 
         val sb = StringBuilder()
@@ -1165,10 +1206,10 @@ class TikzCanvasDialog(
         // Coordinates P1..Pn and close with P{n+1}=P1
         for (i in 0 until n) {
             val q = gpts[i]
-            sb.append("    \\coordinate (P${i + 1}) at (${q.x}, ${q.y});\n")
+            sb.append("    \\coordinate (P${i + 1}) at (${fmtQ(q.x)}, ${fmtQ(q.y)});\n")
         }
         val q1 = gpts.first()
-        sb.append("    \\coordinate (P${n + 1}) at (${q1.x}, ${q1.y}); % = P1\n\n")
+        sb.append("    \\coordinate (P${n + 1}) at (${fmtQ(q1.x)}, ${fmtQ(q1.y)}); % = P1\n\n")
 
         // Knot options (include flip crossings if provided)
         val opts = buildList {
