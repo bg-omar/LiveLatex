@@ -136,7 +136,7 @@ class TikzCanvasDialog(
 
     private val presets: List<Preset> = listOf(
         Preset(
-            "★ Trefoil (3₁)",
+            "★ 3₁ Trefoil (Electron)",
             ptsUnits = listOf(
                 0.0 to  2.0,
                 -1.0 to  1.0,
@@ -154,7 +154,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
-            "★ Figure-eight (4₁)",
+            "★ 4₁ Figure-eight (Dark Matter)",
             ptsUnits = listOf(
                 -2.0 to -2.0,
                 -2.0 to  2.0,
@@ -169,7 +169,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
-            "★ Cinquefoil (5₁)",
+            "★ 5₁ Cinquefoil (Muon)",
             ptsUnits = listOf(
                 -0.25 to  1.75,
                 -1.25 to -0.50,
@@ -187,7 +187,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
-            "★ 5₂ (Up Quark)",
+            "★ 5₂ tree-twist (Up Quark)",
             ptsUnits = listOf(
                 2.0 to -1.5,
                 1.5 to  1.0,
@@ -208,7 +208,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
-            "★ 6₁ (Stevedore / Down Quark)",
+            "★ 6₁ Stevedore (Down Quark)",
             ptsUnits = listOf(
                  0.0 to  2.0,
                 -2.0 to  2.0,
@@ -229,7 +229,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
-            "★ Septafoil (7₁)",
+            "★ 7₁ Septafoil (Tau)",
             ptsUnits = listOf(
                 -0.25 to  2.0,
                 -1.50 to  0.50,
