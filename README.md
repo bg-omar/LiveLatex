@@ -4,9 +4,9 @@
 
 <h1 align="center">
     <a href="">
-      <img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/META-INF/pluginIcon.svg?sanitize=true" width="84" height="84" alt="logo"/>
+      <img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/META-INF/pluginIcon.png" width="84" height="84" alt="logo"/>
     </a><br/>
-   Writing       <img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/icons/LaTeX_logo.svg?sanitize=true"  height="32" alt="LaTeX"/> easier.
+   Writing       <img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/icons/LaTeX_logo.png"  height="32" alt="LaTeX"/> easier.
 </h1>
 <h4>
  - Preview LaTeX code in real-time <br>
