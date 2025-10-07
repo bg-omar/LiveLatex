@@ -14,6 +14,9 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.Alarm
+import com.intellij.util.concurrency.AppExecutorUtil
+import java.util.concurrent.TimeUnit
+
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
 import org.cef.browser.CefBrowser
@@ -30,6 +33,9 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private val pendingJs = ArrayDeque<String>()
     private var boundEditor: Editor? = null
     private var jsMoveCaret: JBCefJSQuery? = null
+    private var jsRenderTikz: JBCefJSQuery? = null
+    private var jsRenderTikzQuery: JBCefJSQuery? = null
+    private val tikzExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor("TikzPool", 1)
 
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private val debounceMs = 150
@@ -56,6 +62,89 @@ class LatexPreviewService(private val project: Project) : Disposable {
         this.component.preferredSize = Dimension(width, this.component.height)
         this.component.revalidate()
     }
+
+    private fun exposeTikzBridge(browser: JBCefBrowserBase) {
+        jsRenderTikzQuery = JBCefJSQuery.create(browser).also { q ->
+            Disposer.register(this, q)
+            q.addHandler { key ->
+                // Submit the compile work on our 1-thread pool
+                val f = tikzExecutor.submit<TikzResult> {
+                    runTikzCompileSafely(key)
+                }
+
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    val result: TikzResult = try {
+                        f.get(60, TimeUnit.SECONDS) // hard timeout
+                    } catch (t: Throwable) {
+                        f.cancel(true)
+                        TikzResult.fail(key, "Compile timeout or error: ${t.message ?: t::class.java.simpleName}")
+                    }
+
+                    // Post the result back into the page on the EDT for safety
+                    val cef = browser?.cefBrowser ?: return@executeOnPooledThread
+                    val json = result.toJsonForJs()
+                    ApplicationManager.getApplication().invokeLater({
+                        // double-check browser still alive
+                        cef.executeJavaScript("window.postMessage($json, '*');", cef.url, 0)
+                    }, { project.isDisposed })
+                }
+
+                // Immediate ack to the page (it relies on the later postMessage for the real payload)
+                JBCefJSQuery.Response("OK")
+            }
+
+        }
+
+        // Expose a callable bridge in the page
+        val js = """
+        (function(){
+          window.__llHostRenderTikz = function(key){
+            try { return ${jsRenderTikzQuery!!.inject("key")}; }
+            catch(e){ /* ignore; page has a timeout */ }
+          };
+          // Fallback route: page asks via postMessage → we call the bridge
+          window.addEventListener('message', function(ev){
+            var d = ev.data||{};
+            if (d.type==='tikz-render' && d.key){
+              try { ${jsRenderTikzQuery!!.inject("d.key")} } catch(e){}
+            }
+          }, false);
+        })();
+    """.trimIndent()
+        browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
+    }
+
+    // Compile and capture output/errors safely
+    private fun runTikzCompileSafely(key: String): TikzResult {
+        return try {
+            // choose a single cache under the project ROOT, not user home:
+            val out = LatexHtml.renderLazyTikzKeyToSvg(key) // your existing function
+            if (out != null && out.exists()) {
+                TikzResult.okSvg(key, out.readText())
+            } else {
+                TikzResult.fail(key, "TikZ compile produced no SVG. See last-compile.log.")
+            }
+        } catch (t: Throwable) {
+            TikzResult.fail(key, (t.message ?: t.toString()))
+        }
+    }
+
+
+    private fun TikzResult.toJsonForJs(): String {
+        fun esc(s:String) = s
+            .replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r","")
+        val parts = mutableListOf(
+            "\"type\":\"$type\"",
+            "\"ok\":$ok",
+            "\"key\":\"${esc(key)}\""
+        )
+        svgText?.let { parts += "\"svgText\":\"${esc(it)}\"" }
+        url?.let     { parts += "\"url\":\"${esc(it)}\"" }
+        error?.let   { parts += "\"error\":\"${esc(it)}\"" }
+        return "{${parts.joinToString(",")}}"
+    }
+
 
     init {
         Disposer.register(project, this)
@@ -86,58 +175,75 @@ class LatexPreviewService(private val project: Project) : Disposable {
         browser = b
         pageReady = false
 
-        // Set up JS bridge for clicks from preview → move caret in editor
-        // --- FIX: use the factory that takes JBCefBrowserBase
         val base = b as JBCefBrowserBase
-        jsMoveCaret =
-            JBCefJSQuery.create(base).also { query ->
-                Disposer.register(this, query)
-                query.addHandler { payload ->
-                    try {
-                        val line = Regex("""\"line\"\s*:\s*(\d+)""").find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                        val word = Regex("""\"word\"\s*:\s*\"(.*?)\"""").find(payload)?.groupValues?.getOrNull(1) ?: ""
-                        if (line != null) {
-                            ApplicationManager.getApplication().invokeLater {
-                                val fem = FileEditorManager.getInstance(project)
-                                val ed = fem.selectedTextEditor ?: return@invokeLater
-                                val doc = ed.document
-                                val lineIdx = (line - 1).coerceIn(0, doc.lineCount - 1)
-                                val start = doc.getLineStartOffset(lineIdx)
-                                val end = doc.getLineEndOffset(lineIdx)
-                                var caret = start
-                                if (word.isNotEmpty()) {
-                                    val text = doc.charsSequence.subSequence(start, end).toString()
-                                    val idx = text.indexOf(word)
-                                    if (idx >= 0) caret = start + idx
-                                }
-                                ed.caretModel.moveToOffset(caret)
-                                ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
-                            }
-                        }
-                    } catch (_: Throwable) {}
-                    JBCefJSQuery.Response("OK")
-                }
-            }
 
-        // Load-state tracker so we can flush queued JS once the page is ready
+        // 1) caret bridge (preview → move caret in editor)
+        jsMoveCaret = JBCefJSQuery.create(base).also { query ->
+            Disposer.register(this, query)
+            query.addHandler { payload ->
+                try {
+                    val line = Regex("""\"line\"\s*:\s*(\d+)""")
+                        .find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    val word = Regex("""\"word\"\s*:\s*\"(.*?)\"""")
+                        .find(payload)?.groupValues?.getOrNull(1) ?: ""
+                    if (line != null) {
+                        ApplicationManager.getApplication().invokeLater {
+                            val fem = FileEditorManager.getInstance(project)
+                            val ed = fem.selectedTextEditor ?: return@invokeLater
+                            val doc = ed.document
+                            val lineIdx = (line - 1).coerceIn(0, doc.lineCount - 1)
+                            val start = doc.getLineStartOffset(lineIdx)
+                            val end = doc.getLineEndOffset(lineIdx)
+                            var caret = start
+                            if (word.isNotEmpty()) {
+                                val text = doc.charsSequence.subSequence(start, end).toString()
+                                val idx = text.indexOf(word)
+                                if (idx >= 0) caret = start + idx
+                            }
+                            ed.caretModel.moveToOffset(caret)
+                            ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
+                        }
+                    }
+                } catch (_: Throwable) {}
+                JBCefJSQuery.Response("OK")
+            }
+        }
+
+        // 2) TikZ bridge (JSQuery + pooling + page glue) — single source of truth
+        exposeTikzBridge(base)
+
+        // 3) flush pending JS after each page load + re-inject page glue
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
-            override fun onLoadingStateChange(br: CefBrowser?, isLoading: Boolean, canGoBack: Boolean, canGoForward: Boolean) {
+            override fun onLoadingStateChange(
+                br: CefBrowser?, isLoading: Boolean, canGoBack: Boolean, canGoForward: Boolean
+            ) {
                 if (!isLoading) {
                     pageReady = true
+                    // re-inject page-side glue so window.__llHostRenderTikz is live again
+                    exposeTikzBridge(base)
                     flushPending()
                 }
             }
         }, b.cefBrowser)
 
-        // Global doc changes (so typing refreshes the preview)
+        // global doc changes → refresh
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(docListener, this)
 
-        // Bind to current selection
+        // bind to selected editor + initial render
         rebindToSelectedEditor()
-
-        // Initial render
         scheduleRefresh()
     }
+
+
+
+    // 3) helper to safely embed text in JSON from Kotlin
+    private fun String.jsonEscapeForJs(): String =
+        "\"" + this
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "") + "\""
+
 
     private fun rebindToSelectedEditor() {
         val fem = FileEditorManager.getInstance(project)
@@ -240,6 +346,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
             // Queue the initial sync; it will run after the page finishes loading.
             postSync(caretLine, source = "initial")
         }
+
     }
 
     private fun currentTexFileAndText(): Pair<VirtualFile, String>? {
@@ -252,5 +359,31 @@ class LatexPreviewService(private val project: Project) : Disposable {
         return vf to doc.text
     }
 
-    override fun dispose() { /* no-op */ }
+    // ---- TikzResult helpers ----
+    private data class TikzResult(
+        val type: String = "tikz-render-result",
+        val ok: Boolean,
+        val key: String,
+        val svgText: String? = null, // inline SVG result, preferred
+        val url: String? = null,     // or a file:// URL if you serve an image
+        val error: String? = null
+    ) {
+        companion object {
+            fun okSvg(key: String, svgText: String) =
+                TikzResult(ok = true, key = key, svgText = svgText)
+
+            fun okUrl(key: String, url: String) =
+                TikzResult(ok = true, key = key, url = url)
+
+            fun fail(key: String, error: String) =
+                TikzResult(ok = false, key = key, error = error)
+        }
+    }
+
+
+
+    override fun dispose() {
+        try { tikzExecutor.shutdownNow() } catch (_: Throwable) {}
+    }
+
 }

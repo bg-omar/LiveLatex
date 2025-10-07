@@ -28,15 +28,8 @@ object LatexHtml {
     private var lineMapMergedToOrigJson: String? = null
 
     // ─────────────────────────── PUBLIC ENTRY ───────────────────────────
-
     private const val BEGIN_DOCUMENT = "\\begin{document}"
     private const val END_DOCUMENT = "\\end{document}"
-    private const val LABEL_REGEX =  "\\\\label\\{[^}]*\\}"
-    private const val EM_HTML = "<em>$1</em>"
-    val rxNew = Regex(
-        """\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)])?(?:\[[^\]]*])?\{(.+?)\}""",
-        RegexOption.DOT_MATCHES_ALL
-    )
 
     private fun slugify(s: String): String =
         s.lowercase()
@@ -50,7 +43,7 @@ object LatexHtml {
         val userMacros    = extractNewcommands(srcNoComments)
         val macrosJs      = buildMathJaxMacros(userMacros)
         val titleMeta     = extractTitleMeta(srcNoComments)
-        val tikzPreamble  = collectTikzPreamble(srcNoComments)
+        val tikzPreamble  = TikzRenderer.collectTikzPreamble(srcNoComments)
 
 
         // Find body & absolute line offset of the first body line
@@ -63,10 +56,12 @@ object LatexHtml {
         val body0 = stripPreamble(texSource)
         val body1 = stripLineComments(body0)
         val body2 = sanitizeForMathJaxProse(body1)
-        val body2b = convertIncludeGraphics(body2) // <-- Add image conversion here
-        val body2c = convertTikzPictures(body2b, srcNoComments, lazy = true)
-        val body2d = convertSstTikzMacros(body2c, srcNoComments)
-        val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments)
+        val body2b = convertIncludeGraphics(body2)
+        val body2c = TikzRenderer.convertTikzPictures(body2b, srcNoComments,tikzPreamble)
+        val body2d = TikzRenderer.convertSstTikzMacros(body2c, srcNoComments)
+//        val body2c = convertTikzPictures(body2b, srcNoComments, tikzPreamble, lazy = true)
+//        val body2d = convertSstTikzMacros(body2c, srcNoComments)
+        val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments, tikzPreamble)
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)
         val body4c = fixInlineBoundarySpaces(body4)
@@ -77,7 +72,6 @@ object LatexHtml {
     }
 
 
-
     // ── Shared tiny helpers (define ONCE) ─────────────────────────────────────────
     private fun isEscaped(s: String, i: Int): Boolean {
         var k = i - 1
@@ -85,38 +79,6 @@ object LatexHtml {
         while (k >= 0 && s[k] == '\\') { bs++; k-- }
         return (bs and 1) == 1   // odd number of backslashes → escaped
     }
-
-    private fun skipWsAndComments(s: String, start: Int): Int {
-        var i = start
-        while (i < s.length) {
-            when (s[i]) {
-                ' ', '\t', '\r', '\n' -> i++
-                '%' -> {
-                    if (!isEscaped(s, i)) {
-                        while (i < s.length && s[i] != '\n') i++  // skip comment to EOL
-                    } else return i
-                }
-                else -> return i
-            }
-        }
-        return i
-    }
-
-    private fun findBalancedSquare(s: String, open: Int): Int {
-        if (open < 0 || open >= s.length || s[open] != '[') return -1
-        var i = open
-        var depth = 0
-        while (i < s.length) {
-            when (s[i]) {
-                '[' -> depth++
-                ']' -> { depth--; if (depth == 0) return i }
-                '\\' -> if (i + 1 < s.length) i++   // skip escaped char
-            }
-            i++
-        }
-        return -1
-    }
-
 
     // ─────────────────────────── PAGE BUILDER ───────────────────────────
 
@@ -871,6 +833,66 @@ object LatexHtml {
   }, false);
 })();
 </script>
+<script>
+(function(){
+  const TIMEOUT_MS = 20000;
+
+  function callHostAsync(key){
+    if (typeof window.__llHostRenderTikz === 'function') {
+      // fire-and-accept: host will postMessage the result later
+      try { window.__llHostRenderTikz(key); } catch(_) {}
+      return;
+    }
+    // Fallback for older host: request via postMessage
+    window.postMessage({ type: 'tikz-render', key }, '*');
+  }
+
+  function setStatus(wrap, msg){ const s=wrap.querySelector('.tikz-status'); if (s) s.textContent = msg; }
+
+  function install(){
+    document.querySelectorAll('.tikz-load').forEach(btn=>{
+      if (btn.__llBound) return; btn.__llBound = true;
+      btn.addEventListener('click', (e)=>{
+        e.preventDefault();
+        const key = btn.dataset.tikzKey;
+        const wrap = btn.closest('.tikz-lazy');
+        setStatus(wrap, 'Rendering…');
+
+        // Start render
+        callHostAsync(key);
+
+        // Timeout guard
+        clearTimeout(btn.__llTimeout);
+        btn.__llTimeout = setTimeout(()=>{
+          setStatus(wrap, 'Render timed out. Is LaTeX installed? Check logs.');
+        }, TIMEOUT_MS);
+      });
+    });
+  }
+
+  // Page receives the host result
+  window.addEventListener('message', (ev)=>{
+    const d = ev.data || {};
+    if (d.type !== 'tikz-render-result' || !d.key) return;
+    const wrap = document.querySelector('.tikz-lazy[data-tikz-key="'+d.key+'"]');
+    if (!wrap) return;
+    // clear any timeouts
+    const btn = wrap.querySelector('.tikz-load'); if (btn && btn.__llTimeout) clearTimeout(btn.__llTimeout);
+
+    if (d.ok) {
+      if (d.svgText) wrap.innerHTML = d.svgText;
+      else if (d.url) wrap.innerHTML = '<img alt="tikz" src="'+d.url+'">';
+      else wrap.innerHTML = '<div>Rendered.</div>';
+    } else {
+      setStatus(wrap, 'Failed: ' + (d.error || 'unknown error'));
+    }
+  }, false);
+
+  document.addEventListener('DOMContentLoaded', install);
+  new MutationObserver(install).observe(document.documentElement, {subtree:true, childList:true});
+})();
+</script>
+
 '\'\
 </body>
 </html>
@@ -880,28 +902,27 @@ object LatexHtml {
     // ──────────────────────── PIPELINE HELPERS ────────────────────────
 
     private fun applyProseConversions(s: String, meta: TitleMeta, absOffset: Int,
-                                      fullSourceNoComments: String): String {
+                                      fullSourceNoComments: String, tikzPreamble: String): String {
         var t = s
         t = convertLlmark(t, absOffset)
         t = convertMakeTitle(t, meta)
         t = convertSiunitx(t)
         t = convertHref(t)
         t = convertSections(t, absOffset)
-        t = convertFigureEnvs(t)
+        t = convertFigureEnvs(t) // Not implemented
         t = convertIncludeGraphics(t)
         t = convertMulticols(t)
 
         t = convertLongtablesToTables(t)                 // longtable → table/tabular
         t = convertTcolorboxes(t)                        // ← NEW: render tcolorbox
-        t = convertTikzPictures(t, fullSourceNoComments, lazy = true) // compile tikz to SVG (cached)
-
+        t = TikzRenderer.convertTikzPictures(t, fullSourceNoComments, tikzPreamble)
 
         t = convertTableEnvs(t)
         t = convertItemize(t)
         t = convertEnumerate(t)
         t = convertDescription(t)
         t = convertTabulars(t)
-        t = convertTheBibliography(t)
+        t = convertTheBibliography(t) // Not implemented
         t = stripAuxDirectives(t)
         t = t.replace(Regex("""\\label\{[^}]*}"""), "") // belt-and-suspenders
         return t
@@ -972,51 +993,6 @@ object LatexHtml {
             val inner = s.substring(braceOpen + 1, braceClose)
             sb.append(wrap(inner))
             pos = braceClose + 1
-        }
-        sb.append(s, pos, s.length)
-        return sb.toString()
-    }
-
-    private fun replaceCmd2ArgsBalanced(
-        s: String, cmd: String, render: (String, String) -> String
-    ): String {
-        val rx = Regex("""\\$cmd\*?""")   // allow starred form; args parsed manually
-        val sb = StringBuilder(s.length)
-        var pos = 0
-        while (true) {
-            val m = rx.find(s, pos) ?: break
-            var j = m.range.last + 1
-
-            // optional star was matched; just continue parsing from here
-            j = skipWsAndComments(s, j)
-
-            // optional [..] argument
-            if (j < s.length && s[j] == '[') {
-                val optClose = findBalancedSquare(s, j)
-                if (optClose > j) j = skipWsAndComments(s, optClose + 1)
-                else { sb.append(s, pos, j + 1); pos = j + 1; continue } // malformed; skip safely
-            }
-
-            // first {arg}
-            if (j >= s.length || s[j] != '{') { sb.append(s, pos, j); pos = j; continue }
-            val aOpen = j
-            val aClose = findBalancedBrace(s, aOpen)
-            if (aClose < 0) { sb.append(s, pos, aOpen); pos = aOpen; break }
-            val a = s.substring(aOpen + 1, aClose)
-
-            j = skipWsAndComments(s, aClose + 1)
-
-            // second {arg}
-            if (j >= s.length || s[j] != '{') { sb.append(s, pos, j); pos = j; continue }
-            val bOpen = j
-            val bClose = findBalancedBrace(s, bOpen)
-            if (bClose < 0) { sb.append(s, pos, bOpen); pos = bOpen; break }
-            val b = s.substring(bOpen + 1, bClose)
-
-            // emit replacement
-            sb.append(s, pos, m.range.first)
-            sb.append(render(a, b))
-            pos = bClose + 1
         }
         sb.append(s, pos, s.length)
         return sb.toString()
@@ -1232,76 +1208,6 @@ object LatexHtml {
 
 
     // ──────────────────────── PROSE CONVERSIONS ────────────────────────
-    private fun convertLongtable(text: String): String {
-        val out = StringBuilder(text.length + 512)
-        var i = 0
-        while (true) {
-            val start = text.indexOf("\\begin{longtable}", i)
-            if (start < 0) { out.append(text.substring(i)); break }
-
-            out.append(text.substring(i, start))
-
-            // Balanced colspec after \begin{longtable}
-            val colOpen = text.indexOf('{', start + "\\begin{longtable}".length)
-            val colClose = findBalancedBrace(text, colOpen)
-            if (colOpen < 0 || colClose < 0) {
-                // malformed – bail out safely
-                out.append(text.substring(start))
-                break
-            }
-            val spec = text.substring(colOpen + 1, colClose)
-
-            val endTag = text.indexOf("\\end{longtable}", colClose + 1)
-            if (endTag < 0) {
-                out.append(text.substring(start))
-                break
-            }
-
-            var body = text.substring(colClose + 1, endTag)
-
-            // Extract caption (and remove trailing \\ if present)
-            var captionHtml = ""
-            Regex("""\\caption\{([^}]*)\}""").find(body)?.let { cap ->
-                captionHtml =
-                    """<figcaption style="opacity:.8;margin:6px 0 10px;">${escapeHtmlKeepBackslashes(cap.groupValues[1])}</figcaption>"""
-                body = Regex("""\\caption\{[^}]*\}\s*\\\\\s*""").replace(body, "") // caption + row break
-                body = body.replace(cap.value, "") // fallback: just in case there was no \\ after
-            }
-
-            // Remove duplicate header (continued pages) and paging tokens
-            body = Regex("""\\endfirsthead.*?\\endhead""", RegexOption.DOT_MATCHES_ALL).replace(body, "")
-            body = body
-                .replace("\\endfirsthead", "")
-                .replace("\\endhead", "")
-                .replace("\\endfoot", "")
-                .replace("\\endlastfoot", "")
-                .replace(Regex("""\\label\{[^}]*\}"""), "") // belts-and-suspenders
-
-            // Hand off to existing tabular converter by synthesizing a tabular block.
-            val asTabular = "\\begin{tabular}{$spec}\n$body\n\\end{tabular}"
-
-            // Wrap like your table figures do (tabular converter will run later).
-            out.append("""<figure style="margin:14px 0;">$asTabular$captionHtml</figure>""")
-
-            i = endTag + "\\end{longtable}".length
-        }
-        return out.toString()
-    }
-
-    private fun collectTikzPreamble(srcNoComments: String): String {
-        val preamble = srcNoComments.substringBefore("\\begin{document}")
-        val libs = Regex("""\\usetikzlibrary\{[^}]*}""").findAll(preamble).joinToString("\n") { it.value }
-        val sets = Regex("""\\tikzset\{[^}]*}""").findAll(preamble).joinToString("\n") { it.value }
-        val needsTikzCd = Regex("""\\begin\{tikzcd}|\\usepackage\{tikz-cd}""").containsMatchIn(preamble)
-        return buildString {
-            appendLine("\\usepackage{tikz}")
-            if (needsTikzCd) appendLine("\\usepackage{tikz-cd}")
-            if (libs.isNotBlank()) appendLine(libs)
-            if (sets.isNotBlank()) appendLine(sets)
-        }
-    }
-
-
 
     private fun convertSections(s: String, absOffset: Int): String {
         fun inject(kind: String, tag: String, input: String): String {
@@ -1559,133 +1465,6 @@ object LatexHtml {
         }
     }
 
-    // 1) Grab raw preamble (everything before \begin{document}), minus \documentclass
-    private fun extractRawPreamble(full: String): String {
-        val pre = full.substringBefore("\\begin{document}", "")
-        return pre.replace(Regex("""\\documentclass(\[[^\]]*])?\{[^}]+}"""), "").trim()
-    }
-
-    // 2) Balanced extractor for tikzpicture blocks (handles nesting)
-    private fun extractEnvBlocksBalanced(s: String, env: String): List<String> {
-        val out = mutableListOf<String>()
-        val beginTok = "\\begin{$env}"
-        val endTok   = "\\end{$env}"
-        var i = 0
-        while (true) {
-            val b = s.indexOf(beginTok, i)
-            if (b < 0) break
-            var j = b + beginTok.length
-            var depth = 1
-            while (j < s.length) {
-                val nb = s.indexOf(beginTok, j)
-                val ne = s.indexOf(endTok, j)
-                if (ne < 0) break // malformed; bail
-                if (nb >= 0 && nb < ne) {
-                    depth++
-                    j = nb + beginTok.length
-                } else {
-                    depth--
-                    j = ne + endTok.length
-                    if (depth == 0) { out += s.substring(b, j); break }
-                }
-            }
-            i = j
-        }
-        return out
-    }
-
-    // 3) Slightly beef up your compiler: make sure it can see custom tikz libs in work dir
-//    (This is a small tweak to your existing renderTikzToSvg.)
-    private fun renderTikzToSvgWithLocalLibs(preamble: String, tikzEnvBlock: String): File? {
-        val texDoc = """
-        \documentclass[tikz,border=2pt]{standalone}
-        \usepackage{amsmath,amssymb,bm}
-        % ensure TikZ present even if the source used \RequirePackage
-        \usepackage{tikz}
-        $preamble
-        \begin{document}
-        $tikzEnvBlock
-        \end{document}
-    """.trimIndent()
-
-        val h = sha256Hex(texDoc)
-        val work = File(tikzCacheDir, h).apply { mkdirs() }
-        val tex  = File(work, "$h.tex")
-        val pdf  = File(work, "$h.pdf")
-        val svg  = File(work, "$h.svg")
-
-        if (svg.exists()) return svg
-
-        tex.writeText(texDoc)
-
-        // Copy custom tikz libraries (e.g., tikzlibrarysstknots.code.tex) if present near the source
-        val libs = collectUsetikzlibsFromSource(preamble)
-        ensureLocalTikzLibs(libs, work)
-
-        val (ok1, log1) = run(
-            listOf("pdflatex","-interaction=nonstopmode","-halt-on-error",
-                "-output-directory", work.absolutePath, tex.absolutePath),
-            work
-        )
-        if (!ok1 || !pdf.exists()) {
-            File(work, "build.log").writeText(log1)
-            return null
-        }
-
-        val tools = findTikzTools()
-        val (ok2, log2) =
-            if (tools.dvisvgm != null)
-                run(listOf(tools.dvisvgm, "--pdf", "--no-fonts", "--exact", "-n",
-                    pdf.absolutePath, "-o", svg.absolutePath), work)
-            else if (tools.pdf2svg != null)
-                run(listOf(tools.pdf2svg, pdf.absolutePath, svg.absolutePath), work)
-            else false to "Neither dvisvgm nor pdf2svg is available."
-        if (!ok2 || !svg.exists()) {
-            File(work, "convert.log").writeText(log2)
-            return null
-        }
-        return svg
-    }
-
-    // 4) Public entry: render *any* .tex file’s tikz pictures to HTML (inline SVGs)
-    fun renderTikzFileToHtml(texPath: String): String {
-        val f = File(texPath)
-        if (!f.exists()) return "<div style='opacity:.7'>File not found: ${f.name}</div>"
-        val full = f.readText()
-
-        // Make TeX look in the file’s folder (and ./tex) for custom libs/macros
-        currentBaseDir = f.parent
-
-        val preRaw   = extractRawPreamble(full)
-        val preClean = buildString {
-            append(preRaw).append('\n')
-            // Ensure TikZ is loaded even if the file used \RequirePackage{tikz}
-            if (!Regex("""\\(use|Require)package\{tikz}""").containsMatchIn(preRaw))
-                append("\\usepackage{tikz}\n")
-        }
-
-        // Use the *original* file (not comment-stripped) to preserve coordinates etc.
-        val blocks = extractEnvBlocksBalanced(full, "tikzpicture")
-        if (blocks.isEmpty()) return "<div style='opacity:.7'>No \\begin{tikzpicture} blocks found.</div>"
-
-        val html = StringBuilder(blocks.size * 256)
-        for (b in blocks) {
-            val svg = renderTikzToSvgWithLocalLibs(preClean, b)
-            if (svg != null) {
-                html.append("""<span class="tikz-wrap" style="display:block;margin:12px 0;">${svg.readText()}</span>""")
-            } else {
-                html.append(
-                    """<pre class="tikz-error" style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">
-[TikZ compile failed; see cache logs in ${tikzCacheDir.absolutePath}]
-${escapeHtmlKeepBackslashes(b)}
-</pre>"""
-                )
-            }
-        }
-        return html.toString()
-    }
-
-
     // Strip a single *top-level* \textbf{...}/\emph{...}/\textit{...} wrapper (if present),
 // even if its contents include inline/display math. Returns (inner, tag) where tag is "strong"/"em".
     private fun peelTopLevelTextWrapper(raw: String): Pair<String, String?> {
@@ -1887,6 +1666,11 @@ ${escapeHtmlKeepBackslashes(b)}
                 .replace("\\bottomrule", "")
                 .replace(Regex("""(?m)^\s*\\hline\s*$"""), "")
                 .replace(Regex("""(?<!\\)\\\\\s*\[[^\]]*]"""), "\\\\") // turn \\[6pt] into \\
+                .replace(Regex("""\\arraystretch\s*=\s*([0-9]*\.?[0-9]+)"""), "") // drop \renewcommand{\arraystretch}{...}
+                .replace(Regex("""\\tabcolsep\s*=\s*([0-9]*\.?[0-9]+)"""), "") // drop \setlength{\tabcolsep}{...}
+                .replace(Regex("""(?m)^\s*\\setlength\{\\tabcolsep\}\{[^}]*}.*$"""), "") // drop \setlength{\tabcolsep}{...} lines
+                .replace(Regex("""(?m)^\s*\\renewcommand\{\\arraystretch\}\{[^}]*}.*$"""), "") // drop \renewcommand{\arraystretch}{...} lines
+                .trim()
 
             // Heal early HTML breaks (defensive): turn accidental <br> back into LaTeX \\
             // so the row-splitter works and we don’t render spurious line breaks in cells.
@@ -1970,15 +1754,6 @@ ${escapeHtmlKeepBackslashes(b)}
         return null
     }
 
-
-    private fun colStyle(cols: List<ColSpec>, idx: Int): Pair<String?, Int?> =
-        if (idx < cols.size) cols[idx].align to cols[idx].widthPct else null to null
-
-    /** Very conservative prose text helpers (used inside table/list conversions). */
-    private fun proseLatexToHtml(s: String): String {
-        // DEPRECATED: Use latexProseToHtmlWithMath for all prose conversions to handle \textbf, \emph, etc. with balanced braces and math preservation.
-        return latexProseToHtmlWithMath(s)
-    }
 
     private fun convertHref(s: String): String =
         s.replace(Regex("""\\href\{([^}]*)\}\{([^}]*)\}""")) { m ->
@@ -2281,8 +2056,10 @@ ${escapeHtmlKeepBackslashes(b)}
 
     /**
      * Insert invisible line anchors every Nth source line, but never *inside*
-     * math ($...$, $$...$$, \[...\], \(...\)) or math environments.
-     * Handles math regions spanning multiple lines robustly.
+     * TeX math ($...$, $$...$$, \[...\], \(...\)) or math environments, and
+     * never *inside HTML syntax* (tags, comments, or verbatim-like tags).
+     *
+     * Safe for mixed LaTeX->HTML content where MathJax delimiters remain.
      */
     private fun injectLineAnchors(s: String, absOffset: Int, everyN: Int = 3): String {
         val mathEnvs = setOf(
@@ -2291,8 +2068,20 @@ ${escapeHtmlKeepBackslashes(b)}
             "alignat","alignat*","bmatrix","pmatrix","vmatrix","Bmatrix","Vmatrix",
             "smallmatrix","matrix","cases","split"
         )
-        var i = 0
-        var line = 0
+
+        // --- HTML state ---
+        var inHtmlTag = false           // between '<' and matching '>'
+        var attrQuote: Char? = null     // '"' or '\'', while inside a tag
+        var inHtmlComment = false       // <!-- ... -->
+        var inVerbatimTag = false       // inside <script>, <style>, <pre>, <code>, <textarea>
+        var verbatimTagName = ""        // which verbatim tag we opened
+
+        fun isVerbatimOpenTag(name: String) = when (name.lowercase()) {
+            "script","style","pre","code","textarea" -> true
+            else -> false
+        }
+
+        // --- TeX state ---
         var inDollar = false
         var inDoubleDollar = false
         var inBracket = false   // \[...\]
@@ -2302,17 +2091,120 @@ ${escapeHtmlKeepBackslashes(b)}
         fun startsAt(idx: Int, tok: String) =
             idx + tok.length <= s.length && s.regionMatches(idx, tok, 0, tok.length)
 
+        fun readHtmlTagName(from: Int): Pair<String, Int> {
+            // from is at '<' or '</' — return (name, endIndexExclusiveOfName)
+            var i = from
+            if (i < s.length && s[i] == '<') i++
+            if (i < s.length && s[i] == '/') i++
+            val start = i
+            while (i < s.length) {
+                val c = s[i]
+                if (c.isWhitespace() || c == '>' || c == '/' ) break
+                i++
+            }
+            return s.substring(start, i).lowercase() to i
+        }
+
+        var i = 0
+        var line = 0
         val sb = StringBuilder(s.length + 1024)
+
         while (i < s.length) {
-            // toggle $$ first (so we don't flip single $ inside $$...$$)
+            // --- HTML comment open/close (outside tags) ---
+            if (!inHtmlComment) {
+                if (startsAt(i, "<!--")) {
+                    inHtmlComment = true
+                    sb.append("<!--"); i += 4
+                    continue
+                }
+            } else {
+                // inside comment: copy verbatim until '-->'
+                val end = s.indexOf("-->", i)
+                if (end >= 0) {
+                    sb.append(s, i, end + 3)
+                    i = end + 3
+                } else {
+                    sb.append(s.substring(i))
+                    i = s.length
+                }
+                continue
+            }
+
+            // --- HTML tag open? ---
+            if (!inHtmlTag && startsAt(i, "<")) {
+                // detect tag name, possibly mark verbatim tag
+                val (tag, afterName) = readHtmlTagName(i)
+                inHtmlTag = true
+                attrQuote = null
+
+                // opening verbatim tag?
+                if (tag.isNotEmpty() && isVerbatimOpenTag(tag)) {
+                    inVerbatimTag = true
+                    verbatimTagName = tag
+                }
+                // closing verbatim tag?
+                if (tag.isNotEmpty() && tag.startsWith("/") && isVerbatimOpenTag(tag.removePrefix("/"))) {
+                    // we'll actually close on '>' below to keep states consistent
+                }
+
+                sb.append('<'); i += 1
+                continue
+            }
+
+            // --- inside an HTML tag: copy until the matching unquoted '>' ---
+            if (inHtmlTag) {
+                val c = s[i]
+                sb.append(c); i++
+
+                if (attrQuote == null) {
+                    if (c == '"' || c == '\'') {
+                        attrQuote = c
+                    } else if (c == '>') {
+                        inHtmlTag = false
+                        // if this was a closing verbatim tag, end verbatim mode now
+                        // we can peek backwards for tag name but simpler: when we leave a tag,
+                        // check if it was a closing of current verbatim
+                        // (cheap lookback within recent characters)
+                        val lookBack = 64.coerceAtMost(sb.length)
+                        val tail = sb.substring(sb.length - lookBack)
+                        val closeTag = Regex("</\\s*([a-zA-Z0-9:-]+)\\s*>").find(tail)?.groups?.get(1)?.value?.lowercase()
+                        if (inVerbatimTag && closeTag == verbatimTagName) {
+                            inVerbatimTag = false
+                            verbatimTagName = ""
+                        }
+                        // done with tag; proceed
+                    }
+                } else {
+                    // we're inside a quoted attribute value
+                    if (c == attrQuote) attrQuote = null
+                }
+                continue
+            }
+
+            // --- If inside a verbatim-like tag, copy through until we hit its closing tag ---
+            if (inVerbatimTag) {
+                // look for the next </verbatimTagName>
+                val needle = "</$verbatimTagName>"
+                val at = s.indexOf(needle, i, ignoreCase = true)
+                if (at < 0) {
+                    sb.append(s.substring(i))
+                    i = s.length
+                } else {
+                    // copy up to the '<' that starts the closing tag; do not flip states here
+                    sb.append(s, i, at)
+                    i = at // next loop sees '<', enters tag state, and closes it
+                }
+                continue
+            }
+
+            // --- TeX math state toggles (only when not in HTML structures) ---
             if (!inBracket && !inParen) {
                 if (startsAt(i, "$$")) {
                     inDoubleDollar = !inDoubleDollar
                     sb.append("$$"); i += 2; continue
                 }
                 if (!inDoubleDollar && s[i] == '$') {
-                    // Only toggle if not escaped
-                    val prev = if (i > 0) s[i-1] else ' '
+                    val prev = if (i > 0) s[i - 1] else ' '
                     if (prev != '\\') {
                         inDollar = !inDollar
                         sb.append('$'); i += 1; continue
@@ -2343,23 +2235,32 @@ ${escapeHtmlKeepBackslashes(b)}
                 }
             }
 
+            // --- Line break: maybe inject anchor (only if in NONE of the forbidden states) ---
             val ch = s[i]
             if (ch == '\n') {
                 line++
                 sb.append('\n')
-                val safeSpot = !inDollar && !inDoubleDollar && !inBracket && !inParen && envDepth == 0
-                // Only insert anchor if the *previous* line ended outside math
+                val safeSpot =
+                    !inDollar && !inDoubleDollar &&
+                            !inBracket && !inParen &&
+                            envDepth == 0 &&
+                            !inHtmlTag && !inHtmlComment && !inVerbatimTag &&
+                            attrQuote == null
                 if (safeSpot && (line % everyN == 0)) {
                     val absLine = absOffset + line
                     sb.append("<span class=\"syncline\" data-abs=\"$absLine\"></span>")
                 }
-                i++; continue
+                i++
+                continue
             }
 
+            // default: copy character
             sb.append(ch); i++
         }
+
         return sb.toString()
     }
+
 
     private fun convertTableEnvs(s: String): String {
         val rx = Regex("""\\begin\{table\}(?:\[[^\]]*])?(.+?)\\end\{table\}""", RegexOption.DOT_MATCHES_ALL)
@@ -2528,10 +2429,6 @@ ${escapeHtmlKeepBackslashes(b)}
     }
 
     // —— Config / cache ————————————————————————————————————————————————
-    private val tikzCacheDir: File by lazy {
-        val dir = File(System.getProperty("user.home"), ".livelatex/tikz-cache")
-        dir.mkdirs(); dir
-    }
     private fun sha256Hex(s: String): String {
         val md = java.security.MessageDigest.getInstance("SHA-256")
         val bytes = md.digest(s.toByteArray(Charsets.UTF_8))
@@ -2581,59 +2478,6 @@ ${escapeHtmlKeepBackslashes(b)}
         return (p.exitValue() == 0) to out.toString()
     }
 
-    private fun renderTikzToSvg(preamble: String, tikzEnvBlock: String): File? {
-        val texDoc = """
-        \documentclass[tikz,border=2pt]{standalone}
-        \usepackage{amsmath,amssymb}
-        $preamble
-        \begin{document}
-        $tikzEnvBlock
-        \end{document}
-    """.trimIndent()
-
-        val h = sha256Hex(texDoc)
-        val work = File(tikzCacheDir, h).apply { mkdirs() }
-        val tex = File(work, "$h.tex")
-        val pdf = File(work, "$h.pdf")
-        val svg = File(work, "$h.svg")
-
-        // Cache hit
-        if (svg.exists()) return svg
-
-        tex.writeText(texDoc)
-
-        // Compile → PDF
-        val (ok1, log1) = run(
-            listOf("pdflatex", "-interaction=nonstopmode", "-halt-on-error",
-                "-output-directory", work.absolutePath, tex.absolutePath),
-            work
-        )
-        if (!ok1 || !pdf.exists()) {
-            File(work, "build.log").writeText(log1)
-            if (log1.contains("tikzlibrarysstknots.code.tex") && log1.contains("not found", true)) {
-                // Surface a clear message in the fallback <pre>
-                return null
-            }
-            return null
-        }
-
-
-        // PDF → SVG
-        val tools = findTikzTools()
-        val (ok2, log2) =
-            if (tools.dvisvgm != null)
-                run(listOf(tools.dvisvgm, "--pdf", "--no-fonts", "--exact", "-n", pdf.absolutePath, "-o", svg.absolutePath), work)
-            else if (tools.pdf2svg != null)
-                run(listOf(tools.pdf2svg, pdf.absolutePath, svg.absolutePath), work)
-            else false to "Neither dvisvgm nor pdf2svg is available."
-
-        if (!ok2 || !svg.exists()) {
-            File(work, "convert.log").writeText(log2)
-            return null
-        }
-        return svg
-    }
-
     private fun convertLongtablesToTables(s: String): String {
         val rx = Regex("""\\begin\{longtable\}\{(.*?)\}(.+?)\\end\{longtable\}""", RegexOption.DOT_MATCHES_ALL)
         return rx.replace(s) { m ->
@@ -2666,7 +2510,6 @@ $body
         }
     }
 
-
     // --- path where we cache compiled SVGs
     private fun tikzCacheDir(): File {
         val base = currentBaseDir?.let(::File) ?: File(".")
@@ -2679,98 +2522,6 @@ $body
         val md = java.security.MessageDigest.getInstance("SHA-1")
         val b  = md.digest(s.toByteArray(Charsets.UTF_8))
         return b.joinToString("") { "%02x".format(it) }
-    }
-
-    private fun convertTikzPictures(s: String, fullSourceNoComments: String,
-                                    lazy: Boolean = false): String {
-        val blocks = extractEnvBlocksBalanced(s, "tikzpicture")
-        if (blocks.isEmpty()) return s
-
-        // Harvest libs/macros once
-        val userMacros = extractNewcommands(fullSourceNoComments)
-        val texMacroDefs = buildTexNewcommands(userMacros)
-        val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
-
-        var out = s
-        for (fullBlock in blocks) {
-            // pull [..] options + inner body
-            val optMatch = Regex("""\\begin\{tikzpicture}(?:\[([^\]]*)])?(.+?)\\end\{tikzpicture}""",
-                RegexOption.DOT_MATCHES_ALL).find(fullBlock) ?: continue
-            val body = optMatch.groupValues[2].trim()
-
-            // Heuristics for extra libs used in the snippet
-            val autoLibs = buildSet {
-                if (Regex("""-(\{|)Latex""").containsMatchIn(body)) add("arrows.meta")
-                if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(body)) add("positioning")
-                if (Regex("""\\begin\{knot}|\bflip crossing/""").containsMatchIn(body)) {
-                    addAll(listOf("knots","hobby","intersections","decorations.pathreplacing","shapes.geometric","spath3"))
-                }
-            }
-            val libs = (srcLibs + autoLibs).toSortedSet().joinToString(",")
-
-            val texDoc = """
-\documentclass[tikz,border=1pt]{standalone}
-\usepackage{amsmath,amssymb,bm}
-\usepackage{tikz}
-\usetikzlibrary{$libs}
-$texMacroDefs
-\begin{document}
-$fullBlock
-\end{document}
-        """.trimIndent()
-
-            val key = sha1(texDoc)
-            val cache = tikzCacheDir()
-            val svgFile = File(cache, "$key.svg")
-
-            val replacement: String = if (svgFile.exists()) {
-                // Cache hit: inline immediately
-                """<span class="tikz-wrap" style="display:block;margin:12px 0;">${svgFile.readText()}</span>"""
-            } else if (lazy) {
-                // Lazy: don't compile now. Remember the job and show a button.
-                lazyTikzJobs[key] = texDoc
-                """
-    <span class="tikz-lazy" data-tikz-key="$key" style="display:block;margin:12px 0;">
-      <button class="tikz-load" data-tikz-key="$key"
-              style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;">
-        Render TikZ
-      </button>
-      <div class="tikz-status" style="opacity:.7;margin-top:6px;">Click to render. (cached once)</div>
-    </span>
-    """.trimIndent()
-            } else {
-                // Eager path (your old compile-now code) — keep as fallback if you still call it anywhere without lazy=true
-                // compile
-                val work = File(cache, key).apply { mkdirs() }
-                File(work, "fig.tex").writeText(texDoc)
-                ensureLocalTikzLibs(srcLibs, work)
-                fun run(cmd: List<String>): Pair<Int,String> {
-                    val pb = ProcessBuilder(cmd).directory(work).redirectErrorStream(true)
-                    val p = pb.start()
-                    val log = p.inputStream.bufferedReader().readText()
-                    return p.waitFor() to log
-                }
-                val (pcode, plog) = run(listOf("pdflatex","-interaction=nonstopmode","-halt-on-error","fig.tex"))
-                val okPdf = pcode == 0 && File(work, "fig.pdf").exists()
-                val tools = findTikzTools()
-                val (scode, slog) =
-                    if (okPdf && tools.dvisvgm != null) run(listOf(tools.dvisvgm!!,"--pdf","--no-fonts","-n","-o","fig.svg","fig.pdf"))
-                    else if (okPdf && tools.pdf2svg != null) run(listOf(tools.pdf2svg!!,"fig.pdf","fig.svg"))
-                    else (-1 to "No SVG tool found.")
-
-                if (okPdf && scode == 0 && File(work, "fig.svg").exists()) {
-                    val svgText = File(work,"fig.svg").readText()
-                    svgFile.writeText(svgText)
-                    """<span class="tikz-wrap" style="display:block;margin:12px 0;">$svgText</span>"""
-                } else {
-                    val msg = htmlEscapeAll((if (!okPdf) plog else slog).take(1600))
-                    """<pre class="tikz-error" style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">[TikZ compile failed]\n$msg</pre>"""
-                }
-            }
-
-            out = out.replace(fullBlock, replacement)
-        }
-        return out
     }
 
 
@@ -2818,62 +2569,6 @@ $fullBlock
             return svg
         }
         return null
-    }
-
-
-    // Detect and render macro calls like \SSTdown, \SSTHopfLink[...]{...}{...}, etc.
-    private fun convertSstTikzMacros(s: String, srcNoComments: String): String {
-        // If user didn’t \usetikzlibrary{sstknots} but uses \SST* macros, add it.
-        val preSeen = collectTikzPreamble(srcNoComments)
-        val needsSst = Regex("""\\SST[A-Za-z]""").containsMatchIn(s) &&
-                !Regex("""\\usetikzlibrary\{[^}]*\bsstknots\b""").containsMatchIn(preSeen)
-        val preamble = if (needsSst) preSeen + "\n\\usetikzlibrary{sstknots}\n" else preSeen
-
-        // Heuristic: match a \SSTName with optional [..] and up to 3 braces (your macros use ≤3)
-        val rx = Regex("""\\SST[A-Za-z]+(?:\[[^\]]*])?(?:\{[^{}]*}){0,3}""")
-        return rx.replace(s) { m ->
-            val svg = renderTikzToSvg(preamble, m.value)
-            if (svg != null)
-                """<img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;margin:10px auto;"/>"""
-            else
-                """<pre style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">[TikZ render failed; see cache logs]\n${escapeHtmlKeepBackslashes(m.value)}</pre>"""
-        }
-    }
-
-    private fun buildTexNewcommands(macros: Map<String, Macro>): String {
-        if (macros.isEmpty()) return ""
-        val sb = StringBuilder()
-        for ((name, m) in macros) {
-            val nargs = m.nargs.coerceAtLeast(0)
-            if (nargs == 0) sb.append("\\newcommand{\\$name}{${m.def}}\n")
-            else            sb.append("\\newcommand{\\$name}[$nargs]{${m.def}}\n")
-        }
-        return sb.toString()
-    }
-
-    private fun collectUsetikzlibsFromSource(src: String): Set<String> =
-        Regex("""\\usetikzlibrary\{([^}]*)}""")
-            .findAll(src)
-            .flatMap { it.groupValues[1].split(',') }
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .toSet()
-
-    private fun ensureLocalTikzLibs(libs: Set<String>, workDir: File) {
-        val base = currentBaseDir?.let(::File) ?: return
-        for (lib in libs) {
-            // Only try custom-looking names (not core ones)
-            if (lib.matches(Regex("""[a-zA-Z][a-zA-Z0-9\-]*"""))) {
-                val fname = "tikzlibrary${lib}.code.tex"
-                val candidates = listOf(
-                    File(base, fname),
-                    File(base, "tikz/$fname"),
-                    File(base, "tex/$fname")
-                )
-                val srcFile = candidates.firstOrNull { it.exists() } ?: continue
-                srcFile.copyTo(File(workDir, fname), overwrite = true)
-            }
-        }
     }
 
 
