@@ -57,7 +57,7 @@ open class WrapWithSingleArgCommandAction(private val command: String, text: Str
     }
 }
 
-class WrapWithTexorpdfstringAction : BaseLatexWrapAction("LaTeX: \n texorpdfstring") {
+class WrapWithTexorpdfstringAction : BaseLatexWrapAction("texorpdfstring") {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
@@ -75,8 +75,7 @@ class WrapWithTexorpdfstringAction : BaseLatexWrapAction("LaTeX: \n texorpdfstri
         }
     }
 }
-
-class InsertEquationEnvironmentAction : BaseLatexWrapAction("LaTeX: equation environment") {
+class InsertEquationEnvironmentAction : BaseLatexWrapAction("equation") {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
@@ -99,7 +98,7 @@ class InsertEquationEnvironmentAction : BaseLatexWrapAction("LaTeX: equation env
 }
 
 // Convenience concrete actions with proper names for popup
-class MakeTextBoldAction : WrapWithSingleArgCommandAction("textbf", "LaTeX: bold (\\textbf{…})")
-class MakeTextItalicAction : WrapWithSingleArgCommandAction("textit", "LaTeX: italic (\\textit{…})")
-class MakeTextEmphAction : WrapWithSingleArgCommandAction("emph", "LaTeX: emph (\\emph{…})")
-class MakeTextCiteAction : WrapWithSingleArgCommandAction("cite", "LaTeX: cite (\\cite{…})")
+class MakeTextBoldAction : WrapWithSingleArgCommandAction("textbf", "bold (\\textbf{…})")
+class MakeTextItalicAction : WrapWithSingleArgCommandAction("textit", "italic (\\textit{…})")
+class MakeTextEmphAction : WrapWithSingleArgCommandAction("emph", "emph (\\emph{…})")
+class MakeTextCiteAction : WrapWithSingleArgCommandAction("cite", "cite (\\cite{…})")

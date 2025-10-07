@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## [0.0.6] - 2025-09-30
+
+### Added
+
+### Changed
+
+### Refactored
+
+### Enhanced
+
+
 
 ## [0.0.6] - 2025-09-30
 
