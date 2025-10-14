@@ -57,10 +57,10 @@ object LatexHtml {
         val body1 = stripLineComments(body0)
         val body2 = sanitizeForMathJaxProse(body1)
         val body2b = convertIncludeGraphics(body2)
+
         val body2c = TikzRenderer.convertTikzPictures(body2b, srcNoComments,tikzPreamble)
         val body2d = TikzRenderer.convertSstTikzMacros(body2c, srcNoComments)
-//        val body2c = convertTikzPictures(body2b, srcNoComments, tikzPreamble, lazy = true)
-//        val body2d = convertSstTikzMacros(body2c, srcNoComments)
+
         val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments, tikzPreamble)
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)

@@ -71,5 +71,12 @@
                popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </group>
+
+        <action id="LiveLaTeX.MoveSection"
+                class="com.omariskandarani.livelatex.actions.MoveSectionAction"
+                text="Move Section to External File"
+                description="Externalize current LaTeX section body into .sections and insert an \\input">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>
