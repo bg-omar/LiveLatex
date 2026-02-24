@@ -44,20 +44,20 @@ object SectionMover {
         val lines = document.text.split("\n")
         val sectionBlocks = parseSections(lines)
         if (sectionBlocks.isEmpty()) {
-            Messages.showInfoDialog(project, "No sections found in this file.", "Move Section")
+            Messages.showInfoMessage(project, "No sections found in this file.", "Move Section")
             return
         }
 
         val caretLine = document.getLineNumber(caretOffset)
         val target = sectionBlocks.find { caretLine >= it.headerLineIdx && caretLine < it.contentEndLineIdxExclusive }
         if (target == null) {
-            Messages.showInfoDialog(project, "Caret is not inside a section.", "Move Section")
+            Messages.showInfoMessage(project, "Caret is not inside a section.", "Move Section")
             return
         }
 
         // Ensure there is content to move
         if (target.contentStartLineIdx >= target.contentEndLineIdxExclusive) {
-            Messages.showInfoDialog(project, "Section '${target.title}' has no body to move.", "Move Section")
+            Messages.showInfoMessage(project, "Section '${target.title}' has no body to move.", "Move Section")
             return
         }
 
@@ -65,7 +65,7 @@ object SectionMover {
         // Avoid moving if already replaced by \input
         val firstNonBlank = bodyLines.firstOrNull { it.isNotBlank() }
         if (firstNonBlank != null && firstNonBlank.trim().startsWith("\\input{")) {
-            Messages.showInfoDialog(project, "Section '${target.title}' already appears to be externalized.", "Move Section")
+            Messages.showInfoMessage(project, "Section '${target.title}' already appears to be externalized.", "Move Section")
             return
         }
 
@@ -100,7 +100,7 @@ object SectionMover {
             document.setText(newLines.joinToString("\n"))
         }
 
-        Messages.showInfoDialog(project, "Moved section '${target.title}' body to .sections/$filename", "Move Section")
+        Messages.showInfoMessage(project, "Moved section '${target.title}' body to .sections/$filename", "Move Section")
     }
 
     /**

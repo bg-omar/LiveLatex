@@ -1,0 +1,35 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="LiveLatex [publishPlugin]" type="GradleRunConfiguration" factoryName="Gradle">
+    <ExternalSystemSettings>
+      <option name="env">
+        <map>
+          <entry key="CERTIFICATE_CHAIN" value="-----BEGIN CERTIFICATE----- MIIGETCCA/mgAwIBAgIUIiAx5fokI2Et4u2YADtxzJ/0B68wDQYJKoZIhvcNAQEL BQAwgZcxCzAJBgNVBAYTAk5MMRIwEAYDVQQIDAlHcm9uaW5nZW4xEjAQBgNVBAcM CUdyb25pbmdlbjEhMB8GA1UECgwYSW50ZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMRQw EgYDVQQDDAtJc2thbmRhcmFuaTEnMCUGCSqGSIb3DQEJARYYaW5mb0BvbWFyaXNr YW5kYXJhbmkuY29tMB4XDTIzMDkxMTEzNTYwNloXDTI0MDkxMDEzNTYwNlowgZcx CzAJBgNVBAYTAk5MMRIwEAYDVQQIDAlHcm9uaW5nZW4xEjAQBgNVBAcMCUdyb25p bmdlbjEhMB8GA1UECgwYSW50ZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMRQwEgYDVQQD DAtJc2thbmRhcmFuaTEnMCUGCSqGSIb3DQEJARYYaW5mb0BvbWFyaXNrYW5kYXJh bmkuY29tMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAsE9Q0ZDir3oE zsErOi750pv1zy3Wz+GiNBRVsCzthOYyKH0S0ecG2lTBgT7U/E6oLZEn7yFKtF2y j7rf1bvE1Tf6L5GwepB2lD8tQqHR8OrX2AKuLAnTmnUNAL9AQvhDHz1OIjnRENPd jddkP39ArcD8qduxWRGHicdOCg6pTx2WmD0nb+pRjLkpwMpc4tjHo10ksQAZOY60 b6VbIVwtkP+ZNqvn8aMNS8qdBVvt8t2obSz/VuXC1ewDMmpUpt1YlbhHm9bqywEH e3k5G1OLPzqjUuEDxFMop5fdtaDcFN6gdbOGdyoAFdntCdwh4N9RF2O6VD7YG7+J d+wqfh3UcBk2vxVz9sTZI58Dg9mCcMkoqNfuw9Al+BrHH7CZ5lgHs7iISyhMDHiG f0xzh30qQ3X0A7wsdjy8zqoKpRetF8B3p8xja4HkYtIMsPy2C6aghved9nMK9vAQ b1hend2ug0O5IpkdAz9NFNdlTvIJfpYIpbEtH6BRUcl62HBc+F4iCTTCVPlKlkJf sgKfjV4TO/yRM+rjEIzdkEYUlOT0nPDsdlHNpol6XX2PNhFfbTx6SbxayOthwk+L aU6VrmBrLKU5stqdsrFK9K/uEa0h3ErW9lAVnsGMBMMvc+eYbjE3N3MSubRmoNzF JXvW6aJ62eswSjiDlLd8D3cJVgw0Ix0CAwEAAaNTMFEwHQYDVR0OBBYEFNMKnF0R 9i3rrA78yw2uibE3COLsMB8GA1UdIwQYMBaAFNMKnF0R9i3rrA78yw2uibE3COLs MA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggIBAICvHivQi17HWflt wnseZlZvZ4bvQZKHbjS5HDtlGNkoddR7c1xe50/m5sCkaOHI4wJ6iVLO/DaZ3c4L +5Fl15TUj/XXJdoGT90OwMV0DhP7hOi8Y0hE1edWv10XvrXIsTmYvUmNThWj/k6E c3I1p247Njt4KBEoDnD2vOe+XZVOzSlHLl8PCnZ8aKxAYBAq0y1bJajimbycxhGB xAc63Nx3oTOxdGfOQ62zFU/UbF5dPLN9zIMx80WeQYqZN99CBz+DkPJX3wrxKt2G l6kxI7Nwp1dl8Xz8Rr9rZq+1RxCZDnI8rHIEvXSHWoC0nOBHwpPxk/geI/2ppAsL A9AtRpLXTNWpIfz03CQIsgwisg72Gq6SfyFetfW7CZNdXtkk9QfFulpTJdNvab16 j16GWqfNkODg8cMT8tMsS/ptP8relGwSzFp56DwRhzLKfFY1F//Vqj4rPAP1H+kL 7yIxfaoWVX36p0FCguhOImfK2+/YoUYRJUDcQbQ3ib9UKhCvcp6A+Fcz39bPMTcI 0K5fixgMsNCeXhyVNuA/QLczceP1H7FwZRzHVW3i8mBqqFLd3AdAgRZK7rxUdkQG UdwI80NBBpEqpttC6JG6CzkF44e4rA5/LBJZBmuq5ihmJ591qR/lfoPi3lbC0qzI zFG+crQwjU9ph7rwnsZxHbS7rqTJ -----END CERTIFICATE-----" />
+          <entry key="PLUGIN_VERSION" value="0.0.6" />
+          <entry key="PRIVATE_KEY" value="-----BEGIN ENCRYPTED PRIVATE KEY----- x-----END ENCRYPTED PRIVATE KEY-----" />
+          <entry key="PRIVATE_KEY_PASSWORD" value="x" />
+          <entry key="PUBLISH_TOKEN" value="perm-T21hcl9Jc2thbmRhcmFuaQ==.OTItMTM0MTc=.NQSK6m6xoYxqbnRXeIrhZr2X5c4LNy" />
+          <entry key="SECRETS" value="x" />
+          <entry key="_JAVA_AWT_WM_NONREPARENTING" value="$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$" />
+        </map>
+      </option>
+      <option name="executionName" />
+      <option name="externalProjectPath" value="$PROJECT_DIR$" />
+      <option name="externalSystemIdString" value="GRADLE" />
+      <option name="scriptParameters" value="" />
+      <option name="taskDescriptions">
+        <list />
+      </option>
+      <option name="taskNames">
+        <list>
+          <option value="publishPlugin" />
+        </list>
+      </option>
+      <option name="vmOptions" />
+    </ExternalSystemSettings>
+    <ExternalSystemDebugServerProcess>$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$</ExternalSystemDebugServerProcess>
+    <ExternalSystemReattachDebugProcess>$GIT_TEST_DEBUG_UNSAFE_DIRECTORIES$</ExternalSystemReattachDebugProcess>
+    <DebugAllEnabled>false</DebugAllEnabled>
+    <RunAsTest>false</RunAsTest>
+    <method v="2" />
+  </configuration>
+</component>

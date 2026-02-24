@@ -22,7 +22,7 @@ class MoveSectionAction : AnAction(), DumbAware {
         // Ensure file type is LaTeX-like
         val ext = vFile.extension?.lowercase()
         if (ext !in setOf("tex", "sty", "tikz")) {
-            Messages.showInfoDialog(project, "Not a LaTeX file.", "Move Section")
+            Messages.showInfoMessage(project, "Not a LaTeX file.", "Move Section")
             return
         }
 
@@ -41,4 +41,3 @@ class MoveSectionAction : AnAction(), DumbAware {
         return com.intellij.openapi.actionSystem.ActionUpdateThread.BGT
     }
 }
-

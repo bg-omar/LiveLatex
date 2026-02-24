@@ -136,7 +136,7 @@ class TikzCanvasDialog(
 
     private val presets: List<Preset> = listOf(
         Preset(
-            "★ 3₁ Trefoil (Electron)",
+            "★ 3₁ Half-Half-Twist Trefoil",
             ptsUnits = listOf(
                 0.0 to  2.0,
                 -1.0 to  1.0,
@@ -154,7 +154,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
-            "★ 4₁ Figure-eight (Dark Matter)",
+            "★ 4₁ Two-Half-Twist",
             ptsUnits = listOf(
                 -2.0 to -2.0,
                 -2.0 to  2.0,
@@ -169,7 +169,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
-            "★ 5₁ Cinquefoil (Muon)",
+            "★ 5₁ Torus Cinquefoil",
             ptsUnits = listOf(
                 -0.25 to  1.75,
                 -1.25 to -0.50,
@@ -187,7 +187,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14"
         ),
         Preset(
-            "★ 5₂ tree-twist (Up Quark)",
+            "★ 5₂ Three-Half-Twist",
             ptsUnits = listOf(
                 2.0 to -1.5,
                 1.5 to  1.0,
@@ -208,7 +208,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
-            "★ 6₁ Stevedore (Down Quark)",
+            "★ 6₁ Four-Half-Twist",
             ptsUnits = listOf(
                  0.0 to  2.0,
                 -2.0 to  2.0,
@@ -229,7 +229,7 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
-            "★ 7₁ Septafoil (Tau)",
+            "★ 7₁ Torus Septafoil",
             ptsUnits = listOf(
                 -0.25 to  2.0,
                 -1.50 to  0.50,
@@ -249,6 +249,112 @@ class TikzCanvasDialog(
                 -0.25 to  2.0
             ),
             flipList = "2,4,6,8,10,12,14,16,18"
+        ),
+        Preset(
+            "★ 7₂ Five-Half-Twist",
+            ptsUnits = listOf(
+                0.0 to  2.2,
+                -1.6 to  1.4,
+                -2.0 to  0.4,
+                -1.2 to -0.2,
+                -2.0 to -1.1,
+                -0.8 to -1.8,
+                0.4 to -1.2,
+                -0.6 to -0.2,
+                0.8 to  0.0,
+                -0.2 to  0.7,
+                1.3 to  1.4,
+                2.0 to  0.6,
+                1.4 to -0.3,
+                2.0 to -1.2,
+                0.8 to -2.0,
+                0.0 to -1.0,
+                1.6 to -0.2,
+                0.6 to  0.8,
+                0.0 to  2.2,
+                0.0 to  2.2
+            ),
+            flipList = "" // set after draft-mode inspection
+        ),
+
+        Preset(
+            "★ 8₁  Six-Half-Twist",
+            ptsUnits = listOf(
+                0.0 to  2.3,
+                -1.7 to  1.5,
+                -2.2 to  0.5,
+                -1.4 to -0.1,
+                -2.2 to -1.2,
+                -0.9 to -2.0,
+                0.5 to -1.3,
+                -0.7 to -0.3,
+                0.9 to -0.1,
+                -0.3 to  0.8,
+                1.4 to  1.5,
+                2.2 to  0.7,
+                1.6 to -0.2,
+                2.2 to -1.2,
+                1.1 to -2.2,
+                -0.1 to -1.6,
+                1.6 to -0.6,
+                0.7 to  0.6,
+                0.0 to  2.3,
+                0.0 to  2.3
+            ),
+            flipList = ""
+        ),
+        Preset(
+            "★ 9₂ Seven-Half-Twist",
+            ptsUnits = listOf(
+                0.0 to  2.4,
+                -1.8 to  1.6,
+                -2.4 to  0.6,
+                -1.5 to  0.0,
+                -2.4 to -1.2,
+                -1.0 to -2.1,
+                0.6 to -1.4,
+                -0.8 to -0.4,
+                1.0 to -0.2,
+                -0.4 to  0.9,
+                1.5 to  1.6,
+                2.4 to  0.8,
+                1.8 to -0.2,
+                2.4 to -1.2,
+                1.3 to -2.3,
+                -0.2 to -1.9,
+                1.8 to -0.8,
+                0.8 to  0.5,
+                0.0 to  2.4,
+                0.0 to  2.4
+            ),
+            flipList = ""
+        ),
+        Preset(
+            "★ 10₁ Eight-Half-Twist",
+            ptsUnits = listOf(
+                0.5 to -1.75,
+                -2.5 to -2.25,
+                -1.5 to -0.5,
+                -3.0 to  1.0,
+                -1.5 to  1.0,
+                0.0 to  2.5,
+                1.0 to  1.25,
+                3.25 to 1.25,
+                1.75 to -2.0,
+                -0.5 to -1.75,
+                1.5 to -0.75,
+                4.0 to -0.75,
+                2.0 to  0.5,
+                2.25 to 2.0,
+                1.5 to  2.25,
+                0.0 to  1.0,
+                -2.0 to 2.25,
+                -1.75 to 0.25,
+                -3.25 to -0.5,
+                -1.0 to -1.25,
+                0.5 to -1.75
+            ),
+            flipList = ""
         ),
         Preset(
             "★ Hopf link",

@@ -1,0 +1,568 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="LiveLatexTikzKnotStore">
+    <option name="entries">
+      <list>
+        <Entry>
+          <option name="name" value="★ 3₁ Trefoil (Electron)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="257" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="898" />
+                <option name="y" value="357" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="898" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1098" />
+                <option name="y" value="557" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1198" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="382" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="798" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="898" />
+                <option name="y" value="557" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1098" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1098" />
+                <option name="y" value="357" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="257" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="257" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 5₂ tree-twist (Up Quark)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="257" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="898" />
+                <option name="y" value="357" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="898" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1098" />
+                <option name="y" value="557" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1198" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="382" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="798" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="898" />
+                <option name="y" value="557" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1098" />
+                <option name="y" value="457" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="1098" />
+                <option name="y" value="357" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="257" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="998" />
+                <option name="y" value="257" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 5₁ Cinquefoil (Muon)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="711" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="350" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="400" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="786" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="836" />
+                <option name="y" value="475" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="861" />
+                <option name="y" value="275" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="811" />
+                <option name="y" value="225" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="661" />
+                <option name="y" value="225" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="611" />
+                <option name="y" value="275" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="636" />
+                <option name="y" value="475" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="686" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="400" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="350" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="761" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="711" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="711" />
+                <option name="y" value="200" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 7₁ Septafoil (Tau)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="786" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="486" />
+                <option name="y" value="450" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="100" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="986" />
+                <option name="y" value="450" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="686" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 6₁ Stevedore (Down Quark)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="636" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="786" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="611" />
+                <option name="y" value="625" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="836" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="686" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="861" />
+                <option name="y" value="625" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="550" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 4₁ Figure-eight (Dark Matter)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="636" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="636" />
+                <option name="y" value="400" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="836" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="400" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="325" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="400" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="636" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="836" />
+                <option name="y" value="400" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="836" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ Septafoil (7₁)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="786" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="486" />
+                <option name="y" value="450" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="100" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="986" />
+                <option name="y" value="450" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="686" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 6₁ (Stevedore / Down Quark)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="636" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="786" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="611" />
+                <option name="y" value="625" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="536" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="736" />
+                <option name="y" value="200" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="836" />
+                <option name="y" value="550" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="686" />
+                <option name="y" value="600" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="861" />
+                <option name="y" value="625" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="936" />
+                <option name="y" value="550" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 5₂ (Up Quark)" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="711" />
+                <option name="y" value="225" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="611" />
+                <option name="y" value="450" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="661" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="886" />
+                <option name="y" value="350" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="861" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="611" />
+                <option name="y" value="300" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="586" />
+                <option name="y" value="350" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="811" />
+                <option name="y" value="500" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="861" />
+                <option name="y" value="450" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="761" />
+                <option name="y" value="225" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="711" />
+                <option name="y" value="225" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="711" />
+                <option name="y" value="225" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+      </list>
+    </option>
+  </component>
+</project>
