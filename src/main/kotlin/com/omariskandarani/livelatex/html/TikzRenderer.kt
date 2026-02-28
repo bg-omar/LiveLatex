@@ -89,19 +89,58 @@ object TikzRenderer {
 
     // ───────────────────────── TikZ picture renderer ─────────────────────────
 
-    fun convertTikzPictures(htmlLike: String, fullSourceNoComments: String, tikzPreamble: String): String {
-        val rx = Regex(
-            """\\begin\{tikzpicture}(\[[^\]]*])?(.+?)\\end\{tikzpicture}""",
-            RegexOption.DOT_MATCHES_ALL
-        )
+    /** Find the end of a tikzpicture block, accounting for nested \begin{tikzpicture}...\end{tikzpicture}. */
+    private fun findMatchingEndTikzpicture(s: String, bodyStart: Int): Int {
+        val beginTok = "\\begin{tikzpicture}"
+        val endTok = "\\end{tikzpicture}"
+        var depth = 1
+        var i = bodyStart
+        while (i < s.length && depth > 0) {
+            val nextBegin = s.indexOf(beginTok, i)
+            val nextEnd = s.indexOf(endTok, i)
+            if (nextEnd < 0) return -1
+            if (nextBegin >= 0 && nextBegin < nextEnd) {
+                depth++
+                i = nextBegin + beginTok.length
+            } else {
+                depth--
+                if (depth == 0) return nextEnd + endTok.length
+                i = nextEnd + endTok.length
+            }
+        }
+        return -1
+    }
 
+    fun convertTikzPictures(htmlLike: String, fullSourceNoComments: String, tikzPreamble: String): String {
         val userMacros = extractNewcommands(fullSourceNoComments)
         val texMacroDefs = buildTexNewcommands(userMacros)
         val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
 
-        return rx.replace(htmlLike) { m ->
-            val opts = m.groupValues[1]                 // includes the surrounding [ ]
-            val body = m.groupValues[2].trim()
+        val beginTok = "\\begin{tikzpicture}"
+        val result = StringBuilder(htmlLike.length)
+        var pos = 0
+
+        while (true) {
+            val start = htmlLike.indexOf(beginTok, pos)
+            if (start < 0) break
+            result.append(htmlLike, pos, start)
+
+            var opts = ""
+            var bodyStart = start + beginTok.length
+            if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
+                val closeBracket = htmlLike.indexOf(']', bodyStart)
+                if (closeBracket >= 0) {
+                    opts = htmlLike.substring(bodyStart, closeBracket + 1)
+                    bodyStart = closeBracket + 1
+                }
+            }
+            val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
+            if (bodyEnd < 0) {
+                result.append(htmlLike, start, (start + beginTok.length).coerceAtMost(htmlLike.length))
+                pos = bodyStart
+                continue
+            }
+            val body = htmlLike.substring(bodyStart, bodyEnd - "\\end{tikzpicture}".length).trim()
 
             // also look at options when deciding libs
             val hay = opts + "\n" + body
@@ -129,11 +168,18 @@ object TikzRenderer {
             val allLibs = (srcLibs + autoLibs).toSortedSet()
             val libsLine = if (allLibs.isNotEmpty()) "\\usetikzlibrary{${allLibs.joinToString(",")}}\n" else ""
 
+            val needsPgfplots = Regex("""\\begin\{axis\}|\\addplot|\\pgfplot|xlabel\s*=|ylabel\s*=""")
+                .containsMatchIn(hay)
+            val pgfplotsBlock = if (needsPgfplots) """
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+""" else ""
+
             val texDoc = """
 \documentclass[tikz,border=1pt]{standalone}
 \usepackage{amsmath,amssymb,bm}
 \usepackage{tikz}
-$libsLine
+$pgfplotsBlock$libsLine
 $texMacroDefs
 $tikzPreamble
 \usetikzlibrary{
@@ -181,7 +227,9 @@ $body
             val cache = tikzCacheDir()
             val svg = File(cache, "$key.svg")
             if (svg.exists()) {
-                return@replace """<span class="tikz-wrap" style="display:block;margin:12px 0;">${svg.readText()}</span>"""
+                result.append("""<span class="tikz-wrap" style="display:block;margin:12px 0;">${svg.readText()}</span>""")
+                pos = bodyEnd
+                continue
             }
 
             val work = File(cache, key).apply { mkdirs() }
@@ -205,24 +253,29 @@ $body
             File(work, "build.log").writeText(plog)
             if (pcode != 0 || !File(work,"fig.pdf").exists()) {
                 val msg = htmlEscapeAll(plog.takeLast(4000))
-                return@replace """<div class="tikz-error" style="color:#b91c1c;">[TikZ compile failed]<pre>$msg
+                result.append("""<div class="tikz-error" style="color:#b91c1c;">[TikZ compile failed]<pre>$msg
 
-[tip] Open: ${work.absolutePath.replace("\\","/")}/build.log</pre></div>"""
+[tip] Open: ${work.absolutePath.replace("\\","/")}/build.log</pre></div>""")
+                pos = bodyEnd
+                continue
             }
 
             val (scode, slog) = runLocal(listOf("dvisvgm","--pdf","--no-fonts","-n","-o","fig.svg","fig.pdf"))
             File(work, "convert.log").writeText(slog)
             if (scode != 0 || !File(work,"fig.svg").exists()) {
                 val msg = htmlEscapeAll(slog.takeLast(4000))
-                return@replace """<div class="tikz-error" style="color:#b91c1c;">[dvisvgm failed]<pre>$msg
+                result.append("""<div class="tikz-error" style="color:#b91c1c;">[dvisvgm failed]<pre>$msg
 
-[tip] Open: ${work.absolutePath.replace("\\","/")}/convert.log</pre></div>"""
+[tip] Open: ${work.absolutePath.replace("\\","/")}/convert.log</pre></div>""")
+            } else {
+                val svgText = File(work,"fig.svg").readText()
+                svg.writeText(svgText)
+                result.append("""<span class="tikz-wrap" style="display:block;margin:12px 0;">$svgText</span>""")
             }
-
-            val svgText = File(work,"fig.svg").readText()
-            svg.writeText(svgText)
-            """<span class="tikz-wrap" style="display:block;margin:12px 0;">$svgText</span>"""
+            pos = bodyEnd
         }
+        result.append(htmlLike, pos, htmlLike.length)
+        return result.toString()
     }
 
     // Detect and render macro calls like \SSTdown, \SSTHopfLink[...]{...}{...}, etc.
@@ -430,5 +483,5 @@ $body
     }
 }
 
-private fun TikzRenderer.escapeHtmlKeepBackslashes(s: String): String =
+internal fun TikzRenderer.escapeHtmlKeepBackslashes(s: String): String =
     s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

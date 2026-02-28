@@ -3,6 +3,7 @@ build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
+run/
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
@@ -41,7 +42,7 @@ bin/
 ### Mac OS ###
 .DS_Store
 /secrets/
-.run/LiveLatex [publishPlugin].run.xml
+.run/**/*
 
 # Ignore Gradle build output directory
 build

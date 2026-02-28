@@ -1,6 +1,8 @@
 package com.omariskandarani.livelatex.core
 
 import com.omariskandarani.livelatex.html.LatexHtml
+import com.omariskandarani.livelatex.html.LatexHtmlTikz
+import com.omariskandarani.livelatex.html.LatexTikzJobStore
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
@@ -24,6 +26,7 @@ import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.Dimension
 import java.awt.Point
 import com.intellij.ui.jcef.JBCefBrowserBase
+import java.io.File
 
 
 class LatexPreviewService(private val project: Project) : Disposable {
@@ -35,6 +38,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private var jsMoveCaret: JBCefJSQuery? = null
     private var jsRenderTikz: JBCefJSQuery? = null
     private var jsRenderTikzQuery: JBCefJSQuery? = null
+    private var jsClearCacheQuery: JBCefJSQuery? = null
     private val tikzExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor("TikzPool", 1)
 
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
@@ -114,11 +118,47 @@ class LatexPreviewService(private val project: Project) : Disposable {
         browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
     }
 
+    private fun exposeClearCacheBridge(browser: JBCefBrowserBase) {
+        jsClearCacheQuery = JBCefJSQuery.create(browser).also { q ->
+            Disposer.register(this, q)
+            q.addHandler { _ ->
+                ApplicationManager.getApplication().invokeLater {
+                    clearCacheForPaper()
+                }
+                JBCefJSQuery.Response("OK")
+            }
+        }
+        val js = """
+        (function(){
+          window.__llHostClearCache = function(){
+            try { ${jsClearCacheQuery!!.inject("''")}; } catch(e){}
+          };
+          window.addEventListener('message', function(ev){
+            var d = ev.data||{};
+            if (d.type==='clear-cache'){ try { ${jsClearCacheQuery!!.inject("''")}; } catch(e){} }
+          }, false);
+        })();
+        """.trimIndent()
+        browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
+    }
+
+    private fun clearCacheForPaper() {
+        val pair = currentTexFileAndText() ?: return
+        val vf = pair.first
+        val baseDir = File(vf.path).parentFile ?: return
+        val cacheDir = File(baseDir, ".livelatex-cache")
+        if (cacheDir.exists()) {
+            cacheDir.deleteRecursively()
+        }
+        scheduleRefresh()
+    }
+
     // Compile and capture output/errors safely
     private fun runTikzCompileSafely(key: String): TikzResult {
         return try {
             // choose a single cache under the project ROOT, not user home:
-            val out = LatexHtml.renderLazyTikzKeyToSvg(key) // your existing function
+            val texDoc = LatexTikzJobStore.get(key)
+            val out = if (texDoc != null) LatexHtmlTikz.renderTexToSvg(texDoc, key) else null
             if (out != null && out.exists()) {
                 TikzResult.okSvg(key, out.readText())
             } else {
@@ -157,7 +197,6 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview") ?: return
                     val file = event.newFile
                     if (file?.name?.endsWith(".tex") == true) {
-                        // Do NOT auto-show toolwindow
                         toolWindow.setWidth(400)
                         rebindToSelectedEditor()
                     } else {
@@ -211,6 +250,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
         // 2) TikZ bridge (JSQuery + pooling + page glue) — single source of truth
         exposeTikzBridge(base)
+        exposeClearCacheBridge(base)
 
         // 3) flush pending JS after each page load + re-inject page glue
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -219,8 +259,9 @@ class LatexPreviewService(private val project: Project) : Disposable {
             ) {
                 if (!isLoading) {
                     pageReady = true
-                    // re-inject page-side glue so window.__llHostRenderTikz is live again
+                    // re-inject page-side glue so window.__llHostRenderTikz and __llHostClearCache are live again
                     exposeTikzBridge(base)
+                    exposeClearCacheBridge(base)
                     flushPending()
                 }
             }

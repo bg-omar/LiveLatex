@@ -12,7 +12,7 @@ import com.intellij.openapi.project.Project
  * A small set of editor popup actions to wrap the current selection with LaTeX commands
  * or insert suitable templates when nothing is selected.
  */
-abstract open class BaseLatexWrapAction(private val label: String) : AnAction(label), DumbAware {
+abstract class BaseLatexWrapAction(private val label: String) : AnAction(label), DumbAware {
 
     override fun update(e: AnActionEvent) {
         val vFile = e.getData(CommonDataKeys.VIRTUAL_FILE)

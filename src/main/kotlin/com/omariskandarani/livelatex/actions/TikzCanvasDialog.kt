@@ -1,11 +1,17 @@
 package com.omariskandarani.livelatex.actions
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.JBColor
+import com.intellij.ui.jcef.JBCefBrowser
+import com.omariskandarani.livelatex.html.LatexHtmlTikz
+import com.omariskandarani.livelatex.html.TikzRenderer
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.io.File
+import javax.imageio.ImageIO
 import javax.swing.*
 import kotlin.math.*
 
@@ -27,6 +33,19 @@ private fun segmentDist2(p: Point, a: Point, b: Point): Int {
     val dx = p.x - projX
     val dy = p.y - projY
     return (dx * dx + dy * dy).roundToInt()
+}
+
+/** Project p onto segment a–b, return the nearest point on the segment (between a and b). */
+private fun projectOntoSegment(p: Point, a: Point, b: Point): Point {
+    val vx = (b.x - a.x).toDouble()
+    val vy = (b.y - a.y).toDouble()
+    val wx = (p.x - a.x).toDouble()
+    val wy = (p.y - a.y).toDouble()
+    val c1 = vx * wx + vy * wy
+    val c2 = vx * vx + vy * vy
+    if (c2 <= 0.0) return Point(a)
+    val t = (c1 / c2).coerceIn(0.0, 1.0)
+    return Point((a.x + t * vx).roundToInt(), (a.y + t * vy).roundToInt())
 }
 
 
@@ -102,6 +121,10 @@ class TikzCanvasDialog(
     private var mode = EditMode.ADD
     private var tool = Tool.KNOT
     private var dirty = false
+
+    // Background image for tracing knots
+    private var backgroundImage: Image? = null
+    private var backgroundOpacity: Float = 0.5f
 
     // ── Presets ─────────────────────────────────────────────────────────────────
     private data class Preset(
@@ -251,112 +274,6 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
-            "★ 7₂ Five-Half-Twist",
-            ptsUnits = listOf(
-                0.0 to  2.2,
-                -1.6 to  1.4,
-                -2.0 to  0.4,
-                -1.2 to -0.2,
-                -2.0 to -1.1,
-                -0.8 to -1.8,
-                0.4 to -1.2,
-                -0.6 to -0.2,
-                0.8 to  0.0,
-                -0.2 to  0.7,
-                1.3 to  1.4,
-                2.0 to  0.6,
-                1.4 to -0.3,
-                2.0 to -1.2,
-                0.8 to -2.0,
-                0.0 to -1.0,
-                1.6 to -0.2,
-                0.6 to  0.8,
-                0.0 to  2.2,
-                0.0 to  2.2
-            ),
-            flipList = "" // set after draft-mode inspection
-        ),
-
-        Preset(
-            "★ 8₁  Six-Half-Twist",
-            ptsUnits = listOf(
-                0.0 to  2.3,
-                -1.7 to  1.5,
-                -2.2 to  0.5,
-                -1.4 to -0.1,
-                -2.2 to -1.2,
-                -0.9 to -2.0,
-                0.5 to -1.3,
-                -0.7 to -0.3,
-                0.9 to -0.1,
-                -0.3 to  0.8,
-                1.4 to  1.5,
-                2.2 to  0.7,
-                1.6 to -0.2,
-                2.2 to -1.2,
-                1.1 to -2.2,
-                -0.1 to -1.6,
-                1.6 to -0.6,
-                0.7 to  0.6,
-                0.0 to  2.3,
-                0.0 to  2.3
-            ),
-            flipList = ""
-        ),
-        Preset(
-            "★ 9₂ Seven-Half-Twist",
-            ptsUnits = listOf(
-                0.0 to  2.4,
-                -1.8 to  1.6,
-                -2.4 to  0.6,
-                -1.5 to  0.0,
-                -2.4 to -1.2,
-                -1.0 to -2.1,
-                0.6 to -1.4,
-                -0.8 to -0.4,
-                1.0 to -0.2,
-                -0.4 to  0.9,
-                1.5 to  1.6,
-                2.4 to  0.8,
-                1.8 to -0.2,
-                2.4 to -1.2,
-                1.3 to -2.3,
-                -0.2 to -1.9,
-                1.8 to -0.8,
-                0.8 to  0.5,
-                0.0 to  2.4,
-                0.0 to  2.4
-            ),
-            flipList = ""
-        ),
-        Preset(
-            "★ 10₁ Eight-Half-Twist",
-            ptsUnits = listOf(
-                0.5 to -1.75,
-                -2.5 to -2.25,
-                -1.5 to -0.5,
-                -3.0 to  1.0,
-                -1.5 to  1.0,
-                0.0 to  2.5,
-                1.0 to  1.25,
-                3.25 to 1.25,
-                1.75 to -2.0,
-                -0.5 to -1.75,
-                1.5 to -0.75,
-                4.0 to -0.75,
-                2.0 to  0.5,
-                2.25 to 2.0,
-                1.5 to  2.25,
-                0.0 to  1.0,
-                -2.0 to 2.25,
-                -1.75 to 0.25,
-                -3.25 to -0.5,
-                -1.0 to -1.25,
-                0.5 to -1.75
-            ),
-            flipList = ""
-        ),
-        Preset(
             "★ Hopf link",
             circlesUnits = listOf(
                 Triple( 1.0, 0.0, 2.0),
@@ -420,8 +337,19 @@ class TikzCanvasDialog(
     private val flipField = JTextField().apply { columns = 14 }
     private val showPointsBox = JCheckBox("Guides", true)
 
+    private val loadBgBtn = JButton("Load Background").apply {
+        toolTipText = "Load an image to trace a knot"
+    }
+    private val clearBgBtn = JButton("Clear Background").apply {
+        toolTipText = "Remove background image"
+    }
+    private lateinit var bgOpacitySpinner: JSpinner
+
     private val saveSetupBtn = JButton("Save Setup")
     private val loadSetupBtn = JButton("Load Setup")
+    private val previewBtn = JButton("Preview").apply {
+        toolTipText = "Render and preview the knot before export"
+    }
 
 
     private lateinit var twoStrandBox: JCheckBox
@@ -528,6 +456,23 @@ class TikzCanvasDialog(
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
             val cx = width / 2; val cy = height / 2
+
+            // Background image for tracing
+            backgroundImage?.let { img ->
+                val alpha = (bgOpacitySpinner.value as? Number)?.toFloat()?.coerceIn(0f, 1f) ?: 0.5f
+                g2.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha)
+                val iw = img.getWidth(null)
+                val ih = img.getHeight(null)
+                if (iw > 0 && ih > 0) {
+                    val scale = minOf(width.toDouble() / iw, height.toDouble() / ih).toFloat()
+                    val dw = (iw * scale).toInt()
+                    val dh = (ih * scale).toInt()
+                    val dx = (width - dw) / 2
+                    val dy = (height - dh) / 2
+                    g2.drawImage(img, dx, dy, dw, dh, null)
+                }
+                g2.composite = AlphaComposite.SrcOver
+            }
 
             // grid (integer only)
             g2.color = JBColor(Color(0xEAECEF), Color(0x23272E))
@@ -668,6 +613,14 @@ class TikzCanvasDialog(
         rbDot.addActionListener { tool = Tool.DOT }
         rbText.addActionListener { tool = Tool.TEXT }
 
+        bgOpacitySpinner = JSpinner(SpinnerNumberModel(0.5, 0.1, 1.0, 0.1)).apply {
+            toolTipText = "Background opacity for tracing"
+            preferredSize = Dimension(60, preferredSize.height)
+        }
+        loadBgBtn.addActionListener { loadBackgroundImage() }
+        clearBgBtn.addActionListener { clearBackgroundImage() }
+        bgOpacitySpinner.addChangeListener { canvas.repaint() }
+
         val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
             add(JLabel(""))
             add(rbKnot); add(rbLine); add(rbCircle); add(rbDot); add(rbText)
@@ -679,6 +632,9 @@ class TikzCanvasDialog(
             add(JLabel("Text:")); add(textDefault)
             add(Box.createHorizontalStrut(12))
             add(JLabel("Guides:")); add(showPointsBox)
+            add(Box.createHorizontalStrut(12))
+            add(loadBgBtn); add(clearBgBtn)
+            add(JLabel("Opacity:")); add(bgOpacitySpinner)
         }
         twoStrandSettings = TwoStrandSettingsService.getInstance().state.copy()
         twoStrandBox = JCheckBox("Twist", /*selected=*/true)
@@ -724,10 +680,13 @@ class TikzCanvasDialog(
             add(saveBtn); add(loadBtn); add(newBtn); add(deleteBtn)
             add(Box.createHorizontalStrut(12))
             add(saveSetupBtn); add(loadSetupBtn)
+            add(Box.createHorizontalStrut(12))
+            add(previewBtn)
         }
 
         saveSetupBtn.addActionListener { saveSetupToFile() }
         loadSetupBtn.addActionListener { loadSetupFromFile() }
+        previewBtn.addActionListener { doPreview() }
 
         val header = JPanel()
         header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
@@ -917,12 +876,24 @@ class TikzCanvasDialog(
                     // no-op; dragKnotIndex cleared in reset
                 } else if (pressButton == MouseEvent.BUTTON1 && longPressReady) {
                     // Commit add on release if the press lasted long enough
-                    val candidate = provisionalAdd ?: p
-                    val idx = nearest(knotPts, candidate)
-                    val isDuplicate = idx != null && candidate.distanceSq(knotPts[idx]) <= MOVE_TOL2
-                    if (!isDuplicate) {
-                        knotPts += candidate
+                    val raw = pressRaw ?: e.point
+                    val segIdx = segmentAt(raw)
+                    val candidate = if (segIdx != null) {
+                        val proj = projectOntoSegment(raw, knotPts[segIdx], knotPts[segIdx + 1])
+                        snap(Point(proj.x, proj.y))
+                    } else {
+                        provisionalAdd ?: p
+                    }
+                    if (segIdx != null) {
+                        knotPts.add(segIdx + 1, candidate)
                         markDirty()
+                    } else {
+                        val idx = nearest(knotPts, candidate)
+                        val isDuplicate = idx != null && candidate.distanceSq(knotPts[idx]) <= MOVE_TOL2
+                        if (!isDuplicate) {
+                            knotPts += candidate
+                            markDirty()
+                        }
                     }
                 }
                 resetPressState()
@@ -1004,6 +975,7 @@ class TikzCanvasDialog(
                     "p1" -> s.a = pSnapped
                     "p2" -> s.b = pSnapped
                     "body" -> { // translate both
+                        @Suppress("UNCHECKED_CAST")
                         val orig = d.orig as Pair<Point, Point>
                         val dx = pSnapped.x - d.start.x
                         val dy = pSnapped.y - d.start.y
@@ -1128,6 +1100,79 @@ class TikzCanvasDialog(
         knotPts.clear()
         knotPts.addAll(pairs.map { (x, y) -> Point(cx + fromUnits(x), cy - fromUnits(y)) })
         dirty = true; canvas.repaint()
+    }
+
+    private fun buildCurrentExportBody(): String {
+        val amp = (spAmp.value as Number).toDouble()
+        val turns = (spTurns.value as Number).toDouble()
+        val samples = (spSamples.value as Number).toInt()
+        val wth = tfWth.text.trim().ifEmpty { "2.5pt" }
+        val core = tfCore.text.trim().ifEmpty { "black" }
+        val mask = tfMask.text.trim().ifEmpty { "5.0pt" }
+        val clrA = tfClrA.text.trim().ifEmpty { "black!60!black" }
+        val clrB = tfClrB.text.trim().ifEmpty { "red!70!black" }
+        return if (twoStrandBox.isSelected) {
+            exportBodyTwoStrand(knotPts, amp, turns, samples, wth, core, mask, clrA, clrB)
+        } else {
+            exportBody(knotPts, showPointsBox.isSelected, flipField.text.trim(), null, false)
+        }
+    }
+
+    private fun doPreview() {
+        val body = buildCurrentExportBody()
+        if (body.startsWith("%") || body.isBlank()) {
+            JOptionPane.showMessageDialog(rootPanel, "Add at least 2 knot points to preview.", "Preview", JOptionPane.WARNING_MESSAGE)
+            return
+        }
+        previewBtn.isEnabled = false
+        val texDoc = """
+\documentclass[tikz,border=2pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{knots,hobby,calc,intersections,decorations.pathreplacing,decorations.markings,shapes.geometric,spath3,topaths}
+\newcommand{\SSTGuidesPoints}[2]{}
+\begin{document}
+$body
+\end{document}
+        """.trimIndent()
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val baseDir = project.basePath
+                if (baseDir != null) TikzRenderer.currentBaseDir = baseDir
+                val key = "tikz-knot-preview"
+                val svgFile = LatexHtmlTikz.renderTexToSvg(texDoc, key)
+                ApplicationManager.getApplication().invokeLater {
+                    previewBtn.isEnabled = true
+                    if (svgFile != null && svgFile.exists()) {
+                        val svgText = svgFile.readText()
+                        val html = """
+<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
+<body style="margin:0;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;">
+<div style="background:white;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">$svgText</div>
+</body></html>
+                        """.trimIndent()
+                        val owner = rootPanel.topLevelAncestor as? Window
+                        val dlg = JDialog(owner, "Knot Preview", Dialog.ModalityType.MODELESS)
+                        dlg.defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
+                        dlg.layout = BorderLayout()
+                        val browser = JBCefBrowser()
+                        browser.loadHTML(html, "about:blank")
+                        dlg.add(browser.component, BorderLayout.CENTER)
+                        dlg.setSize(500, 500)
+                        dlg.setLocationRelativeTo(rootPanel)
+                        dlg.isVisible = true
+                    } else {
+                        JOptionPane.showMessageDialog(rootPanel,
+                            "TikZ compilation failed. Ensure pdflatex and dvisvgm/pdf2svg are installed.",
+                            "Preview", JOptionPane.ERROR_MESSAGE)
+                    }
+                }
+            } catch (t: Throwable) {
+                ApplicationManager.getApplication().invokeLater {
+                    previewBtn.isEnabled = true
+                    JOptionPane.showMessageDialog(rootPanel, "Preview error: ${t.message}", "Preview", JOptionPane.ERROR_MESSAGE)
+                }
+            }
+        }
     }
 
     override fun doOKAction() {
@@ -1419,6 +1464,22 @@ class TikzCanvasDialog(
         return if (best <= MOVE_TOL2) bestIdx else null
     }
 
+    /** Returns segment index i (between knotPts[i] and knotPts[i+1]) if click is on that segment, else null. */
+    private fun segmentAt(raw: Point): Int? {
+        if (knotPts.size < 2) return null
+        val tol2 = PICK_R * PICK_R
+        var bestIdx = -1
+        var bestD2 = Int.MAX_VALUE
+        for (i in 0 until knotPts.size - 1) {
+            val d2 = segmentDist2(raw, knotPts[i], knotPts[i + 1])
+            if (d2 <= tol2 && d2 < bestD2) {
+                bestD2 = d2
+                bestIdx = i
+            }
+        }
+        return if (bestIdx >= 0) bestIdx else null
+    }
+
     // Add point if not duplicate of last
     private fun addKnotIfNotDuplicate(p: Point) {
         val last = knotPts.lastOrNull()
@@ -1442,11 +1503,6 @@ class TikzCanvasDialog(
 
     private fun markDirty() { dirty = true }
 
-    // tiny extension helpers
-    private fun Point.distance(o: Point): Double {
-        val dx = (x - o.x).toDouble(); val dy = (y - o.y).toDouble()
-        return sqrt(dx * dx + dy * dy)
-    }
 
     // Translate all geometry by dx, dy (canvas center shift)
     private fun translateAll(dx: Int, dy: Int) {
@@ -1472,6 +1528,31 @@ class TikzCanvasDialog(
         tmpA = tmpA?.let { Point(it.x + dx, it.y + dy) }
         linePreview = linePreview?.let { LineSeg(Point(it.a.x + dx, it.a.y + dy), Point(it.b.x + dx, it.b.y + dy)) }
         circlePreview = circlePreview?.let { Circ(Point(it.c.x + dx, it.c.y + dy), it.rUnits) }
+        canvas.repaint()
+    }
+
+    private fun loadBackgroundImage() {
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Select background image for tracing"
+        }
+        if (chooser.showOpenDialog(rootPanel) == JFileChooser.APPROVE_OPTION) {
+            val file = chooser.selectedFile
+            try {
+                val img = ImageIO.read(file)
+                if (img != null) {
+                    backgroundImage = img
+                    canvas.repaint()
+                } else {
+                    JOptionPane.showMessageDialog(rootPanel, "Could not load image.", "Load Background", JOptionPane.WARNING_MESSAGE)
+                }
+            } catch (e: Exception) {
+                JOptionPane.showMessageDialog(rootPanel, "Error loading image: ${e.message}", "Load Background", JOptionPane.ERROR_MESSAGE)
+            }
+        }
+    }
+
+    private fun clearBackgroundImage() {
+        backgroundImage = null
         canvas.repaint()
     }
 
