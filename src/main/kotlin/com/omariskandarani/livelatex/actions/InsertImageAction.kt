@@ -18,7 +18,7 @@ class InsertImageAction : AnAction() {
 
     init {
         templatePresentation.text = "Insert Image…"
-        templatePresentation.description = "Copy image to project and insert \\includegraphics snippet"
+        templatePresentation.description = "Copy image to project and insert graphics snippet"
     }
 
     override fun actionPerformed(e: AnActionEvent) {

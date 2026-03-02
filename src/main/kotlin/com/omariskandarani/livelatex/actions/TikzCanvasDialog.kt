@@ -3,11 +3,16 @@ package com.omariskandarani.livelatex.actions
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.jcef.JBCefBrowser
 import com.omariskandarani.livelatex.html.LatexHtmlTikz
 import com.omariskandarani.livelatex.html.TikzRenderer
 import java.awt.*
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
@@ -95,6 +100,16 @@ class TikzCanvasDialog(
             return if (diff <= sqrt(tol2.toDouble())) Shape.Hit("radius") else null
         }
     }
+    private data class Rect(var a: Point, var b: Point) : Shape {
+        override fun hit(raw: Point, tol2: Int): Shape.Hit? {
+            if (raw.distanceSq(a) <= tol2) return Shape.Hit("p1")
+            if (raw.distanceSq(b) <= tol2) return Shape.Hit("p2")
+            val minX = min(a.x, b.x); val maxX = max(a.x, b.x)
+            val minY = min(a.y, b.y); val maxY = max(a.y, b.y)
+            if (raw.x in minX..maxX && raw.y in minY..maxY) return Shape.Hit("body")
+            return null
+        }
+    }
 
 
     // Knot points are edited separately (tool=KNOT)
@@ -159,7 +174,7 @@ class TikzCanvasDialog(
 
     private val presets: List<Preset> = listOf(
         Preset(
-            "★ 3₁ Half-Half-Twist Trefoil",
+            "★ 3₁ Half-Twist Trefoil",
             ptsUnits = listOf(
                 0.0 to  2.0,
                 -1.0 to  1.0,
@@ -274,6 +289,128 @@ class TikzCanvasDialog(
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
         Preset(
+            "★ 7₂ Twist",
+            ptsUnits = listOf(
+                 0.75 to  3.25,
+                -1.0  to  2.0,
+                -3.0  to  1.75,
+                -2.0  to -0.25,
+                -1.75 to -2.50,
+                -0.50 to -1.0,
+                -3.25 to -0.50,
+                -1.75 to  1.25,
+                -1.25 to  3.25,
+                 0.25 to  2.0,
+                 2.50 to  1.75,
+                 1.0  to -2.50,
+                -0.75 to -2.0,
+                 0.50 to -0.75,
+                 2.75 to -0.50,
+                 1.25 to  1.25
+            ),
+            flipList = "2,4,6,8,10,12,14,16"
+        ),
+        Preset(
+            "★ 8₁ Twist Octafoil",
+            ptsUnits = listOf(
+                 0.0  to  2.0,
+                -2.50 to  2.25,
+                -1.75 to  0.0,
+                -1.50 to -2.50,
+                -0.25 to -2.75,
+                 0.50 to -1.50,
+                -0.25 to -1.0,
+                -3.0  to  0.0,
+                -1.25 to  1.25,
+                -0.25 to  3.25,
+                 1.25 to  1.25,
+                 2.75 to  0.0,
+                 0.75 to -0.75,
+                -0.50 to -1.50,
+                 0.50 to -2.75,
+                 1.75 to -1.75,
+                 1.50 to  0.0,
+                 2.0  to  2.50
+            ),
+            flipList = "2,4,6,8,10,12,14,16,18"
+        ),
+        Preset(
+            "★ 9₁ Torus Nonafoil (alt)",
+            ptsUnits = listOf(
+                 0.25 to  3.25,
+                -1.25 to  2.0,
+                -3.25 to  1.50,
+                -2.25 to -0.50,
+                -2.0  to -2.50,
+                 0.0  to -2.0,
+                 2.25 to -1.75,
+                 1.75 to  0.0,
+                 2.25 to  2.25,
+                 0.25 to  2.25,
+                -1.75 to  3.0,
+                -2.25 to  1.0,
+                -3.50 to -0.75,
+                -1.50 to -1.75,
+                 0.25 to -3.0,
+                 1.75 to -1.0,
+                 3.0  to  0.25,
+                 1.0  to  2.0
+            ),
+            flipList = "2,4,6,8,10,12,14,16,18"
+        ),
+        Preset(
+            "★ 9₂ Twist",
+            ptsUnits = listOf(
+                 0.75 to  3.25,
+                -1.0  to  2.0,
+                -3.0  to  1.75,
+                -2.0  to -0.25,
+                -1.75 to -2.50,
+                -0.50 to -2.50,
+                 0.25 to -1.50,
+                -0.50 to -1.0,
+                -3.25 to -0.50,
+                -1.75 to  1.25,
+                -1.25 to  3.25,
+                 0.25 to  2.0,
+                 2.50 to  1.75,
+                 1.75 to  0.0,
+                 1.0  to -2.50,
+                -0.75 to -2.0,
+                 0.50 to -0.75,
+                 2.75 to -0.50,
+                 1.25 to  1.25
+            ),
+            flipList = "2,4,6,8,10,12,14,16,18"
+        ),
+        Preset(
+            "★ 10₁ Twist Dekafoil",
+            ptsUnits = listOf(
+                 0.0  to  2.0,
+                -1.75 to  3.0,
+                -1.75 to  1.0,
+                -3.0  to -1.0,
+                -1.0  to -0.75,
+                 0.50 to -2.0,
+                -1.50 to -2.0,
+                -2.25 to -0.25,
+                -3.25 to  1.25,
+                -1.25 to  1.75,
+                 0.0  to  3.25,
+                 1.25 to  1.75,
+                 3.25 to  1.25,
+                 2.25 to -0.25,
+                 1.50 to -2.0,
+                -0.50 to -2.0,
+                 1.0  to -0.75,
+                 3.0  to -1.0,
+                 1.75 to  1.0,
+                 1.75 to  3.0
+            ),
+            flipList = "2,4,6,8,10,12,14,16,18,20"
+        ),
+
+        Preset(
             "★ Hopf link",
             circlesUnits = listOf(
                 Triple( 1.0, 0.0, 2.0),
@@ -300,6 +437,9 @@ class TikzCanvasDialog(
     private var tmpA: Point? = null   // for line/circle first click
     private var circlePreview: Circ? = null
     private var linePreview: LineSeg? = null
+    private var rectPreview: Rect? = null
+    private var textEditPending: Point? = null
+    private var textEditField: JTextField? = null
 
     // dragging
     private data class DragCtx(val idx: Int, val hit: Shape.Hit, val start: Point, val orig: Any)
@@ -323,19 +463,19 @@ class TikzCanvasDialog(
     private val titleCombo = JComboBox(DefaultComboBoxModel(store.names().toTypedArray())).apply {
         isEditable = true
         preferredSize = Dimension(220, preferredSize.height)
-        toolTipText = "Saved knots (MRU, max 9). Type a new title to save."
+        toolTipText = "Select preset or saved knot"
         addActionListener {
             val s = currentTitle().trim()
             if (s.isNotBlank() && s != "— saved —") doLoadSelected()
         }
     }
-    private val saveBtn = JButton("Save")
-    private val loadBtn = JButton("Load")
-    private val deleteBtn = JButton("Delete")
     private val newBtn = JButton("New")
 
     private val flipField = JTextField().apply { columns = 14 }
     private val showPointsBox = JCheckBox("Guides", true)
+    private val optionsBtn = JButton("Knot options…").apply {
+        toolTipText = "Twist, knot color, flip crossings, and more"
+    }
 
     private val loadBgBtn = JButton("Load Background").apply {
         toolTipText = "Load an image to trace a knot"
@@ -345,8 +485,8 @@ class TikzCanvasDialog(
     }
     private lateinit var bgOpacitySpinner: JSpinner
 
-    private val saveSetupBtn = JButton("Save Setup")
-    private val loadSetupBtn = JButton("Load Setup")
+    private val exportSetupBtn = JButton("Export")
+    private val importSetupBtn = JButton("Import")
     private val previewBtn = JButton("Preview").apply {
         toolTipText = "Render and preview the knot before export"
     }
@@ -360,17 +500,11 @@ class TikzCanvasDialog(
         toolTipText = "Knot color"
         preferredSize = Dimension(100, preferredSize.height)
     }
-    private val textDefault = JTextField("Text").apply {
-        columns = 12
-        toolTipText = "Default text for Text tool"
+    private val toolCombo = JComboBox(arrayOf("Knot", "Line", "Circle", "Rectangle", "Dot", "Text")).apply {
+        selectedIndex = 0
+        toolTipText = "Drawing tool"
+        preferredSize = Dimension(100, preferredSize.height)
     }
-
-    private val toolGroup = ButtonGroup()
-    private val rbKnot = JRadioButton("Knot", true)
-    private val rbLine = JRadioButton("Line")
-    private val rbCircle = JRadioButton("Circle")
-    private val rbDot = JRadioButton("Dot")
-    private val rbText = JRadioButton("Text")
 
     private val twinBox = JCheckBox("Twin", false)
     private val twinOffset = JSpinner(SpinnerNumberModel(0.25, 0.25, 2.0, 0.25)).apply {
@@ -420,6 +554,7 @@ class TikzCanvasDialog(
         private var lastCy: Int = -1
 
         init {
+            layout = null
             background = JBColor(Color(0xF8F9FB), Color(0x23272E))
             preferredSize = Dimension(1200, 800)
             border = BorderFactory.createLineBorder(JBColor(Color(0xD0D7DE), Color(0x23272E)), 1)
@@ -549,6 +684,11 @@ class TikzCanvasDialog(
                 g2.drawOval(c.c.x - rPx, c.c.y - rPx, 2 * rPx, 2 * rPx)
             }
             linePreview?.let { l -> g2.drawLine(l.a.x, l.a.y, l.b.x, l.b.y) }
+            rectPreview?.let { r ->
+                val minX = min(r.a.x, r.b.x); val maxX = max(r.a.x, r.b.x)
+                val minY = min(r.a.y, r.b.y); val maxY = max(r.a.y, r.b.y)
+                g2.drawRect(minX, minY, maxX - minX, maxY - minY)
+            }
         }
     }
 
@@ -594,6 +734,11 @@ class TikzCanvasDialog(
                 is LineSeg -> {
                     g2.drawLine(s.a.x, s.a.y, s.b.x, s.b.y)
                 }
+                is Rect -> {
+                    val minX = min(s.a.x, s.b.x); val maxX = max(s.a.x, s.b.x)
+                    val minY = min(s.a.y, s.b.y); val maxY = max(s.a.y, s.b.y)
+                    g2.drawRect(minX, minY, maxX - minX, maxY - minY)
+                }
                 is Circ -> {
                     val rPx = (s.rUnits * STEP).toInt()
                     g2.drawOval(s.c.x - rPx, s.c.y - rPx, 2 * rPx, 2 * rPx)
@@ -606,12 +751,25 @@ class TikzCanvasDialog(
     // ---------- UI build ----------
     private fun initUI() {
         // tools row
-        listOf(rbKnot, rbLine, rbCircle, rbDot, rbText).forEach { toolGroup.add(it) }
-        rbKnot.addActionListener { tool = Tool.KNOT }
-        rbLine.addActionListener { tool = Tool.LINE }
-        rbCircle.addActionListener { tool = Tool.CIRCLE }
-        rbDot.addActionListener { tool = Tool.DOT }
-        rbText.addActionListener { tool = Tool.TEXT }
+        fun toolFromCombo(): Tool = when (toolCombo.selectedItem?.toString().orEmpty()) {
+            "Line" -> Tool.LINE
+            "Circle" -> Tool.CIRCLE
+            "Rectangle" -> Tool.RECTANGLE
+            "Dot" -> Tool.DOT
+            "Text" -> Tool.TEXT
+            else -> Tool.KNOT
+        }
+        fun syncComboFromTool() {
+            toolCombo.selectedIndex = when (tool) {
+                Tool.KNOT -> 0
+                Tool.LINE -> 1
+                Tool.CIRCLE -> 2
+                Tool.RECTANGLE -> 3
+                Tool.DOT -> 4
+                Tool.TEXT -> 5
+            }
+        }
+        toolCombo.addActionListener { tool = toolFromCombo() }
 
         bgOpacitySpinner = JSpinner(SpinnerNumberModel(0.5, 0.1, 1.0, 0.1)).apply {
             toolTipText = "Background opacity for tracing"
@@ -622,22 +780,15 @@ class TikzCanvasDialog(
         bgOpacitySpinner.addChangeListener { canvas.repaint() }
 
         val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
-            add(JLabel(""))
-            add(rbKnot); add(rbLine); add(rbCircle); add(rbDot); add(rbText)
+            add(optionsBtn)
             add(Box.createHorizontalStrut(12))
-            add(JLabel("Knot color:")); add(knotColor)
-            add(Box.createHorizontalStrut(12))
-            add(JLabel("flip crossings:")); add(flipField)
-            add(Box.createHorizontalStrut(12))
-            add(JLabel("Text:")); add(textDefault)
-            add(Box.createHorizontalStrut(12))
-            add(JLabel("Guides:")); add(showPointsBox)
+            add(JLabel("Tool:"))
+            add(toolCombo)
             add(Box.createHorizontalStrut(12))
             add(loadBgBtn); add(clearBgBtn)
-            add(JLabel("Opacity:")); add(bgOpacitySpinner)
         }
         twoStrandSettings = TwoStrandSettingsService.getInstance().state.copy()
-        twoStrandBox = JCheckBox("Twist", /*selected=*/true)
+        twoStrandBox = JCheckBox("Twist", false)
         refreshTitlesCombo()
 
 
@@ -652,47 +803,27 @@ class TikzCanvasDialog(
         tfClrA = JTextField(twoStrandSettings.clrA, 14)
         tfClrB = JTextField(twoStrandSettings.clrB, 14)
 
-        val setupsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            add(twoStrandBox);
-            add(JLabel("Amp"));   add(spAmp)
-            add(JLabel("Twists"));          add(spTurns)
-            add(JLabel("Samples"));        add(spSamples)
-            add(JLabel("Width"));          add(tfWth)
-            add(JLabel("Core"));           add(tfCore)
-            add(JLabel("Mask"));           add(tfMask)
-            add(JLabel("A"));              add(tfClrA)
-            add(JLabel("B"));              add(tfClrB)
-        }
-
-        val modeRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            add(JLabel("Title:")); add(titleCombo)
-            add(saveBtn); add(loadBtn); add(newBtn); add(deleteBtn)
-        }
-
-        saveBtn.addActionListener { doSave(true) }
-        loadBtn.addActionListener { doLoadSelected() }
-        deleteBtn.addActionListener { doDeleteSelected() }
         newBtn.addActionListener { doNew() }
 
-        // Add Save Setup and Load Setup buttons to fileRow
         val fileRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            add(JLabel("Title:")); add(titleCombo)
-            add(saveBtn); add(loadBtn); add(newBtn); add(deleteBtn)
+            add(titleCombo)
+            add(newBtn)
             add(Box.createHorizontalStrut(12))
-            add(saveSetupBtn); add(loadSetupBtn)
+            add(exportSetupBtn)
+            add(importSetupBtn)
             add(Box.createHorizontalStrut(12))
             add(previewBtn)
         }
 
-        saveSetupBtn.addActionListener { saveSetupToFile() }
-        loadSetupBtn.addActionListener { loadSetupFromFile() }
+        exportSetupBtn.addActionListener { saveSetupToFile() }
+        importSetupBtn.addActionListener { loadSetupFromFile() }
         previewBtn.addActionListener { doPreview() }
+
+        optionsBtn.addActionListener { showKnotOptionsModal() }
 
         val header = JPanel()
         header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
-        header.add(setupsRow)
         header.add(toolsRow)
-        header.add(modeRow)
         header.add(fileRow)
 
         rootPanel = JPanel(BorderLayout()).apply {
@@ -701,7 +832,7 @@ class TikzCanvasDialog(
             add(JScrollPane(canvas), BorderLayout.CENTER)
         }
 
-        setOKButtonText("Export & Insert")
+        setOKButtonText("Add to TeX")
         setCancelButtonText("Cancel")
     }
 
@@ -753,10 +884,7 @@ class TikzCanvasDialog(
                 EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("center"))
             }
             Tool.TEXT -> when (mode) {
-                EditMode.ADD -> {
-                    val text = JOptionPane.showInputDialog(rootPanel, "Text:", textDefault.text) ?: return
-                    shapes += Label(p, text); markDirty()
-                }
+                EditMode.ADD -> showInlineTextEditor(p)
                 EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("center"))
             }
             Tool.LINE -> when (mode) {
@@ -766,6 +894,10 @@ class TikzCanvasDialog(
             Tool.CIRCLE -> when (mode) {
                 EditMode.ADD -> { tmpA = p; circlePreview = Circ(p, 0.0); canvas.repaint() }
                 EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("center","radius"))
+            }
+            Tool.RECTANGLE -> when (mode) {
+                EditMode.ADD -> { tmpA = p; rectPreview = Rect(p, p); canvas.repaint() }
+                EditMode.DELETE, EditMode.MOVE -> startShapeDrag(e, listOf("p1","p2","body"))
             }
         }
     }
@@ -804,6 +936,13 @@ class TikzCanvasDialog(
                     handleShapeDrag(p)
                 }
             }
+            Tool.RECTANGLE -> {
+                if (mode == EditMode.ADD) {
+                    rectPreview?.let { it.b = p; canvas.repaint() }
+                } else if (mode == EditMode.MOVE) {
+                    handleShapeDrag(p)
+                }
+            }
             Tool.DOT, Tool.TEXT -> {
                 if (mode == EditMode.MOVE) handleShapeDrag(p)
                 else if (pressButton == MouseEvent.BUTTON1) {
@@ -826,12 +965,7 @@ class TikzCanvasDialog(
                     longPressFired = true
                 }
                 Tool.TEXT -> {
-                    val text = JOptionPane.showInputDialog(rootPanel, "Text:", textDefault.text)
-                    if (text != null) {
-                        shapes += Label(p, text)
-                        markDirty()
-                        canvas.repaint()
-                    }
+                    // Editor already shown on press
                     longPressFired = true
                 }
                 Tool.LINE -> {
@@ -848,6 +982,14 @@ class TikzCanvasDialog(
                     if (mode == EditMode.ADD && tmpA == null && circlePreview == null) {
                         tmpA = p
                         circlePreview = Circ(p, 0.0)
+                        canvas.repaint()
+                    }
+                    longPressFired = true
+                }
+                Tool.RECTANGLE -> {
+                    if (mode == EditMode.ADD && tmpA == null && rectPreview == null) {
+                        tmpA = p
+                        rectPreview = Rect(p, p)
                         canvas.repaint()
                     }
                     longPressFired = true
@@ -886,6 +1028,7 @@ class TikzCanvasDialog(
                     }
                     if (segIdx != null) {
                         knotPts.add(segIdx + 1, candidate)
+                        updateFlipCrossingsForNewPoint()
                         markDirty()
                     } else {
                         val idx = nearest(knotPts, candidate)
@@ -906,13 +1049,7 @@ class TikzCanvasDialog(
                 resetPressState()
             }
             Tool.TEXT -> {
-                if (longPressReady) {
-                    val text = JOptionPane.showInputDialog(rootPanel, "Text:", textDefault.text)
-                    if (text != null) {
-                        shapes += Label(p, text)
-                        markDirty()
-                    }
-                }
+                // Editor already shown on press
                 resetPressState()
             }
             Tool.LINE -> {
@@ -939,6 +1076,16 @@ class TikzCanvasDialog(
                 }
                 resetPressState()
             }
+            Tool.RECTANGLE -> {
+                if (mode == EditMode.ADD) {
+                    if (rectPreview != null && tmpA != null) {
+                        rectPreview?.let { shapes += Rect(it.a, p); markDirty() }
+                    }
+                    rectPreview = null
+                    tmpA = null
+                }
+                resetPressState()
+            }
         }
         canvas.repaint()
     }
@@ -954,6 +1101,7 @@ class TikzCanvasDialog(
             is Dot   -> Point(s.p)
             is Label -> Pair(Point(s.p), s.text)
             is LineSeg -> Pair(Point(s.a), Point(s.b))
+            is Rect  -> Pair(Point(s.a), Point(s.b))
             is Circ -> Pair(Point(s.c), s.rUnits)
         }
         drag = DragCtx(idx, hit, e.point, orig)
@@ -975,6 +1123,20 @@ class TikzCanvasDialog(
                     "p1" -> s.a = pSnapped
                     "p2" -> s.b = pSnapped
                     "body" -> { // translate both
+                        @Suppress("UNCHECKED_CAST")
+                        val orig = d.orig as Pair<Point, Point>
+                        val dx = pSnapped.x - d.start.x
+                        val dy = pSnapped.y - d.start.y
+                        s.a = snap(Point(orig.first.x + dx,  orig.first.y + dy))
+                        s.b = snap(Point(orig.second.x + dx, orig.second.y + dy))
+                    }
+                }
+            }
+            is Rect -> {
+                when (d.hit.kind) {
+                    "p1" -> s.a = pSnapped
+                    "p2" -> s.b = pSnapped
+                    "body" -> {
                         @Suppress("UNCHECKED_CAST")
                         val orig = d.orig as Pair<Point, Point>
                         val dx = pSnapped.x - d.start.x
@@ -1040,6 +1202,7 @@ class TikzCanvasDialog(
     }
     private fun doLoadSelected() {
         maybeAutoSave()
+        cancelInlineText()
         val title = currentTitle().trim()
         if (title.isBlank() || title == "— saved —") {
             JOptionPane.showMessageDialog(rootPanel, "Choose a title to load."); return
@@ -1075,15 +1238,9 @@ class TikzCanvasDialog(
         dirty = false; canvas.repaint()
     }
 
-    private fun doDeleteSelected() {
-        val title = currentTitle(); if (title.isBlank()) return
-        if (JOptionPane.showConfirmDialog(rootPanel, "Delete \"$title\"?", "Delete",
-                JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
-            store.delete(title); refreshTitlesCombo(); titleCombo.editor.item = ""
-        }
-    }
     private fun doNew() {
         maybeAutoSave()
+        cancelInlineText()
         titleCombo.editor.item = ""; knotPts.clear(); dirty = false; canvas.repaint()
     }
 
@@ -1111,17 +1268,22 @@ class TikzCanvasDialog(
         val mask = tfMask.text.trim().ifEmpty { "5.0pt" }
         val clrA = tfClrA.text.trim().ifEmpty { "black!60!black" }
         val clrB = tfClrB.text.trim().ifEmpty { "red!70!black" }
-        return if (twoStrandBox.isSelected) {
-            exportBodyTwoStrand(knotPts, amp, turns, samples, wth, core, mask, clrA, clrB)
-        } else {
-            exportBody(knotPts, showPointsBox.isSelected, flipField.text.trim(), null, false)
+        return when {
+            twoStrandBox.isSelected && knotPts.isNotEmpty() ->
+                exportBodyTwoStrand(knotPts, amp, turns, samples, wth, core, mask, clrA, clrB)
+            knotPts.isNotEmpty() ->
+                exportBody(knotPts, showPointsBox.isSelected, flipField.text.trim(), null, false)
+            shapes.isNotEmpty() ->
+                exportShapesOnly()
+            else ->
+                "% No content."
         }
     }
 
     private fun doPreview() {
         val body = buildCurrentExportBody()
         if (body.startsWith("%") || body.isBlank()) {
-            JOptionPane.showMessageDialog(rootPanel, "Add at least 2 knot points to preview.", "Preview", JOptionPane.WARNING_MESSAGE)
+            JOptionPane.showMessageDialog(rootPanel, "Add knot points or draw shapes to preview.", "Preview", JOptionPane.WARNING_MESSAGE)
             return
         }
         previewBtn.isEnabled = false
@@ -1150,7 +1312,7 @@ $body
 <div style="background:white;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">$svgText</div>
 </body></html>
                         """.trimIndent()
-                        val owner = rootPanel.topLevelAncestor as? Window
+                        val owner = WindowManager.getInstance().getFrame(project) as? Window
                         val dlg = JDialog(owner, "Knot Preview", Dialog.ModalityType.MODELESS)
                         dlg.defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
                         dlg.layout = BorderLayout()
@@ -1158,8 +1320,10 @@ $body
                         browser.loadHTML(html, "about:blank")
                         dlg.add(browser.component, BorderLayout.CENTER)
                         dlg.setSize(500, 500)
-                        dlg.setLocationRelativeTo(rootPanel)
+                        dlg.setLocationRelativeTo(owner)
                         dlg.isVisible = true
+                        dlg.toFront()
+                        dlg.requestFocus()
                     } else {
                         JOptionPane.showMessageDialog(rootPanel,
                             "TikZ compilation failed. Ensure pdflatex and dvisvgm/pdf2svg are installed.",
@@ -1189,28 +1353,8 @@ $body
         // 2) Persist to service
         TwoStrandSettingsService.getInstance().loadState(twoStrandSettings)
 
-        // 3) Export body (branch)
-        resultTikz = if (twoStrandBox.isSelected) {
-            exportBodyTwoStrand(
-                pts = knotPts,
-                amp = twoStrandSettings.amp,
-                turns = twoStrandSettings.turns,
-                samples = twoStrandSettings.samples,
-                wth = twoStrandSettings.wth,
-                core = twoStrandSettings.core,
-                mask = twoStrandSettings.mask,
-                clrA = twoStrandSettings.clrA,
-                clrB = twoStrandSettings.clrB
-            )
-        } else {
-            exportBody(
-                pts = knotPts,
-                showPoints = showPointsBox.isSelected,
-                flipCrossings = flipField.text.trim(),
-                knotColor = null,
-                wrapInFigure = false
-            )
-        }
+        // 3) Export body (branch) — handles knot, two-strand, or shapes-only
+        resultTikz = buildCurrentExportBody()
         super.doOKAction()
     }
 
@@ -1234,13 +1378,13 @@ $body
         data class G(val x: Double, val y: Double)
         fun toGridQ(p: Point) = G(quantQ((p.x - cx).toDouble() / step), quantQ(-((p.y - cy).toDouble() / step)))
 
-        // De-duplicate consecutive duplicates to avoid ...P5..P5...
+        // De-duplicate consecutive duplicates (including when last equals first)
         val dedup = ArrayList<Point>(pts.size)
         for (p in pts) if (dedup.isEmpty() || dedup.last() != p) dedup += p
+        while (dedup.size >= 2 && dedup.last() == dedup.first()) dedup.removeAt(dedup.size - 1)
         if (dedup.size < 2) return "% Need at least 2 points."
 
         val gpts = dedup.map(::toGridQ)
-        val first = gpts.first()
         val n = gpts.size
 
         val sb = StringBuilder()
@@ -1269,8 +1413,7 @@ $body
             val q = gpts[i]
             sb.appendLine("\\coordinate (P${i + 1}) at (${fmtQ(q.x)}, ${fmtQ(q.y)});")
         }
-        sb.appendLine("\\coordinate (P${n + 1}) at (${fmtQ(first.x)}, ${fmtQ(first.y)}); % = P1")
-        sb.appendLine("\\def\\KPATH{([closed] P1)..${(2..(n + 1)).joinToString("..") { "(P$it)" }}}")
+        sb.appendLine("\\def\\KPATH{([closed] P1)..${(2..n).joinToString("..") { "(P$it)" }}}")
         sb.appendLine()
         sb.appendLine("% ---- build two offset coordinate lists ----")
         sb.appendLine("\\newcommand{\\MakeStrandCoords}[5]{%")
@@ -1314,6 +1457,7 @@ $body
         sb.appendLine("  \\fi")
         sb.appendLine("}")
         sb.appendLine()
+        appendShapesToTikz(sb)
         sb.appendLine("\\end{tikzpicture}")
 
         return sb.toString()
@@ -1335,9 +1479,10 @@ $body
         data class G(val x: Double, val y: Double)
         fun toGridQ(p: Point) = G(quantQ((p.x - cx).toDouble() / step), quantQ(-((p.y - cy).toDouble() / step)))
 
-        // De-duplicate consecutive duplicates to avoid ...P5..P5...
+        // De-duplicate consecutive duplicates (including when last equals first)
         val dedup = ArrayList<Point>(pts.size)
         for (p in pts) if (dedup.isEmpty() || dedup.last() != p) dedup += p
+        while (dedup.size >= 2 && dedup.last() == dedup.first()) dedup.removeAt(dedup.size - 1)
         val gpts = dedup.map(::toGridQ)
         val n = gpts.size
 
@@ -1354,13 +1499,12 @@ $body
             sb.append("    \\tikzset{knot diagram/every strand/.append style={draw=$knotColor}}\n")
         }
 
-        // Coordinates P1..Pn and close with P{n+1}=P1
+        // Coordinates P1..Pn only ([closed] connects Pn back to P1)
         for (i in 0 until n) {
             val q = gpts[i]
             sb.append("    \\coordinate (P${i + 1}) at (${fmtQ(q.x)}, ${fmtQ(q.y)});\n")
         }
-        val q1 = gpts.first()
-        sb.append("    \\coordinate (P${n + 1}) at (${fmtQ(q1.x)}, ${fmtQ(q1.y)}); % = P1\n\n")
+        sb.append("\n")
 
         // Knot options (include flip crossings if provided)
         val opts = buildList {
@@ -1370,8 +1514,8 @@ $body
             if (flipCrossings.isNotBlank()) {
                 add("flip crossing/.list={$flipCrossings}")
             } else {
-                // If empty, add all even numbers up to n+2
-                val evenList = (2..(n + 2) step 2).joinToString(",")
+                // If empty, add all even numbers up to n
+                val evenList = (2..n step 2).joinToString(",")
                 add("flip crossing/.list={$evenList}")
             }
             add("% ----draft mode=crossings % uncomment to see numbers")
@@ -1382,22 +1526,19 @@ $body
                     "    ]\n"
         )
 
-        // Strand: ([closed] P1)..(P2).. ... ..(Pn)..(P{n+1});
-        val names = (1..(n + 1)).map { "P$it" }
+        // Strand: ([closed] P1)..(P2).. ... ..(Pn)
+        val names = (1..n).map { "P$it" }
         val tail = names.drop(1).joinToString("..") { "($it)" }
         sb.append("    \\strand\n")
         sb.append("    ([closed] ${names.first()})..$tail;\n")
 
-        // ✅ Always close the environment
         sb.append("    \\end{knot}\n")
 
-        // Optional guides — use n+1 because we emitted P{n+1}=P1
         if (showPoints) {
-            sb.append("% ---- \\SSTGuidesPoints{P}{${n + 1}}\n")
+            sb.append("    \\SSTGuidesPoints{P}{$n}\n")
         }
 
-        // TODO (optional): append exported primitives (labels, dots, lines, circles) here
-        // appendPrimitives(sb)
+        appendShapesToTikz(sb)
 
         sb.append("    \\end{tikzpicture}\n")
         if (wrapInFigure) sb.append("\\end{figure}\n")
@@ -1405,10 +1546,41 @@ $body
         return sb.toString().trimEnd()
     }
 
+    /** Appends TikZ \draw, \fill, \node commands for shapes (lines, circles, rectangles, dots, labels). */
+    private fun appendShapesToTikz(sb: StringBuilder) {
+        if (shapes.isEmpty()) return
+        val cx = canvas.width / 2
+        val cy = canvas.height / 2
+        val step = STEP
+        fun toTikz(p: Point): String {
+            val x = quantQ((p.x - cx).toDouble() / step)
+            val y = quantQ(-(p.y - cy).toDouble() / step)
+            return "(${fmtQ(x)}, ${fmtQ(y)})"
+        }
+        for (s in shapes) {
+            when (s) {
+                is LineSeg -> sb.append("    \\draw ").append(toTikz(s.a)).append(" -- ").append(toTikz(s.b)).append(";\n")
+                is Circ -> sb.append("    \\draw ").append(toTikz(s.c)).append(" circle (${fmtQ(s.rUnits)});\n")
+                is Rect -> sb.append("    \\draw ").append(toTikz(s.a)).append(" rectangle ").append(toTikz(s.b)).append(";\n")
+                is Dot -> sb.append("    \\fill ").append(toTikz(s.p)).append(" circle (2pt);\n")
+                is Label -> sb.append("    \\node at ").append(toTikz(s.p)).append(" {").append(latexEscape(s.text)).append("};\n")
+            }
+        }
+    }
+
+    /** Exports a tikzpicture containing only shapes (no knot). Used when knotPts is empty but shapes exist. */
+    private fun exportShapesOnly(): String {
+        if (shapes.isEmpty()) return "% No content."
+        val sb = StringBuilder()
+        sb.append("    \\begin{tikzpicture}[use Hobby shortcut]\n")
+        appendShapesToTikz(sb)
+        sb.append("    \\end{tikzpicture}\n")
+        return sb.toString().trimEnd()
+    }
 
     // ---------- math / utils ----------
     private enum class EditMode { ADD, MOVE, DELETE }
-    private enum class Tool { KNOT, LINE, CIRCLE, DOT, TEXT }
+    private enum class Tool { KNOT, LINE, CIRCLE, RECTANGLE, DOT, TEXT }
 
     // helper to print clean numbers like 0.13 or 4
     private fun formatQ(x: Double): String {
@@ -1521,14 +1693,124 @@ $body
                     s.a = Point(s.a.x + dx, s.a.y + dy)
                     s.b = Point(s.b.x + dx, s.b.y + dy)
                 }
+                is Rect -> {
+                    s.a = Point(s.a.x + dx, s.a.y + dy)
+                    s.b = Point(s.b.x + dx, s.b.y + dy)
+                }
                 is Circ -> s.c = Point(s.c.x + dx, s.c.y + dy)
             }
         }
         // previews
         tmpA = tmpA?.let { Point(it.x + dx, it.y + dy) }
         linePreview = linePreview?.let { LineSeg(Point(it.a.x + dx, it.a.y + dy), Point(it.b.x + dx, it.b.y + dy)) }
+        rectPreview = rectPreview?.let { Rect(Point(it.a.x + dx, it.a.y + dy), Point(it.b.x + dx, it.b.y + dy)) }
         circlePreview = circlePreview?.let { Circ(Point(it.c.x + dx, it.c.y + dy), it.rUnits) }
+        textEditPending = textEditPending?.let { Point(it.x + dx, it.y + dy) }
+        textEditField?.let { tf ->
+            tf.setBounds(tf.x + dx, tf.y + dy, tf.width, tf.height)
+        }
         canvas.repaint()
+    }
+
+    private fun showInlineTextEditor(p: Point) {
+        cancelInlineText()
+        val tf = JTextField("", 16).apply {
+            setBounds(p.x, p.y, 180, 24)
+            font = Font(font.name, font.style, 14)
+            addActionListener { commitInlineText() }
+            addFocusListener(object : FocusAdapter() {
+                override fun focusLost(e: FocusEvent) {
+                    if (!e.isTemporary) commitInlineText()
+                }
+            })
+            addKeyListener(object : KeyAdapter() {
+                override fun keyPressed(e: KeyEvent) {
+                    if (e.keyCode == KeyEvent.VK_ESCAPE) cancelInlineText()
+                }
+            })
+        }
+        textEditField = tf
+        textEditPending = p
+        canvas.add(tf)
+        tf.requestFocusInWindow()
+        canvas.revalidate()
+        canvas.repaint()
+    }
+
+    private fun commitInlineText() {
+        val pos = textEditPending
+        val txt = textEditField?.text?.trim()?.takeIf { it.isNotEmpty() }
+        textEditField?.let { canvas.remove(it) }
+        textEditField = null
+        textEditPending = null
+        canvas.revalidate()
+        canvas.repaint()
+        if (pos != null && txt != null) {
+            shapes += Label(pos, txt)
+            markDirty()
+            canvas.repaint()
+        }
+    }
+
+    private fun cancelInlineText() {
+        textEditField?.let { canvas.remove(it) }
+        textEditField = null
+        textEditPending = null
+        canvas.revalidate()
+        canvas.repaint()
+    }
+
+    private fun showKnotOptionsModal() {
+        val owner = rootPanel.topLevelAncestor as? Window ?: return
+        val dlg = JDialog(owner, "Knot options", Dialog.ModalityType.APPLICATION_MODAL)
+        dlg.layout = BorderLayout()
+        val content = JPanel()
+        content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
+        content.border = BorderFactory.createEmptyBorder(12, 12, 12, 12)
+
+        val twistRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
+        twistRow.add(twoStrandBox)
+        twistRow.add(JLabel("Amp")); twistRow.add(spAmp)
+        twistRow.add(JLabel("Twists")); twistRow.add(spTurns)
+        twistRow.add(JLabel("Samples")); twistRow.add(spSamples)
+        twistRow.add(JLabel("Width")); twistRow.add(tfWth)
+        twistRow.add(JLabel("Core")); twistRow.add(tfCore)
+        twistRow.add(JLabel("Mask")); twistRow.add(tfMask)
+        twistRow.add(JLabel("Color A")); twistRow.add(tfClrA)
+        twistRow.add(JLabel("Color B")); twistRow.add(tfClrB)
+
+        val knotRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
+        knotRow.add(JLabel("Knot color:"))
+        knotRow.add(knotColor)
+        knotRow.add(Box.createHorizontalStrut(12))
+        knotRow.add(JLabel("Flip crossings:"))
+        knotRow.add(flipField)
+        knotRow.add(Box.createHorizontalStrut(12))
+        knotRow.add(showPointsBox)
+        knotRow.add(Box.createHorizontalStrut(12))
+        knotRow.add(JLabel("Opacity:"))
+        knotRow.add(bgOpacitySpinner)
+
+        content.add(twistRow)
+        content.add(knotRow)
+
+        val okBtn = JButton("Close")
+        okBtn.addActionListener { dlg.dispose() }
+        val south = JPanel(FlowLayout(FlowLayout.RIGHT))
+        south.add(okBtn)
+
+        dlg.add(content, BorderLayout.CENTER)
+        dlg.add(south, BorderLayout.SOUTH)
+        dlg.pack()
+        dlg.setLocationRelativeTo(rootPanel)
+        dlg.isVisible = true
+    }
+
+    private fun updateFlipCrossingsForNewPoint() {
+        val n = knotPts.size
+        if (n < 2) return
+        val evenList = (2..(n + 2) step 2).joinToString(",")
+        flipField.text = evenList
     }
 
     private fun loadBackgroundImage() {

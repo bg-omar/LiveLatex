@@ -24,59 +24,56 @@
 
     <!-- Action to open/focus the preview window -->
     <actions>
-        <action id="com.omariskandarani.LiveLatex.actions.ShowPreview"
-                class="com.omariskandarani.livelatex.actions.ShowPreviewAction"
-                text="Show LaTeX Preview"
-                description="Open/focus LaTeX Preview tool window">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>
-        </action>
-        <action id="LiveLaTeX.GenerateTable"
-                class="com.omariskandarani.livelatex.actions.GenerateLatexTableAction"
-                text="Generate LaTeX Table…"
-                description="Create a LaTeX table from CSV/Markdown or a blank template">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
-        <action id="LiveLaTeX.InsertImage"
-                class="com.omariskandarani.livelatex.actions.InsertImageAction"
-                text="Insert Image…"
-                description="Copy image into project and insert \\includegraphics snippet">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-        </action>
-
         <action id="LiveLaTeX.NewTikzFigure"
                 class="com.omariskandarani.livelatex.actions.NewTikzFigureAction"
-                text="New TikZ Figure…"
+                text="--) TikZ Figure (--"
                 description="Open a simple canvas, export TikZ and insert it here">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>
+
+        <action id="LiveLaTeX.InsertImage"
+                class="com.omariskandarani.livelatex.actions.InsertImageAction"
+                text=" || Insert Image Here ||"
+                description="Copy image into project and insert includegraphics snippet">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+
+<!--        <action id="com.omariskandarani.LiveLatex.actions.ShowPreview"-->
+<!--                class="com.omariskandarani.livelatex.actions.ShowPreviewAction"-->
+<!--                text="Show LaTeX Preview"-->
+<!--                description="Open/focus LaTeX Preview tool window">-->
+<!--            <add-to-group group-id="EditorPopupMenu" anchor="last"/>-->
+<!--            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>-->
+<!--        </action>-->
+        <action id="LiveLaTeX.GenerateTable"
+                class="com.omariskandarani.livelatex.actions.GenerateLatexTableAction"
+                text="...Add Table..."
+                description="Create a LaTeX table from CSV/Markdown or a blank template">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+
+
+
         
         <!-- Text formatting actions submenu -->
-        <group id="LiveLaTeX.TextFormatGroup" text="Format Selection" popup="true">
+        <group id="LiveLaTeX.TextFormatGroup" text=" * Format" popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <action id="LiveLaTeX.Text.Bold" class="com.omariskandarani.livelatex.actions.MakeTextBoldAction" text="bold = \\textbf{TEXT}"/>
-            <action id="LiveLaTeX.Text.Italic" class="com.omariskandarani.livelatex.actions.MakeTextItalicAction" text="italic = \\textit{TEXT}"/>
-            <action id="LiveLaTeX.Text.TexOrPdf" class="com.omariskandarani.livelatex.actions.WrapWithTexorpdfstringAction" text="text-pdf = \\texorpdfstring{TEXT}{TEXT}"/>
-            <action id="LiveLaTeX.Text.Emph" class="com.omariskandarani.livelatex.actions.MakeTextEmphAction" text="emph = \\emph{TEXT}"/>
-            <action id="LiveLaTeX.Text.Equation" class="com.omariskandarani.livelatex.actions.InsertEquationEnvironmentAction" text="equation environment"/>
-            <action id="LiveLaTeX.Text.Cite" class="com.omariskandarani.livelatex.actions.MakeTextCiteAction" text="cite = \\cite{TEXT}"/>
+            <action id="LiveLaTeX.Text.Bold" class="com.omariskandarani.livelatex.actions.MakeTextBoldAction" text="Bold"/>
+            <action id="LiveLaTeX.Text.Italic" class="com.omariskandarani.livelatex.actions.MakeTextItalicAction" text="Italic"/>
+            <action id="LiveLaTeX.Text.Emph" class="com.omariskandarani.livelatex.actions.MakeTextEmphAction" text="Emphasize"/>
+            <action id="LiveLaTeX.Text.TexOrPdf" class="com.omariskandarani.livelatex.actions.WrapWithTexorpdfstringAction" text="Tex-or-PDF"/>
+            <action id="LiveLaTeX.Text.Equation" class="com.omariskandarani.livelatex.actions.InsertEquationEnvironmentAction" text="Equation"/>
+            <action id="LiveLaTeX.MoveSection"  class="com.omariskandarani.livelatex.actions.MoveSectionAction" text="Move Section to External File"  description="Externalize current LaTeX section body into .sections and insert an \\input"/>
         </group>
         
         <group id="LiveLaTeX.InsertReference"
                class="com.omariskandarani.livelatex.actions.InsertReferenceActionGroup"
-               text="Insert Reference…"
+               text=" || Reference || Cite ||"
                description="Insert a reference (\\ref or \\cite) from available labels and BibTeX entries"
                popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </group>
-
-        <action id="LiveLaTeX.MoveSection"
-                class="com.omariskandarani.livelatex.actions.MoveSectionAction"
-                text="Move Section to External File"
-                description="Externalize current LaTeX section body into .sections and insert an \\input">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-        </action>
     </actions>
 </idea-plugin>
