@@ -22,3 +22,36 @@ message-content {
     margin-left: 24px !important;
     margin-right: 24px !important;
 }
+
+/* Voeg dit toe ONDERAAN je bestaande gemini.css */
+
+/* =========================================================
+   GEMINI TREE PANEL UI
+   ========================================================= */
+#chat-tree-panel, #chat-tree-panel * {
+    -webkit-user-drag: none !important;
+    user-select: none !important;
+}
+#chat-tree-panel {
+    position: fixed !important;
+    top: 60px; left: 20px; right: auto; bottom: auto;
+    cursor: grab; z-index: 2000;
+    max-height: calc(70vh + 40px); overflow: visible;
+    border-radius: 8px; color: #8ab4f8; /* Gemini blauw-grijs */
+}
+#chat-tree-panel, #chat-tree-header, #chat-tree-content { box-sizing: border-box; }
+
+#chat-tree-header {
+    border: 1px solid #3c4043; border-radius: 8px; background: #202124EE; padding: 0 10px;
+    height: 40px; font-weight: bold; width: fit-content; color: #8ab4f8; user-select: none; display: flex; justify-content: space-between; align-items: center;
+}
+#chat-tree-toggle { font-weight: bold; border: 0; background: none; color: #1a73e8; font-size: 24px; cursor: pointer; }
+
+#chat-tree-content {
+    padding: 10px; max-height: 70vh; overflow: auto; position: relative; color: #e8eaed;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3); background: #202124EE; border: 1px solid #3c4043;
+    border-radius: 8px; margin-top: 4px;
+}
+.chat-tree-item { cursor: pointer; margin-bottom: 6px; padding: 4px; border-radius: 4px; transition: background 0.2s; font-family: 'Google Sans', sans-serif; font-size: 13px;}
+.chat-tree-item:hover { background-color: #303134; color: #fff; }
+ul { list-style: none; padding-left: 0; margin: 0; }

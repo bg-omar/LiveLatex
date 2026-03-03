@@ -8,7 +8,8 @@ document.addEventListener('DOMContentLoaded', () => {
         enableProse: document.getElementById('proseToggle'),
         enableChatTree: document.getElementById('treeToggle'),
         enableSidebarSort: document.getElementById('sortToggle'),
-        enableAutoScroll: document.getElementById('scrollToggle')
+        enableAutoScroll: document.getElementById('scrollToggle'),
+        enableGeminiTree: document.getElementById('geminiTreeToggle')
     };
 
     const btnSelectAll = document.getElementById('btnSelectAll');
@@ -22,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const defaultStates = {
         enableEq: true, enableBlock: true, enableInline: true, enableDoubleDollar: true, enableSingleDollar: true, isGlobalEnabled: true,enableChatTree: true,
         enableSidebarSort: true,
-        enableAutoScroll: false,
+        enableAutoScroll: false, enableGeminiTree: true,
         customMacros: {
             "\\vswirl": "\\mathbf{v}_{\\!\\scriptscriptstyle\\boldsymbol{\\circlearrowleft}}",
             "\\rhocore": "\\rho_{\\text{core}}",

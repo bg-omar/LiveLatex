@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LiveLatex & AI Tools",
-  "version": "3.1",
-  "description": "Live KaTeX rendering, Document Structuring, Chat Tree & Wide Modes.",
+  "version": "3.2",
+  "description": "Live KaTeX, Document Structuring, Chat Trees & Wide Modes.",
   "permissions": ["storage"],
   "background": {
     "service_worker": "background.js"
@@ -21,7 +21,7 @@
         "https://gemini.google.com/*"
       ],
       "css": ["katex.min.css", "gemini.css"],
-      "js": ["katex.min.js", "content.js"]
+      "js": ["katex.min.js", "content.js", "gemini_tree.js"]
     },
     {
       "matches": [

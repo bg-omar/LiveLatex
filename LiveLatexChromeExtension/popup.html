@@ -3,113 +3,124 @@
 <head>
 	<meta charset="UTF-8">
 	<style>
-      body {
-          font-family: 'Google Sans', Roboto, Arial, sans-serif;
-          width: 320px;
-          /* Forceer een vlotte meegroeiende body tot Chrome's max */
-          max-height: 580px;
-          margin: 0;
-          padding: 16px;
-          background-color: #202124;
-          color: #e8eaed;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          box-sizing: border-box;
-      }
-      .header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          border-bottom: 1px solid #3c4043;
-          padding-bottom: 8px;
-      }
-      h2 { margin: 0; font-size: 16px; font-weight: 500; color: #8ab4f8; }
-      h3 { margin: 0; font-size: 14px; font-weight: 500; color: #8ab4f8; }
+		body {
+			font-family: 'Google Sans', Roboto, Arial, sans-serif;
+			width: 320px;
+			/* Forceer een vlotte meegroeiende body tot Chrome's max */
+			max-height: 580px;
+			margin: 0;
+			padding: 16px;
+			background-color: #202124;
+			color: #e8eaed;
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+			box-sizing: border-box;
+		}
+		.header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			border-bottom: 1px solid #3c4043;
+			padding-bottom: 8px;
+		}
+		h2 { margin: 0; font-size: 16px; font-weight: 500; color: #8ab4f8; }
+		h3 { margin: 0; font-size: 14px; font-weight: 500; color: #8ab4f8; }
 
-      .text-btn { background: none; border: none; color: #9aa0a6; font-size: 12px; cursor: pointer; padding: 0; font-weight: bold; }
-      .text-btn:hover { color: #e8eaed; text-decoration: underline; }
+		.text-btn { background: none; border: none; color: #9aa0a6; font-size: 12px; cursor: pointer; padding: 0; font-weight: bold; }
+		.text-btn:hover { color: #e8eaed; text-decoration: underline; }
 
-      details {
-          background: #2a2b2e;
-          border: 1px solid #3c4043;
-          border-radius: 6px;
-          padding: 8px;
-      }
-      summary {
-          font-size: 13px;
-          font-weight: bold;
-          color: #9aa0a6;
-          cursor: pointer;
-          user-select: none;
-          outline: none;
-      }
-      summary:hover { color: #8ab4f8; }
+		details {
+			background: #2a2b2e;
+			border: 1px solid #3c4043;
+			border-radius: 6px;
+			padding: 8px;
+			margin-bottom: 4px; /* Extra ruimte tussen de twee menu's */
+		}
+		summary {
+			font-size: 13px;
+			font-weight: bold;
+			color: #9aa0a6;
+			cursor: pointer;
+			user-select: none;
+			outline: none;
+		}
+		summary:hover { color: #8ab4f8; }
 
-      .toggle-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding-top: 8px; }
-      input[type="checkbox"] { accent-color: #8ab4f8; width: 15px; height: 15px; cursor: pointer; }
+		.toggle-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding-top: 8px; }
+		input[type="checkbox"] { accent-color: #8ab4f8; width: 15px; height: 15px; cursor: pointer; }
 
-      .divider { border: 0; height: 1px; background-color: #3c4043; margin: 4px 0; }
+		.divider { border: 0; height: 1px; background-color: #3c4043; margin: 4px 0; }
 
-      /* --- GEFIXTE MACRO CONTAINER --- */
-      .macro-container {
-          height: 160px;
-          min-height: 80px;
-          /* 280px is de "sweet spot". Samen met de andere knoppen en
-						 uitgeklapte instellingen blijf je precies binnen Chrome's 600px limiet! */
-          max-height: 280px;
-          overflow-y: auto;
-          resize: vertical;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          padding-right: 4px;
-          padding-bottom: 8px;
-          border-bottom: 1px dashed #5f6368;
-      }
-      .macro-container::-webkit-scrollbar { width: 6px; }
-      .macro-container::-webkit-scrollbar-thumb { background: #5f6368; border-radius: 3px; }
+		/* --- GEFIXTE MACRO CONTAINER --- */
+		.macro-container {
+			height: 160px;
+			min-height: 80px;
+			/* 280px is de "sweet spot". Samen met de andere knoppen en
+               uitgeklapte instellingen blijf je precies binnen Chrome's 600px limiet! */
+			max-height: 280px;
+			overflow-y: auto;
+			resize: vertical;
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+			padding-right: 4px;
+			padding-bottom: 8px;
+			border-bottom: 1px dashed #5f6368;
+		}
+		.macro-container::-webkit-scrollbar { width: 6px; }
+		.macro-container::-webkit-scrollbar-thumb { background: #5f6368; border-radius: 3px; }
 
-      .macro-row { display: flex; gap: 6px; align-items: center; }
-      .macro-row input {
-          background: #303134; color: #e8eaed; border: 1px solid #5f6368;
-          border-radius: 4px; padding: 6px; font-family: monospace; font-size: 12px; outline: none;
-      }
-      .macro-row input:focus { border-color: #8ab4f8; }
-      .macro-key { width: 35%; }
-      .macro-val { width: 50%; }
-      .btn-delete { width: 15%; background: #ea4335; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; padding: 6px 0; font-size: 12px;}
-      .btn-delete:hover { background: #d93025; }
+		.macro-row { display: flex; gap: 6px; align-items: center; }
+		.macro-row input {
+			background: #303134; color: #e8eaed; border: 1px solid #5f6368;
+			border-radius: 4px; padding: 6px; font-family: monospace; font-size: 12px; outline: none;
+		}
+		.macro-row input:focus { border-color: #8ab4f8; }
+		.macro-key { width: 35%; }
+		.macro-val { width: 50%; }
+		.btn-delete { width: 15%; background: #ea4335; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; padding: 6px 0; font-size: 12px;}
+		.btn-delete:hover { background: #d93025; }
 
-      .global-btn {
-          width: 100%; margin-top: auto; padding: 10px; background-color: #1a73e8; color: white;
-          border: none; border-radius: 6px; font-weight: bold; font-size: 14px; cursor: pointer; transition: background 0.3s, filter 0.3s;
-      }
-      .global-btn.off { background-color: #ea4335; filter: grayscale(100%); color: #f1f3f4; }
-      .app-disabled details, .app-disabled #macroSection { opacity: 0.5; pointer-events: none; }
+		.global-btn {
+			width: 100%; margin-top: auto; padding: 10px; background-color: #1a73e8; color: white;
+			border: none; border-radius: 6px; font-weight: bold; font-size: 14px; cursor: pointer; transition: background 0.3s, filter 0.3s;
+		}
+		.global-btn.off { background-color: #ea4335; filter: grayscale(100%); color: #f1f3f4; }
+		.app-disabled details, .app-disabled #macroSection { opacity: 0.5; pointer-events: none; }
 	</style>
 </head>
 <body id="appBody">
 <div class="header">
-	<h2>LiveLatex</h2>
+	<h2>LiveLatex & AI Tools</h2>
 	<button id="btnSelectAll" class="text-btn">Select All</button>
 </div>
 
-<details id="toggleDetails">
-	<summary>Advanced Rendering Options</summary>
-	<div id="toggleContainer">
+<details id="aiToolsDetails" open>
+	<summary>AI Navigation & Layout</summary>
+	<div>
 		<div class="toggle-row">
-			<label for="treeToggle">Chat Tree Panel</label>
+			<label for="treeToggle">ChatGPT Tree Panel</label>
 			<input type="checkbox" id="treeToggle">
 		</div>
 		<div class="toggle-row">
-			<label for="sortToggle">Sidebar Auto-Sorter</label>
+			<label for="geminiTreeToggle">Gemini Nav Tree</label>
+			<input type="checkbox" id="geminiTreeToggle">
+		</div>
+		<div class="toggle-row">
+			<label for="sortToggle">ChatGPT Auto-Sorter</label>
 			<input type="checkbox" id="sortToggle">
 		</div>
 		<div class="toggle-row">
 			<label for="scrollToggle">Auto-Scroll History</label>
 			<input type="checkbox" id="scrollToggle">
 		</div>
+	</div>
+</details>
+
+<details id="toggleDetails">
+	<summary>Advanced Rendering Options</summary>
+	<div id="toggleContainer">
 		<div class="toggle-row"><label for="eqToggle">{Eq} (Environments)</label><input type="checkbox" id="eqToggle"></div>
 		<div class="toggle-row"><label for="blockToggle"> (Block)</label><input type="checkbox" id="blockToggle"></div>
 		<div class="toggle-row"><label for="inlineToggle"> (Inline)</label><input type="checkbox" id="inlineToggle"></div>
