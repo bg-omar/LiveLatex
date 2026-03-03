@@ -5,7 +5,10 @@ document.addEventListener('DOMContentLoaded', () => {
         enableInline: document.getElementById('inlineToggle'),
         enableDoubleDollar: document.getElementById('doubleDollarToggle'),
         enableSingleDollar: document.getElementById('singleDollarToggle'),
-        enableProse: document.getElementById('proseToggle')
+        enableProse: document.getElementById('proseToggle'),
+        enableChatTree: document.getElementById('treeToggle'),
+        enableSidebarSort: document.getElementById('sortToggle'),
+        enableAutoScroll: document.getElementById('scrollToggle')
     };
 
     const btnSelectAll = document.getElementById('btnSelectAll');
@@ -17,12 +20,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Standaard SST macro's voor bij de eerste installatie
     const defaultStates = {
-        enableEq: true, enableBlock: true, enableInline: true, enableDoubleDollar: true, enableSingleDollar: true, isGlobalEnabled: true,
+        enableEq: true, enableBlock: true, enableInline: true, enableDoubleDollar: true, enableSingleDollar: true, isGlobalEnabled: true,enableChatTree: true,
+        enableSidebarSort: true,
+        enableAutoScroll: false,
         customMacros: {
             "\\vswirl": "\\mathbf{v}_{\\!\\scriptscriptstyle\\boldsymbol{\\circlearrowleft}}",
             "\\rhocore": "\\rho_{\\text{core}}",
             "\\rhom": "\\rho_{\\!m}",
             "\\rhof": "\\rho_{\\!f}",
+            "\\rc": "r_c",
             "\\vswirltext": "\\mathbf{v}_{\\mathrm{swirl}}",
             "\\vscore": "\\mathbf{v}_{\\swirlarrow\\text{(core)}}",
             "\\vnorm": "\\lVert \\mathbf{v}_{\\scriptscriptstyle\\boldsymbol{\\circlearrowleft}} \\rVert",

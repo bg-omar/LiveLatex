@@ -1,0 +1,248 @@
+#chat-tree-panel, #chat-tree-panel * {
+    -webkit-user-drag: none !important;
+    user-select: none !important;
+}
+
+.chat-tree-breadcrumbs a {
+    color: #4b78c1; text-decoration: underline;
+}
+.chat-tree-breadcrumbs a:hover {
+    text-decoration: underline dotted;
+}
+.chat-tree-current-path {
+    background: #36173699 !important;
+    border-left: 3px solid #090 !important;
+}
+
+#chat-tree-panel {
+    position: fixed !important;
+    top: 50px; left: 50px; right: auto; bottom: auto;
+    cursor: grab; z-index: 2000;
+    max-height: calc(70vh + 40px); overflow: visible;
+    border-radius: 8px; color: #F0F;
+    -webkit-user-drag: none; user-select: none;
+}
+
+#chat-tree-panel.collapsed {
+    width: 20px !important; height: 20px !important; overflow: hidden !important; padding: 0;
+}
+#chat-tree-panel.collapsed #chat-tree-header, #chat-tree-panel.collapsed #chat-tree-content {
+    display: none !important;
+}
+#chat-tree-panel.collapsed::after {
+    content: '+'; color: #0f0; font-size: 18px; display: flex; justify-content: center; align-items: center; height: 100%;
+}
+#chat-tree-panel, #chat-tree-header, #chat-tree-content { box-sizing: border-box; }
+
+#chat-tree-header {
+    border: 1px solid #ccc; border-radius: 8px; background: #66006699; padding: 0 10px;
+    height: 40px; font-weight: bold; width: fit-content; color: #f4f; user-select: none; display: flex; justify-content: space-between; align-items: center;
+}
+#chat-tree-toggle { font-weight: bold; border: 0; background: none; color: #0f0; font-size: 24px; cursor: pointer; }
+#chat-tree-close { font-weight: bold; border: none; background: none; color: #f44; font-size: 14px; cursor: pointer; margin-left: 8px; }
+
+#chat-tree-content {
+    padding: 10px; max-height: 70vh; overflow: auto; position: relative; color: #f4f;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2); background: #171717BB; border: 1px solid #ccc;
+}
+.chat-tree-item { cursor: pointer; margin-bottom: 4px; }
+.chat-tree-edited { background-color: #606; }
+.chat-tree-empty { list-style: none; }
+.chat-tree-empty hr { border-top: 1px dashed #bbb; margin: 4px 0; }
+.chat-tree-fork { border-left: 2px solid #993; padding-left: 8px; margin-bottom: 6px; }
+.chat-tree-fork summary { cursor: pointer; font-weight: bold; color: #ff9; margin-bottom: 4px; }
+.chat-tree-fork-versions { margin-left: 10px; color: #ccc; font-size: 11px; }
+.chat-tree-version-item { cursor: pointer; margin-bottom: 2px; opacity: 0.85; }
+.chat-tree-version-item:hover { text-decoration: underline; color: #fff; }
+
+#chat-tree-panel.super-collapsed, #chat-tree-panel.chat-tree-super-collapsed {
+    width: 40px !important; height: 40px !important; min-width: 40px !important; min-height: 40px !important;
+    max-width: 40px !important; max-height: 40px !important; overflow: hidden !important; background: none !important;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2) !important;
+}
+#chat-tree-panel.super-collapsed > #chat-tree-content { display: none !important; }
+
+/* Sidebar Categories CSS */
+div.relative.mt-5 h3 {
+    width: 90% !important;
+    padding: 0.25rem 1rem !important;
+    box-shadow: 0 0 20px 0 rgba(14, 0, 18, 0.6);
+    line-height: 1.5rem;
+    border: 1px dotted #fff;
+    background-color: #202;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+.highlighted {
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-weight: bold !important;
+}
+/* Force action buttons to be visible on categorized items */
+li.relative .absolute.bottom-0.top-0.inline-flex {
+    display: flex !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+/* =========================================================
+   CHAT TREE PANEL & SIDEBAR UI
+   ========================================================= */
+#chat-tree-panel, #chat-tree-panel * {
+    -webkit-user-drag: none !important;
+    user-select: none !important;
+}
+
+.chat-tree-breadcrumbs a {
+    color: #4b78c1; text-decoration: underline;
+}
+.chat-tree-breadcrumbs a:hover {
+    text-decoration: underline dotted;
+}
+.chat-tree-current-path {
+    background: #36173699 !important;
+    border-left: 3px solid #090 !important;
+}
+
+#chat-tree-panel {
+    position: fixed !important;
+    top: 50px; left: 50px; right: auto; bottom: auto;
+    cursor: grab; z-index: 2000;
+    max-height: calc(70vh + 40px); overflow: visible;
+    border-radius: 8px; color: #F0F;
+    -webkit-user-drag: none; user-select: none;
+}
+
+#chat-tree-panel.collapsed {
+    width: 20px !important; height: 20px !important; overflow: hidden !important; padding: 0;
+}
+#chat-tree-panel.collapsed #chat-tree-header, #chat-tree-panel.collapsed #chat-tree-content {
+    display: none !important;
+}
+#chat-tree-panel.collapsed::after {
+    content: '+'; color: #0f0; font-size: 18px; display: flex; justify-content: center; align-items: center; height: 100%;
+}
+#chat-tree-panel, #chat-tree-header, #chat-tree-content { box-sizing: border-box; }
+
+#chat-tree-header {
+    border: 1px solid #ccc; border-radius: 8px; background: #66006699; padding: 0 10px;
+    height: 40px; font-weight: bold; width: fit-content; color: #f4f; user-select: none; display: flex; justify-content: space-between; align-items: center;
+}
+#chat-tree-toggle { font-weight: bold; border: 0; background: none; color: #0f0; font-size: 24px; cursor: pointer; }
+#chat-tree-close { font-weight: bold; border: none; background: none; color: #f44; font-size: 14px; cursor: pointer; margin-left: 8px; }
+
+#chat-tree-content {
+    padding: 10px; max-height: 70vh; overflow: auto; position: relative; color: #f4f;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2); background: #171717BB; border: 1px solid #ccc;
+}
+.chat-tree-item { cursor: pointer; margin-bottom: 4px; }
+.chat-tree-edited { background-color: #606; }
+.chat-tree-empty { list-style: none; }
+.chat-tree-empty hr { border-top: 1px dashed #bbb; margin: 4px 0; }
+.chat-tree-fork { border-left: 2px solid #993; padding-left: 8px; margin-bottom: 6px; }
+.chat-tree-fork summary { cursor: pointer; font-weight: bold; color: #ff9; margin-bottom: 4px; }
+.chat-tree-fork-versions { margin-left: 10px; color: #ccc; font-size: 11px; }
+.chat-tree-version-item { cursor: pointer; margin-bottom: 2px; opacity: 0.85; }
+.chat-tree-version-item:hover { text-decoration: underline; color: #fff; }
+
+#chat-tree-panel.super-collapsed, #chat-tree-panel.chat-tree-super-collapsed {
+    width: 40px !important; height: 40px !important; min-width: 40px !important; min-height: 40px !important;
+    max-width: 40px !important; max-height: 40px !important; overflow: hidden !important; background: none !important;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.2) !important;
+}
+#chat-tree-panel.super-collapsed > #chat-tree-content { display: none !important; }
+
+div.relative.mt-5 h3 {
+    width: 90% !important;
+    padding: 0.25rem 1rem !important;
+    box-shadow: 0 0 20px 0 rgba(14, 0, 18, 0.6);
+    line-height: 1.5rem;
+    border: 1px dotted #fff;
+    background-color: #202;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+.highlighted {
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-weight: bold !important;
+}
+li.relative .absolute.bottom-0.top-0.inline-flex {
+    display: flex !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+
+
+/* =========================================================
+   WIDESCREEN & LAYOUT OVERRIDES (ChatGPT Full Width)
+   ========================================================= */
+
+/* Highest scope; wins unless a later, more specific, !important rule overrides */
+:root {
+    max-width: 100% !important;
+}
+
+body, html {
+    width: 100%;
+}
+
+#token-count {
+    right: 100px;
+    margin: 10px;
+    background-color: rgba(0, 0, 0, 0.26); /* Converted #00000044 */
+}
+
+#prosemirror-editor-container {
+    width: 100%;
+    width: stretch;
+    width: -webkit-fill-available;
+}
+
+#prosemirror-editor-container ._9XkC5G_main {
+    width: 100%;
+}
+
+/* The element that actually uses the value */
+.thread-content {
+    max-width: var(--thread-content-max-width, 100%) !important;
+}
+
+/* Make helpers respect the var instead of fixed 90% */
+.max-w-lg,
+.max-w-md {
+    max-width: var(--thread-content-max-width, 100%) !important;
+}
+
+@supports (container-type: inline-size) {
+    /* Match the "utility" class text robustly without escaping gymnastics */
+    [class*="thread-lg:[--thread-content-max-width"] {
+        --thread-content-max-width: 100% !important;
+    }
+
+    /* Overrule at the container level for all widths */
+    @container thread (min-width: 0) {
+        .thread-content {
+            --thread-content-max-width: 100% !important;
+        }
+    }
+}
+
+.conversation-container {
+    max-width: 100%;
+    width: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    align-items: center;
+    scroll-margin-top: calc(
+            var(--announcement-banner-padding-top, 0px) + var(--gem-sys-spacing--l)
+    );
+}
+
+@container main (width >= 64rem) {
+    .\@w-lg\/main\:\[--thread-content-max-width\:48rem\] {
+        --thread-content-max-width: 100%;
+    }
+}

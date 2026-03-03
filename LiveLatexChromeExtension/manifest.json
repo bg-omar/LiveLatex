@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "LiveLatex",
-  "version": "2.5",
-  "description": "Live KaTeX rendering & Document Structuring voor Gemini en ChatGPT.",
+  "name": "LiveLatex & ChatGPT Tools",
+  "version": "3.0",
+  "description": "Live KaTeX rendering, Document Structuring, Chat Tree & Sidebar Sorter.",
   "permissions": ["storage"],
   "background": {
     "service_worker": "background.js"
@@ -23,11 +23,18 @@
       ],
       "css": ["katex.min.css"],
       "js": ["katex.min.js", "content.js"]
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "css": ["chatgpt.css"],
+      "js": ["chatgpt.js"]
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["fonts/*"],
+      "resources": ["fonts/*", "fetch_patch.js"],
       "matches": [
         "https://gemini.google.com/*",
         "https://chatgpt.com/*"
