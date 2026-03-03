@@ -1,7 +1,8 @@
 (() => {
     let states = {
         isGlobalEnabled: true,
-        enableGeminiTree: true
+        enableGeminiTree: true,
+        enableGeminiScroll: false
     };
 
     chrome.storage.local.get(states, (result) => {
@@ -20,10 +21,11 @@
     });
 
     function initGeminiTree() {
+        let hasAutoScrolled = false;
+
         setInterval(() => {
             if (!states.isGlobalEnabled || !states.enableGeminiTree) return;
 
-            // Zoek naar Gemini's user prompts
             const chatReady = document.querySelector('user-query');
             const alreadyInjected = document.getElementById('chat-tree-panel');
 
@@ -31,7 +33,34 @@
                 buildChatTreePanel();
             }
             queueTreeBuild();
+
+            if (states.enableGeminiScroll && !hasAutoScrolled && chatReady) {
+                hasAutoScrolled = true;
+                triggerHistoryLoad();
+            }
         }, 2000);
+
+        function triggerHistoryLoad(btnElement = null) {
+            if (btnElement) btnElement.textContent = '⏳';
+            let lastHeight = document.body.scrollHeight;
+            let attempts = 0;
+
+            const scrollInterval = setInterval(() => {
+                window.scrollTo(0, 0);
+
+                if (document.body.scrollHeight > lastHeight) {
+                    lastHeight = document.body.scrollHeight;
+                    attempts = 0;
+                } else {
+                    attempts++;
+                    if (attempts > 3) {
+                        clearInterval(scrollInterval);
+                        if (btnElement) btnElement.textContent = '⬆️';
+                        queueTreeBuild();
+                    }
+                }
+            }, 800);
+        }
 
         function buildChatTreePanel() {
             const existing = document.getElementById('chat-tree-panel');
@@ -49,10 +78,23 @@
             header.id = 'chat-tree-header';
             header.textContent = '📜';
 
+            const controls = document.createElement('div');
+            controls.style.display = 'flex';
+            controls.style.gap = '8px';
+            controls.style.alignItems = 'center';
+
+            const loadAllBtn = document.createElement('button');
+            loadAllBtn.textContent = '⬆️';
+            loadAllBtn.title = "Scroll to top to load full history";
+            loadAllBtn.style.cssText = 'background:none; border:none; cursor:pointer; font-size:16px; padding:0;';
+            loadAllBtn.onclick = () => triggerHistoryLoad(loadAllBtn);
+            controls.appendChild(loadAllBtn);
+
             const toggleBtn = document.createElement('button');
             toggleBtn.id = 'chat-tree-toggle';
             toggleBtn.textContent = '—';
-            header.appendChild(toggleBtn);
+            controls.appendChild(toggleBtn);
+            header.appendChild(controls);
 
             const content = document.createElement('div');
             content.id = 'chat-tree-content';
@@ -67,7 +109,6 @@
             root.appendChild(header);
             root.appendChild(content);
 
-            // Voeg resizer toe
             const resizeHandle = document.createElement('div');
             resizeHandle.className = 'chat-tree-resize-handle';
             resizeHandle.style.cssText = 'position:absolute; right:2px; bottom:2px; width:18px; height:18px; cursor:nwse-resize; z-index:10; border-right:3px solid #1a73e8; border-bottom:3px solid #1a73e8; border-radius:0 0 6px 0;';
@@ -106,32 +147,64 @@
 
             requestAnimationFrame(() => {
                 rebuildQueued = false;
-                // Verzamel alle user prompts in Gemini
-                const turns = Array.from(document.querySelectorAll('user-query'));
+
+                // Zoek nu naar ZOWEL de user prompts ALS de AI antwoorden in chronologische volgorde
+                const elements = Array.from(document.querySelectorAll('user-query, message-content'));
+                const userQueries = elements.filter(el => el.tagName.toLowerCase() === 'user-query');
 
                 const content = document.getElementById('chat-tree-content');
                 if (!content) return;
 
-                // Optimalisatie: Alleen de lijst hertekenen als er een nieuwe prompt is toegevoegd
-                if (turns.length === lastTurnCount && content.innerHTML !== '') return;
-                lastTurnCount = turns.length;
+                if (userQueries.length === lastTurnCount && content.innerHTML !== '') return;
+                lastTurnCount = userQueries.length;
 
                 content.innerHTML = '';
                 content.appendChild(content.querySelector('.chat-tree-resize-handle') || document.createElement('div'));
 
                 const list = document.createElement('ul');
                 let count = 0;
+                let lastAiText = "";
 
-                turns.forEach((turn) => {
-                    const text = turn.innerText || turn.textContent;
-                    if (!text.trim()) return;
+                elements.forEach((node) => {
+                    if (node.tagName.toLowerCase() === 'message-content') {
+                        // Sla de tekst van de AI tijdelijk op
+                        lastAiText = (node.innerText || node.textContent).trim();
+                    } else if (node.tagName.toLowerCase() === 'user-query') {
+                        // We hebben een prompt gevonden!
+                        const text = node.innerText || node.textContent;
+                        const cleanText = text.trim();
+                        if (!cleanText) return;
 
-                    const item = document.createElement('li');
-                    item.className = 'chat-tree-item';
-                    item.textContent = `${++count}: ${text.trim().slice(0, 60).replace(/\n/g, ' ')}`;
+                        const singleLineText = cleanText.replace(/\n/g, ' ');
+                        const item = document.createElement('li');
+                        item.className = 'chat-tree-item';
+                        item.textContent = `${++count}: ${singleLineText.slice(0, 50)}...`;
 
-                    item.onclick = () => turn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    list.appendChild(item);
+                        // ==========================================
+                        // HOVER TOOLTIP (Vorige AI vraag + Huidige Prompt)
+                        // ==========================================
+                        let tooltip = "";
+
+                        if (lastAiText) {
+                            // Verwijder extreem lange witregels uit het AI antwoord
+                            let cleanAi = lastAiText.replace(/\n{3,}/g, '\n\n');
+                            // Pak de laatste 250 characters (waar meestal de afsluitende vraag staat)
+                            let aiSnippet = cleanAi.length > 250 ? "..." + cleanAi.slice(-250) : cleanAi;
+                            tooltip += `🤖 PREVIOUS AI ENDING:\n${aiSnippet.trim()}\n\n──────────────\n\n`;
+                        } else if (count === 1) {
+                            tooltip += `🤖 PREVIOUS AI ENDING:\n(First prompt - no previous context)\n\n──────────────\n\n`;
+                        }
+
+                        let userSnippet = singleLineText.length > 150 ? singleLineText.slice(0, 150) + "..." : singleLineText;
+                        tooltip += `📝 YOUR PROMPT:\n${userSnippet}`;
+
+                        item.title = tooltip;
+                        item.onclick = () => node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        list.appendChild(item);
+
+                        // Reset de AI tekst (voor het geval je twee keer achter elkaar een prompt stuurt zonder AI antwoord)
+                        lastAiText = "";
+                    }
                 });
 
                 content.appendChild(list);
@@ -142,7 +215,6 @@
             const handle = element.querySelector('#chat-tree-header') || element;
             let isDragging = false, offsetX, offsetY;
 
-            // Haal opgeslagen positie op
             const savedPos = JSON.parse(localStorage.getItem('chatTreePosGemini') || 'null');
             if (savedPos) {
                 element.style.left = savedPos.left + 'px';
@@ -154,9 +226,16 @@
                 isDragging = true;
                 offsetX = e.clientX - element.getBoundingClientRect().left;
                 offsetY = e.clientY - element.getBoundingClientRect().top;
+                document.body.style.userSelect = 'none';
             });
 
-            document.addEventListener('mouseup', () => isDragging = false);
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    document.body.style.userSelect = '';
+                }
+            });
+
             document.addEventListener('mousemove', (e) => {
                 if (isDragging) {
                     const newLeft = e.clientX - offsetX;

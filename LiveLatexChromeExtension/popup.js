@@ -9,7 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
         enableChatTree: document.getElementById('treeToggle'),
         enableSidebarSort: document.getElementById('sortToggle'),
         enableAutoScroll: document.getElementById('scrollToggle'),
-        enableGeminiTree: document.getElementById('geminiTreeToggle')
+        enableGeminiTree: document.getElementById('geminiTreeToggle'),
+        enableGeminiScroll: document.getElementById('geminiScrollToggle')
     };
 
     const btnSelectAll = document.getElementById('btnSelectAll');

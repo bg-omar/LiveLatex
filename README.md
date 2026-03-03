@@ -28,3 +28,28 @@
  - If you like the plugin, please give it a star on GitHub and rate it on the JetBrains marketplace. <br>
 
 <!-- Plugin description end -->
+
+## Build troubleshooting
+
+### "PKIX path building failed" / "unable to find valid certification path"
+
+This means your JVM does not trust the SSL certificate for Gradle’s servers (common behind corporate proxies or custom CAs).
+
+**Option A – Use IntelliJ’s JDK for Gradle (simplest)**  
+In IntelliJ: **File → Settings → Build, Execution, Deployment → Build Tools → Gradle**. Set **Gradle JVM** to **JetBrains Runtime** (or another JDK that can access the internet). Then sync/rebuild.
+
+**Option B – Import the CA certificate into your JDK**  
+1. Find your JDK’s `cacerts` (e.g. `C:\Program Files\Java\jdk-21\lib\security\cacerts`).  
+2. Export the root/CA certificate your proxy or company uses (e.g. from browser: lock icon → Certificate → export).  
+3. Import it:  
+   `keytool -import -alias gradle -keystore "C:\path\to\jdk\lib\security\cacerts" -file your-ca.cer`  
+   Default password is `changeit`.  
+4. Restart the Gradle daemon: `.\gradlew --stop`, then sync again.
+
+**Option C – Point Gradle at a custom truststore**  
+If you use a separate truststore file, add to `gradle.properties` (with your paths):
+
+```properties
+systemProp.javax.net.ssl.trustStore=C\:\\path\\to\\your\\cacerts
+systemProp.javax.net.ssl.trustStorePassword=changeit
+```
