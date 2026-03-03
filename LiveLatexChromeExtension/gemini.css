@@ -1,0 +1,24 @@
+/* =========================================================
+   GEMINI WIDESCREEN OVERRIDES
+   ========================================================= */
+
+/* Highest scope; wins unless a later, more specific, !important rule overrides */
+:root {
+    max-width: 100% !important;
+}
+
+.conversation-container,
+.user-query-bubble-with-background,
+.immersives-mode,
+.query-text,
+.user-query-container,
+.user-query-bubble-container,
+user-query,
+chat-window,
+message-content {
+    max-width: 100% !important;
+    /* auto zorgt ervoor dat de margin eraf getrokken wordt in plaats van erbij opgeteld */
+    width: auto !important;
+    margin-left: 24px !important;
+    margin-right: 24px !important;
+}
