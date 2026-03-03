@@ -20,18 +20,34 @@
         }
     });
 
+    function getConversationId() {
+        const match = window.location.pathname.match(/\/app\/([a-f0-9]+)/);
+        return match ? match[1] : 'default_chat';
+    }
+
     function initGeminiTree() {
         let hasAutoScrolled = false;
+        let currentChatId = getConversationId();
+        let storedTurns = loadTree(currentChatId);
 
         setInterval(() => {
             if (!states.isGlobalEnabled || !states.enableGeminiTree) return;
+
+            const newChatId = getConversationId();
+            if (newChatId !== currentChatId) {
+                currentChatId = newChatId;
+                storedTurns = loadTree(currentChatId);
+                lastStoredLength = 0;
+            }
 
             const chatReady = document.querySelector('user-query');
             const alreadyInjected = document.getElementById('chat-tree-panel');
 
             if (chatReady && !alreadyInjected) {
                 buildChatTreePanel();
+                renderTreeUI(storedTurns);
             }
+
             queueTreeBuild();
 
             if (states.enableGeminiScroll && !hasAutoScrolled && chatReady) {
@@ -40,7 +56,107 @@
             }
         }, 2000);
 
-        function triggerHistoryLoad(btnElement = null) {
+        // --- TREE DATA BEHEER (Lokale Opslag) ---
+        function loadTree(chatId) {
+            const data = localStorage.getItem(`geminiTree_${chatId}`);
+            return data ? JSON.parse(data) : [];
+        }
+
+        function saveTree(chatId, turns) {
+            try {
+                localStorage.setItem(`geminiTree_${chatId}`, JSON.stringify(turns));
+            } catch (e) {
+                console.warn("Local storage full, clearing old Gemini caches...");
+                // Nood-opschoonactie als de 5MB grens bereikt wordt
+                Object.keys(localStorage).forEach(key => {
+                    if (key.startsWith('geminiTree_') && key !== `geminiTree_${chatId}`) {
+                        localStorage.removeItem(key);
+                    }
+                });
+                localStorage.setItem(`geminiTree_${chatId}`, JSON.stringify(turns));
+            }
+        }
+
+        function mergeTurns(stored, dom) {
+            if (stored.length === 0) return dom;
+            if (dom.length === 0) return stored;
+
+            let firstDomText = dom[0].userText;
+            let matchIdx = -1;
+
+            for (let i = stored.length - 1; i >= 0; i--) {
+                if (stored[i].userText === firstDomText) {
+                    matchIdx = i;
+                    break;
+                }
+            }
+
+            if (matchIdx !== -1) {
+                return stored.slice(0, matchIdx).concat(dom);
+            } else {
+                if (dom.length >= stored.length) return dom;
+                return stored;
+            }
+        }
+
+        // --- AUTO-HUNTER SCOLLER ---
+        let searchInterval = null;
+        function scrollToTurn(targetText, btnElement) {
+            if (searchInterval) clearInterval(searchInterval);
+
+            let found = findElementByText(targetText);
+            if (found) {
+                executeScrollAndHighlight(found);
+                return;
+            }
+
+            const originalHtml = btnElement.innerHTML;
+            btnElement.innerHTML = '⏳...';
+
+            let attempts = 0;
+            let lastHeight = document.body.scrollHeight;
+
+            searchInterval = setInterval(() => {
+                window.scrollTo(0, 0);
+
+                let foundNow = findElementByText(targetText);
+                if (foundNow) {
+                    clearInterval(searchInterval);
+                    executeScrollAndHighlight(foundNow);
+                    btnElement.innerHTML = originalHtml;
+                    return;
+                }
+
+                if (document.body.scrollHeight > lastHeight) {
+                    lastHeight = document.body.scrollHeight;
+                    attempts = 0;
+                } else {
+                    attempts++;
+                    if (attempts > 4) {
+                        clearInterval(searchInterval);
+                        btnElement.innerHTML = '❌';
+                        setTimeout(() => btnElement.innerHTML = originalHtml, 2000);
+                    }
+                }
+            }, 800);
+        }
+
+        function findElementByText(text) {
+            const queries = Array.from(document.querySelectorAll('user-query'));
+            return queries.find(q => (q.innerText || q.textContent).trim().replace(/\n/g, ' ') === text);
+        }
+
+        function executeScrollAndHighlight(el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const originalBg = el.style.backgroundColor;
+            el.style.transition = 'background-color 0.5s ease';
+            el.style.backgroundColor = '#1a73e855';
+            setTimeout(() => el.style.backgroundColor = originalBg, 2000);
+        }
+
+        // --- HANDMATIGE OPLAAD FUNCTIE & OFFLINE EXPORT ---
+        function triggerHistoryLoad(btnElement = null, onCompleteCallback = null) {
+            let originalText = btnElement ? btnElement.textContent : '';
             if (btnElement) btnElement.textContent = '⏳';
             let lastHeight = document.body.scrollHeight;
             let attempts = 0;
@@ -55,13 +171,72 @@
                     attempts++;
                     if (attempts > 3) {
                         clearInterval(scrollInterval);
-                        if (btnElement) btnElement.textContent = '⬆️';
+                        if (btnElement) btnElement.textContent = originalText;
                         queueTreeBuild();
+                        if (onCompleteCallback) onCompleteCallback();
                     }
                 }
             }, 800);
         }
 
+        function exportOfflineArchive() {
+            const elements = Array.from(document.querySelectorAll('user-query, message-content'));
+
+            let htmlContent = `
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Gemini Offline Archive</title>
+                    <style>
+                        body { font-family: 'Google Sans', Roboto, Arial, sans-serif; background-color: #202124; color: #e8eaed; max-width: 1000px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+                        h1 { color: #8ab4f8; border-bottom: 1px solid #3c4043; padding-bottom: 10px; }
+                        .message { margin-bottom: 24px; padding: 16px; border-radius: 8px; overflow-x: auto; }
+                        .user { background-color: #303134; border-left: 4px solid #8ab4f8; }
+                        .model { background-color: #171717; border-left: 4px solid #ce93d8; }
+                        pre { background-color: #000; padding: 12px; border-radius: 6px; overflow-x: auto; border: 1px solid #3c4043; }
+                        code { font-family: monospace; font-size: 14px; }
+                        a { color: #8ab4f8; }
+                        table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+                        td, th { border: 1px solid #5f6368; padding: 8px; }
+                    </style>
+                </head>
+                <body>
+                    <h1>Gemini Conversation Archive</h1>
+                    <p><i>Exported on: ${new Date().toLocaleString()} | Chat ID: ${currentChatId}</i></p>
+                    <hr>
+            `;
+
+            elements.forEach(el => {
+                const isUser = el.tagName.toLowerCase() === 'user-query';
+                const roleClass = isUser ? 'user' : 'model';
+                const roleLabel = isUser ? '🙋‍♂️ You' : '🤖 Gemini';
+
+                // Bij user-query pakken we de innerText omdat Gemini dat vaak onbewerkt als div injecteert.
+                // Bij message-content pakken we innerHTML om tabellen, latex en code opmaak te behouden.
+                let content = isUser ? el.innerText.replace(/\n/g, '<br>') : el.innerHTML;
+
+                htmlContent += `
+                    <div class="message ${roleClass}">
+                        <h3 style="margin-top: 0; color: ${isUser ? '#8ab4f8' : '#ce93d8'}">${roleLabel}</h3>
+                        <div class="content">${content}</div>
+                    </div>
+                `;
+            });
+
+            htmlContent += `</body></html>`;
+
+            // Maak een Blob en forceer een download in Chrome
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Gemini_Archive_${currentChatId}_${new Date().toISOString().replace(/[:.]/g, '-')}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // --- UI BOUWER ---
         function buildChatTreePanel() {
             const existing = document.getElementById('chat-tree-panel');
             if (existing) existing.remove();
@@ -83,12 +258,28 @@
             controls.style.gap = '8px';
             controls.style.alignItems = 'center';
 
+            // Knop 1: Forceer inladen tot top
             const loadAllBtn = document.createElement('button');
             loadAllBtn.textContent = '⬆️';
             loadAllBtn.title = "Scroll to top to load full history";
             loadAllBtn.style.cssText = 'background:none; border:none; cursor:pointer; font-size:16px; padding:0;';
             loadAllBtn.onclick = () => triggerHistoryLoad(loadAllBtn);
             controls.appendChild(loadAllBtn);
+
+            // Knop 2: Download Offline HTML
+            const exportBtn = document.createElement('button');
+            exportBtn.textContent = '💾';
+            exportBtn.title = "Download Full Offline Archive (.html)";
+            exportBtn.style.cssText = 'background:none; border:none; cursor:pointer; font-size:16px; padding:0;';
+            exportBtn.onclick = () => {
+                // Eerst de history vol inladen, daarna direct downloaden!
+                exportBtn.textContent = '⏳';
+                triggerHistoryLoad(null, () => {
+                    exportOfflineArchive();
+                    exportBtn.textContent = '💾';
+                });
+            };
+            controls.appendChild(exportBtn);
 
             const toggleBtn = document.createElement('button');
             toggleBtn.id = 'chat-tree-toggle';
@@ -139,7 +330,7 @@
         }
 
         let rebuildQueued = false;
-        let lastTurnCount = 0;
+        let lastStoredLength = 0;
 
         function queueTreeBuild() {
             if (rebuildQueued) return;
@@ -148,67 +339,73 @@
             requestAnimationFrame(() => {
                 rebuildQueued = false;
 
-                // Zoek nu naar ZOWEL de user prompts ALS de AI antwoorden in chronologische volgorde
                 const elements = Array.from(document.querySelectorAll('user-query, message-content'));
-                const userQueries = elements.filter(el => el.tagName.toLowerCase() === 'user-query');
-
-                const content = document.getElementById('chat-tree-content');
-                if (!content) return;
-
-                if (userQueries.length === lastTurnCount && content.innerHTML !== '') return;
-                lastTurnCount = userQueries.length;
-
-                content.innerHTML = '';
-                content.appendChild(content.querySelector('.chat-tree-resize-handle') || document.createElement('div'));
-
-                const list = document.createElement('ul');
-                let count = 0;
+                let domTurns = [];
                 let lastAiText = "";
 
                 elements.forEach((node) => {
                     if (node.tagName.toLowerCase() === 'message-content') {
-                        // Sla de tekst van de AI tijdelijk op
                         lastAiText = (node.innerText || node.textContent).trim();
                     } else if (node.tagName.toLowerCase() === 'user-query') {
-                        // We hebben een prompt gevonden!
-                        const text = node.innerText || node.textContent;
-                        const cleanText = text.trim();
+                        const cleanText = (node.innerText || node.textContent).trim().replace(/\n/g, ' ');
                         if (!cleanText) return;
 
-                        const singleLineText = cleanText.replace(/\n/g, ' ');
-                        const item = document.createElement('li');
-                        item.className = 'chat-tree-item';
-                        item.textContent = `${++count}: ${singleLineText.slice(0, 50)}...`;
+                        let cleanAi = lastAiText.replace(/\n{3,}/g, '\n\n');
+                        let aiSnippet = cleanAi.length > 300 ? "..." + cleanAi.slice(-300) : cleanAi;
 
-                        // ==========================================
-                        // HOVER TOOLTIP (Vorige AI vraag + Huidige Prompt)
-                        // ==========================================
-                        let tooltip = "";
-
-                        if (lastAiText) {
-                            // Verwijder extreem lange witregels uit het AI antwoord
-                            let cleanAi = lastAiText.replace(/\n{3,}/g, '\n\n');
-                            // Pak de laatste 250 characters (waar meestal de afsluitende vraag staat)
-                            let aiSnippet = cleanAi.length > 250 ? "..." + cleanAi.slice(-250) : cleanAi;
-                            tooltip += `🤖 PREVIOUS AI ENDING:\n${aiSnippet.trim()}\n\n──────────────\n\n`;
-                        } else if (count === 1) {
-                            tooltip += `🤖 PREVIOUS AI ENDING:\n(First prompt - no previous context)\n\n──────────────\n\n`;
-                        }
-
-                        let userSnippet = singleLineText.length > 150 ? singleLineText.slice(0, 150) + "..." : singleLineText;
-                        tooltip += `📝 YOUR PROMPT:\n${userSnippet}`;
-
-                        item.title = tooltip;
-                        item.onclick = () => node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        list.appendChild(item);
-
-                        // Reset de AI tekst (voor het geval je twee keer achter elkaar een prompt stuurt zonder AI antwoord)
+                        domTurns.push({
+                            userText: cleanText,
+                            aiSnippet: aiSnippet.trim()
+                        });
                         lastAiText = "";
                     }
                 });
 
-                content.appendChild(list);
+                storedTurns = mergeTurns(storedTurns, domTurns);
+                saveTree(currentChatId, storedTurns);
+
+                if (storedTurns.length !== lastStoredLength || document.getElementById('chat-tree-content').innerHTML === '') {
+                    lastStoredLength = storedTurns.length;
+                    renderTreeUI(storedTurns);
+                }
             });
+        }
+
+        function renderTreeUI(turnsArray) {
+            const content = document.getElementById('chat-tree-content');
+            if (!content) return;
+
+            content.innerHTML = '';
+            content.appendChild(content.querySelector('.chat-tree-resize-handle') || document.createElement('div'));
+
+            const list = document.createElement('ul');
+            let count = 0;
+
+            turnsArray.forEach((turn) => {
+                count++;
+                const item = document.createElement('li');
+                item.className = 'chat-tree-item';
+
+                const textSpan = document.createElement('span');
+                textSpan.textContent = `${count}: ${turn.userText.slice(0, 50)}...`;
+                item.appendChild(textSpan);
+
+                let tooltip = "";
+                if (turn.aiSnippet) {
+                    tooltip += `🤖 PREVIOUS AI ENDING:\n${turn.aiSnippet}\n\n──────────────\n\n`;
+                } else if (count === 1) {
+                    tooltip += `🤖 PREVIOUS AI ENDING:\n(First prompt - no previous context)\n\n──────────────\n\n`;
+                }
+                let userSnippet = turn.userText.length > 150 ? turn.userText.slice(0, 150) + "..." : turn.userText;
+                tooltip += `📝 YOUR PROMPT:\n${userSnippet}`;
+                item.title = tooltip;
+
+                item.onclick = () => scrollToTurn(turn.userText, textSpan);
+
+                list.appendChild(item);
+            });
+
+            content.appendChild(list);
         }
 
         function makeDraggable(element) {
@@ -238,8 +435,8 @@
 
             document.addEventListener('mousemove', (e) => {
                 if (isDragging) {
-                    const newLeft = e.clientX - offsetX;
-                    const newTop = e.clientY - offsetY;
+                    const newLeft = Math.max(0, e.clientX - offsetX);
+                    const newTop = Math.max(0, e.clientY - offsetY);
                     element.style.left = newLeft + 'px';
                     element.style.top = newTop + 'px';
                     localStorage.setItem('chatTreePosGemini', JSON.stringify({left: newLeft, top: newTop}));
