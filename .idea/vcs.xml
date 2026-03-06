@@ -3,6 +3,5 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/LiveLatexApp" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/LiveLatexApp/rust_core" vcs="Git" />
   </component>
 </project>
