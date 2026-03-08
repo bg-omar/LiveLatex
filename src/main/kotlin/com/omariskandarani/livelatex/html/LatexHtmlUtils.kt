@@ -1,6 +1,7 @@
 package com.omariskandarani.livelatex.html
 
 import java.io.File
+import java.util.Base64
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.text.RegexOption
@@ -356,33 +357,76 @@ internal fun injectLineAnchors(s: String, absOffset: Int, everyN: Int = 3): Stri
 
 internal fun toFileUrl(f: File): String = f.toURI().toString()
 
+/** Max size (bytes) for embedding images as data: URL so they load in CEF preview (file: can be blocked). */
+private const val MAX_DATA_URL_IMAGE_BYTES = 512 * 1024
+
+private fun mimeForImagePath(path: String): String = when {
+    path.endsWith(".png", true) -> "image/png"
+    path.endsWith(".jpg", true) -> "image/jpeg"
+    path.endsWith(".jpeg", true) -> "image/jpeg"
+    path.endsWith(".gif", true) -> "image/gif"
+    path.endsWith(".webp", true) -> "image/webp"
+    path.endsWith(".svg", true) -> "image/svg+xml"
+    else -> "image/png"
+}
+
+/** Resolve to file URL or data URL so preview can show the image (CEF may block file: from http origin). */
 internal fun resolveImagePath(path: String, baseDirFallback: String = "figures"): String {
-        val p = path.trim()
+        val p = path.trim().replace('\\', '/')
         if (p.isEmpty()) return ""
         if (p.startsWith("http://") || p.startsWith("https://") || p.startsWith("data:")) return p
 
-        val baseDir = currentBaseDir?.let { File(it) } ?: File("")
+        var baseDir = currentBaseDir?.let { File(it) } ?: File("")
         val abs = File(p)
-        if (abs.isAbsolute && abs.exists()) return toFileUrl(abs)
+        if (abs.isAbsolute && abs.exists()) return imageUrlForFile(abs)
 
-        val rel = File(baseDir, p)
-        val relFigures = File(baseDir, "figures${File.separator}$p")
         val hasExt = p.contains('.')
         val exts = listOf(".png", ".jpg", ".jpeg", ".svg", ".pdf")
 
-        fun existingWithExt(f: File): String? {
-            if (hasExt) return if (f.exists()) toFileUrl(f) else null
-            for (e in exts) {
-                val c = File(f.parentFile ?: baseDir, f.name + e)
-                if (c.exists()) return toFileUrl(c)
+        fun existingWithExt(f: File): File? {
+            if (!f.exists()) {
+                if (hasExt) return null
+                for (e in exts) {
+                    val c = File(f.parentFile ?: baseDir, f.name + e)
+                    if (c.exists()) return c
+                }
+                return null
             }
-            return null
+            return f
         }
-        existingWithExt(rel)?.let { return it }
-        existingWithExt(relFigures)?.let { return it }
 
-        val fallback = if (hasExt) rel else File(rel.parentFile ?: baseDir, rel.name + exts.first())
+        // 1) baseDir, 2) baseDir/figures/p, 3) walk up (ancestors) for p and figures/p
+        var found: File? = existingWithExt(File(baseDir, p))
+            ?: existingWithExt(File(baseDir, "figures${File.separator}$p"))
+        if (found == null) {
+            var ancestor = baseDir.parentFile
+            var depth = 0
+            while (ancestor != null && depth < 15) {
+                found = existingWithExt(File(ancestor, p))
+                    ?: existingWithExt(File(ancestor, "figures${File.separator}$p"))
+                if (found != null) break
+                ancestor = ancestor.parentFile
+                depth++
+            }
+        }
+
+        if (found != null) return imageUrlForFile(found)
+
+        val fallback = if (hasExt) File(baseDir, p) else File(baseDir, p + exts.first())
         return toFileUrl(fallback)
+    }
+
+/** Prefer data: URL for small local files so CEF preview shows them (file: often blocked). */
+private fun imageUrlForFile(f: File): String {
+        if (!f.exists() || !f.isFile) return toFileUrl(f)
+        if (f.length() > MAX_DATA_URL_IMAGE_BYTES) return toFileUrl(f)
+        return try {
+            val bytes = f.readBytes()
+            val mime = mimeForImagePath(f.name)
+            "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
+        } catch (_: Exception) {
+            toFileUrl(f)
+        }
     }
 
 internal fun convertIncludeGraphics(latex: String): String {

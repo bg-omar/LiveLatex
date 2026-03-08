@@ -1,5 +1,7 @@
 package com.omariskandarani.livelatex.html
 
+import com.intellij.openapi.application.ApplicationManager
+import com.omariskandarani.livelatex.core.LiveLatexSettings
 import java.io.File
 import java.nio.file.Paths
 import java.util.LinkedHashMap
@@ -42,6 +44,10 @@ internal var lineMapMergedToOrigJson: String? = null
  * - Inserts invisible line anchors to sync scroll with editor
  */
 object LatexHtml {
+    /** Secties uit de laatste wrap (voor Secties-dropdown zonder JS-bridge). */
+    var lastCollectedSections: List<Pair<String, String>> = emptyList()
+        private set
+
     // ─────────────────────────── PUBLIC ENTRY ───────────────────────────
 
     fun wrap(texSource: String): String {
@@ -66,9 +72,17 @@ object LatexHtml {
         val body2 = sanitizeForMathJaxProse(body1b)
         val body2b = convertIncludeGraphics(body2)
 
-        val body2c = TikzRenderer.convertTikzPictures(body2b, srcNoComments,tikzPreamble)
-        val body2d = TikzRenderer.convertSstTikzMacros(body2c, srcNoComments)
+        val renderTikz = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview
+        val body2c = if (renderTikz)
+            TikzRenderer.convertTikzPictures(body2b, srcNoComments, tikzPreamble)
+        else
+            TikzRenderer.replaceTikzPicturesWithLazyPlaceholder(body2b, srcNoComments, tikzPreamble)
+        val body2d = if (renderTikz)
+            TikzRenderer.convertSstTikzMacros(body2c, srcNoComments)
+        else
+            TikzRenderer.replaceSstTikzMacrosWithPlaceholder(body2c)
 
+        lastCollectedSections = collectSectionsList(body2d, absOffset)
         val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments, tikzPreamble)
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)
@@ -91,13 +105,16 @@ object LatexHtml {
         t = convertSiunitx(t)
         t = convertHref(t)
         t = convertSections(t, absOffset)
-        t = convertFigureEnvs(t) // Not implemented
+        t = convertFigureEnvs(t)
         t = convertIncludeGraphics(t)
         t = convertMulticols(t)
 
         t = convertLongtablesToTables(t)                 // longtable → table/tabular
         t = convertTcolorboxes(t)                        // ← NEW: render tcolorbox
-        t = TikzRenderer.convertTikzPictures(t, fullSourceNoComments, tikzPreamble)
+        t = if (ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview)
+            TikzRenderer.convertTikzPictures(t, fullSourceNoComments, tikzPreamble)
+        else
+            TikzRenderer.replaceTikzPicturesWithLazyPlaceholder(t, fullSourceNoComments, tikzPreamble)
 
         t = convertTableEnvs(t)
         t = convertItemize(t)

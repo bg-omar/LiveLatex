@@ -26,6 +26,7 @@ import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.Dimension
 import java.awt.Point
 import com.intellij.ui.jcef.JBCefBrowserBase
+import com.omariskandarani.livelatex.ui.PreviewToolbarPanel
 import java.io.File
 
 
@@ -39,10 +40,22 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private var jsRenderTikz: JBCefJSQuery? = null
     private var jsRenderTikzQuery: JBCefJSQuery? = null
     private var jsClearCacheQuery: JBCefJSQuery? = null
+    private var jsSectionsQuery: JBCefJSQuery? = null
+    /** Sectielijst uit de preview-pagina (voor Secties-dropdown in titelbalk). */
+    @Volatile
+    var lastSections: List<Pair<String, String>> = emptyList()
+        private set
+    /** Toolbar panel met sectie-combo; gezet door LatexPreviewToolWindowFactory. */
+    var toolbarPanel: PreviewToolbarPanel? = null
+        set(value) { field = value }
     private val tikzExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor("TikzPool", 1)
 
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private val debounceMs = 150
+
+    /** True while we're moving editor caret/scroll from a preview click/scroll; prevents feedback loop (editor→preview sync). */
+    @Volatile
+    private var syncingFromPreview = false
 
     private val docListener = object : DocumentListener {
         override fun documentChanged(event: DocumentEvent) {
@@ -52,7 +65,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
     private val caretListener = object : CaretListener {
         override fun caretPositionChanged(event: CaretEvent) {
-            syncToCaret(event.editor)
+            // Sync by viewport center so both panels show the same line in the middle
+            syncToViewportCenter(event.editor)
         }
     }
 
@@ -142,6 +156,61 @@ class LatexPreviewService(private val project: Project) : Disposable {
         browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
     }
 
+    private fun exposeSectionsBridge(browser: JBCefBrowserBase) {
+        jsSectionsQuery?.let { Disposer.dispose(it) }
+        jsSectionsQuery = JBCefJSQuery.create(browser).also { q ->
+            Disposer.register(this, q)
+            q.addHandler { json ->
+                lastSections = parseSectionsJson(json)
+                ApplicationManager.getApplication().invokeLater {
+                    toolbarPanel?.setSections(lastSections)
+                }
+                JBCefJSQuery.Response("OK")
+            }
+        }
+        val js = """
+        (function(){
+          window.__llHostSectionsReady = function(json){
+            try { return ${jsSectionsQuery!!.inject("json")}; }
+            catch(e){ return ''; }
+          };
+          if (typeof window.sendSectionsToHost === 'function') window.sendSectionsToHost();
+        })();
+        """.trimIndent()
+        browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
+        // Vraag secties meerdere keren (bridge kan laat klaar zijn; MathJax kan DOM later updaten)
+        listOf(400, 900, 1800).forEach { delayMs ->
+            alarm.addRequest({
+                eval("try { if (typeof window.sendSectionsToHost === 'function') window.sendSectionsToHost(); } catch(e){}")
+                if (delayMs == 400) syncAutoScrollSettingsToPage()
+            }, delayMs)
+        }
+    }
+
+    /** Zet auto-scroll state uit IDE-instellingen in de preview-pagina (localStorage). */
+    private fun syncAutoScrollSettingsToPage() {
+        val settings = ApplicationManager.getApplication().getService(com.omariskandarani.livelatex.core.LiveLatexSettings::class.java)
+        eval("try { localStorage.setItem('ll_auto_scroll', ${settings.autoScrollPreview}); localStorage.setItem('ll_auto_scroll_editor', ${settings.autoScrollEditor}); } catch(e){}")
+    }
+
+    private fun parseSectionsJson(json: String): List<Pair<String, String>> {
+        if (json.isBlank()) return emptyList()
+        return try {
+            val idRe = Regex("""\"id\"\s*:\s*\"([^\"]*)\"""")
+            val labelRe = Regex("""\"label\"\s*:\s*\"([^\"]*)\"""")
+            val raw = json.trim().removeSurrounding("[", "]").trim()
+            if (raw.isEmpty()) return emptyList()
+            val items = raw.split("},{")
+            items.mapNotNull { part ->
+                val id = idRe.find(part)?.groupValues?.getOrNull(1) ?: return@mapNotNull null
+                val label = labelRe.find(part)?.groupValues?.getOrNull(1) ?: id
+                id to label
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     private fun clearCacheForPaper() {
         val pair = currentTexFileAndText() ?: return
         val vf = pair.first
@@ -226,21 +295,29 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val word = Regex("""\"word\"\s*:\s*\"(.*?)\"""")
                         .find(payload)?.groupValues?.getOrNull(1) ?: ""
                     if (line != null) {
+                        syncingFromPreview = true
+                        val lineToAlign = line
                         ApplicationManager.getApplication().invokeLater {
-                            val fem = FileEditorManager.getInstance(project)
-                            val ed = fem.selectedTextEditor ?: return@invokeLater
-                            val doc = ed.document
-                            val lineIdx = (line - 1).coerceIn(0, doc.lineCount - 1)
-                            val start = doc.getLineStartOffset(lineIdx)
-                            val end = doc.getLineEndOffset(lineIdx)
-                            var caret = start
-                            if (word.isNotEmpty()) {
-                                val text = doc.charsSequence.subSequence(start, end).toString()
-                                val idx = text.indexOf(word)
-                                if (idx >= 0) caret = start + idx
+                            try {
+                                val fem = FileEditorManager.getInstance(project)
+                                val ed = fem.selectedTextEditor ?: return@invokeLater
+                                val doc = ed.document
+                                val lineIdx = (lineToAlign - 1).coerceIn(0, doc.lineCount - 1)
+                                val start = doc.getLineStartOffset(lineIdx)
+                                val end = doc.getLineEndOffset(lineIdx)
+                                var caret = start
+                                if (word.isNotEmpty()) {
+                                    val text = doc.charsSequence.subSequence(start, end).toString()
+                                    val idx = text.indexOf(word)
+                                    if (idx >= 0) caret = start + idx
+                                }
+                                ed.caretModel.moveToOffset(caret)
+                                ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
+                                // Align preview to same line at center so both panels show the same position
+                                eval("""window.postMessage({type:'sync-line', abs:$lineToAlign, source:'align', mode:'center'}, '*');""")
+                            } finally {
+                                alarm.addRequest({ syncingFromPreview = false }, 80)
                             }
-                            ed.caretModel.moveToOffset(caret)
-                            ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
                         }
                     }
                 } catch (_: Throwable) {}
@@ -251,17 +328,15 @@ class LatexPreviewService(private val project: Project) : Disposable {
         // 2) TikZ bridge (JSQuery + pooling + page glue) — single source of truth
         exposeTikzBridge(base)
         exposeClearCacheBridge(base)
+        exposeSectionsBridge(base)
 
-        // 3) flush pending JS after each page load + re-inject page glue
+        // 3) flush pending JS after each page load (do not re-create JBCefJSQuery here — must be created before load; re-creating after browser load triggers IllegalStateException)
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(
                 br: CefBrowser?, isLoading: Boolean, canGoBack: Boolean, canGoForward: Boolean
             ) {
                 if (!isLoading) {
                     pageReady = true
-                    // re-inject page-side glue so window.__llHostRenderTikz and __llHostClearCache are live again
-                    exposeTikzBridge(base)
-                    exposeClearCacheBridge(base)
                     flushPending()
                 }
             }
@@ -298,8 +373,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
         editor?.caretModel?.addCaretListener(caretListener, this)
         editor?.scrollingModel?.addVisibleAreaListener(visibleListener, this)
         if (editor != null) {
-            // Initial sync to caret location
-            syncToCaret(editor)
+            // Initial sync: same line at center in both panels
+            syncToViewportCenter(editor)
         }
     }
 
@@ -313,7 +388,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
 
     private fun syncToViewportCenter(editor: Editor) {
-        // Center-of-viewport absolute line (1-based)
+        // Center-of-viewport absolute line (1-based) — same reference in both panels
         val area = editor.scrollingModel.visibleArea
         val midY = area.y + area.height / 2
         val vis = editor.xyToVisualPosition(Point(0, midY))
@@ -322,13 +397,9 @@ class LatexPreviewService(private val project: Project) : Disposable {
         postSync(abs, source = "scroll")
     }
 
-    private fun syncToCaret(editor: Editor) {
-        val abs = editor.caretModel.logicalPosition.line + 1
-        postSync(abs, source = "caret")
-    }
-
     private fun postSync(abs: Int, source: String) {
-        eval("""window.postMessage({type:'sync-line', abs:$abs, source:'$source'}, '*');""")
+        if (syncingFromPreview) return
+        eval("""window.postMessage({type:'sync-line', abs:$abs, source:'$source', mode:'center'}, '*');""")
     }
 
     private fun eval(js: String) {
@@ -352,6 +423,33 @@ class LatexPreviewService(private val project: Project) : Disposable {
         alarm.addRequest({ refresh() }, debounceMs)
     }
 
+    /** Call to refresh the preview (e.g. after toggling TikZ rendering). */
+    fun requestRefresh() {
+        scheduleRefresh()
+    }
+
+    /** Run JS in the preview page (for zoom, localStorage, etc.). */
+    fun evalJs(js: String) {
+        eval(js)
+    }
+
+    fun requestZoomIn() {
+        eval("try { if (typeof window.setZoom === 'function') window.setZoom(1.15); } catch(e){}")
+    }
+
+    fun requestZoomOut() {
+        eval("try { if (typeof window.setZoom === 'function') window.setZoom(1/1.15); } catch(e){}")
+    }
+
+    fun requestClearCache() {
+        clearCacheForPaper()
+    }
+
+    fun requestJumpToSection(id: String) {
+        val escaped = id.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"")
+        eval("try { if (typeof window.jumpToMarkId === 'function') window.jumpToMarkId('$escaped'); } catch(e){}")
+    }
+
     private fun refresh() {
         val fem = FileEditorManager.getInstance(project)
         val editor = fem.selectedTextEditor
@@ -362,6 +460,11 @@ class LatexPreviewService(private val project: Project) : Disposable {
         val html = when (ext) {
             "tex", "ltx", "latex", "tikz" -> LatexHtml.wrapWithInputs(doc!!.text, vf.path)
             else -> LatexHtml.wrap("<p style='opacity:.66'>Open a <code>.tex</code> file to preview.</p>")
+        }
+        if (ext in listOf("tex", "ltx", "latex", "tikz")) {
+            lastSections = LatexHtml.lastCollectedSections
+        } else {
+            lastSections = emptyList()
         }
         renderHtml(html, caretLine)
     }

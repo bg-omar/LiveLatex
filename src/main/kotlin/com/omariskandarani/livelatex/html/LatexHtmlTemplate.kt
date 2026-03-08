@@ -50,7 +50,8 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
     .syncline { display:inline-block; width:0; height:0; overflow:hidden; }
     html, body { height: 100%; margin: 0; }
     body { overflow-y: auto; }
-    .wrap { min-height: 100vh; }
+    .wrap { min-height: 100vh; padding-top: 56px; }
+    /* Floating zoom toolbar: reserve top space so title is not covered when scrolled to top */
     /* Floating zoom toolbar styles */
     .floating-toolbar {
       position: fixed;
@@ -90,6 +91,8 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
     .multicol-wrap { display: flex; gap: 1em; margin: 0.5em 0; }
     .multicol-col { flex: 1 1 0; padding: 0 0.5em; }
     strong, em, u, small { display: inline; }
+    .ll-label { display: none; }
+    /* \label{} anchors invisible (same/next line under \section/\subsection) */
     /* Preview caret marker */
     .caret-mark { display:inline-block; border-left: 1.5px solid #4F46E5; height: 1em; margin-left:-0.75px; animation: llblink 1s step-end infinite; }
     @keyframes llblink { 50% { border-color: transparent; } }
@@ -97,9 +100,9 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
     #ll-debug { position: fixed; right: 10px; bottom: 10px; background: rgba(0,0,0,0.6); color: #fff; font: 12px/1.35 monospace; padding: 8px 10px; border-radius: 6px; z-index: 9999; max-width: 46vw; max-height: 40vh; overflow: auto; white-space: pre-wrap; display: none; }
     #ll-debug.visible { display: block; }
     
-    /***** Thin top bar: title + zoom + chapters *****/
+    /***** Thin top bar: verborgen – alle knoppen zitten in de IDE-toolbalk boven de preview *****/
     .ll-topbar {
-      position: fixed;
+      display: none !important;
       top: 0; left: 0; right: 0;
       z-index: 200;
       display: flex;
@@ -773,16 +776,26 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
     }
   }
 
-  // Keep select synced with current active mark (called from your preview scroll emitter)
+  window.jumpToMarkId = jumpToMarkId;
+
   window.__selectMarkInTopbar = function(id){
     const sel = document.getElementById('ll-chapters'); if (!sel) return;
     if (sel.value !== id) sel.value = id;
   };
 
+  function sendSectionsToHost() {
+    if (typeof window.__llHostSectionsReady !== 'function') return;
+    if (!window.__llMarks || !window.__llMarks.length) { if (typeof window.__collectMarks === 'function') window.__collectMarks(); }
+    var marks = window.__llMarks || [];
+    var arr = marks.map(function(m){ var lab = labelFromMark(m).label; return { id: m.id, abs: m.abs, label: lab }; });
+    window.__llHostSectionsReady(JSON.stringify(arr));
+  }
+  window.sendSectionsToHost = sendSectionsToHost;
+
   window.addEventListener('DOMContentLoaded', () => {
     populateChapters();
-    // re-populate after typeset/layout
-    setTimeout(populateChapters, 450);
+    sendSectionsToHost();
+    setTimeout(function(){ populateChapters(); sendSectionsToHost(); }, 450);
 
     const sel = document.getElementById('ll-chapters');
     if (sel) sel.addEventListener('change', e => jumpToMarkId(e.target.value));

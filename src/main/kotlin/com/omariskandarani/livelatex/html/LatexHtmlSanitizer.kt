@@ -17,7 +17,15 @@ internal fun convertTitlepage(s: String): String {
         body = body.replace(Regex("""\\thispagestyle\{[^}]*\}"""), "")
         body = body.replace(Regex("""\\centering\b"""), "")
         body = body.replace(Regex("""\\par\b"""), "\n")
-        body = body.replace(Regex("""\\vspace\{[^}]*\}"""), "\n")
+        body = Regex("""\\vspace\*?\s*\{([^}]*)\}""").replace(body) { m ->
+            val arg = m.groupValues[1].trim().replace(',', '.')
+            val numMatch = Regex("""([\d.]+)\s*(cm|mm|pt|em|ex|in)?""").find(arg)
+            if (numMatch != null) {
+                val num = numMatch.groupValues[1]
+                val unit = numMatch.groupValues[2].ifEmpty { "em" }
+                """<div style="height:${num}$unit"></div>"""
+            } else "<br/>"
+        }
         body = body.replace("""\today""", renderDate("""\today""") ?: "")
         body = body.replace(Regex("""\\(Large|normalsize|small)\b"""), "")
         body = body.replace(Regex("""\\bfseries\b"""), "")

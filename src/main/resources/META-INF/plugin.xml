@@ -19,40 +19,38 @@
                     anchor="right"
                     factoryClass="com.omariskandarani.livelatex.ui.LatexPreviewToolWindowFactory"
                     icon="/icons/livelatex.svg"/>
+        <applicationService serviceImplementation="com.omariskandarani.livelatex.core.LiveLatexSettings"/>
         <projectService serviceImplementation="com.omariskandarani.livelatex.core.LatexPreviewService"/>
     </extensions>
 
     <!-- Action to open/focus the preview window -->
     <actions>
-        <action id="LiveLaTeX.NewTikzFigure"
-                class="com.omariskandarani.livelatex.actions.NewTikzFigureAction"
-                text="--) TikZ Figure (--"
-                description="Open a simple canvas, export TikZ and insert it here">
+        <group id="LiveLaTeX.InsertGroup" text="LiveLateX insert" popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-        </action>
-
-        <action id="LiveLaTeX.InsertImage"
-                class="com.omariskandarani.livelatex.actions.InsertImageAction"
-                text=" || Insert Image Here ||"
-                description="Copy image into project and insert includegraphics snippet">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-        </action>
-
-<!--        <action id="com.omariskandarani.LiveLatex.actions.ShowPreview"-->
-<!--                class="com.omariskandarani.livelatex.actions.ShowPreviewAction"-->
-<!--                text="Show LaTeX Preview"-->
-<!--                description="Open/focus LaTeX Preview tool window">-->
-<!--            <add-to-group group-id="EditorPopupMenu" anchor="last"/>-->
-<!--            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>-->
-<!--        </action>-->
-        <action id="LiveLaTeX.GenerateTable"
-                class="com.omariskandarani.livelatex.actions.GenerateLatexTableAction"
-                text="...Add Table..."
-                description="Create a LaTeX table from CSV/Markdown or a blank template">
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
+            <action id="LiveLaTeX.NewTikzFigure"
+                    class="com.omariskandarani.livelatex.actions.NewTikzFigureAction"
+                    text="--) TikZ Figure (--"
+                    description="Open a simple canvas, export TikZ and insert it here"/>
+            <action id="LiveLaTeX.InsertImage"
+                    class="com.omariskandarani.livelatex.actions.InsertImageAction"
+                    text=" || Insert Image Here ||"
+                    description="Copy image into project and insert includegraphics snippet"/>
+            <action id="LiveLaTeX.GenerateTable"
+                    class="com.omariskandarani.livelatex.actions.GenerateLatexTableAction"
+                    text="...Add Table..."
+                    description="Create a LaTeX table from CSV/Markdown or a blank template"/>
+        </group>
+
+       <action id="com.omariskandarani.LiveLatex.actions.ShowPreview"
+               class="com.omariskandarani.livelatex.actions.ShowPreviewAction"
+               text="Show LaTeX Preview"
+               description="Open/focus LaTeX Preview tool window">
+           <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+           <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>
+       </action>
+
 
 
 
@@ -70,7 +68,7 @@
         
         <group id="LiveLaTeX.InsertReference"
                class="com.omariskandarani.livelatex.actions.InsertReferenceActionGroup"
-               text=" || Reference || Cite ||"
+               text="\\Cite{label} or \\ref{label}"
                description="Insert a reference (\\ref or \\cite) from available labels and BibTeX entries"
                popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>

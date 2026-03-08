@@ -1,5 +1,10 @@
 package com.omariskandarani.livelatex.ui
 
+import com.omariskandarani.livelatex.actions.PreviewOptionsAction
+import com.omariskandarani.livelatex.actions.PreviewSectionsAction
+import com.omariskandarani.livelatex.actions.PreviewZoomInAction
+import com.omariskandarani.livelatex.actions.PreviewZoomOutAction
+import com.omariskandarani.livelatex.actions.RenderTikzToggleAction
 import com.omariskandarani.livelatex.core.LatexPreviewService
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
@@ -10,12 +15,20 @@ import com.intellij.ui.content.ContentFactory
 
 class LatexPreviewToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val browser = JBCefBrowser() // Embedded Chromium
+        val browser = JBCefBrowser()
         val content = ContentFactory.getInstance().createContent(browser.component, "", false)
         toolWindow.contentManager.addContent(content)
 
-        // Register the browser with the service so it can push updates
-        val svc = project.getService(LatexPreviewService::class.java)
-        svc.attachBrowser(browser)
+        toolWindow.setTitleActions(
+            listOf(
+                PreviewSectionsAction(project),
+                PreviewZoomOutAction(project),
+                PreviewZoomInAction(project),
+                PreviewOptionsAction(project),
+                RenderTikzToggleAction()
+            )
+        )
+
+        project.getService(LatexPreviewService::class.java).attachBrowser(browser)
     }
 }

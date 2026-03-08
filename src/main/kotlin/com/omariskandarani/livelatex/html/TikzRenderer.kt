@@ -10,7 +10,7 @@ import java.security.MessageDigest
 object TikzRenderer {
 
     // —— Config / cache ————————————————————————————————————————————————
-    /** Base dir of the main .tex file (set by caller; mirrors LatexHtml’s). */
+    /** Base dir of the main .tex file (set by caller; mirrors LatexHtml's). */
     var currentBaseDir: String? = null
 
     // --- path where we cache compiled SVGs (project-local)
@@ -61,31 +61,21 @@ object TikzRenderer {
         return out
     }
 
+    /** Full preamble from the .tex (before \\begin{document}) for TikZ; strips \\documentclass, ensures tikz/ams present. */
     fun collectTikzPreamble(srcNoComments: String): String {
-        val preamble = srcNoComments.substringBefore("\\begin{document}")
+        var preamble = srcNoComments.substringBefore("\\begin{document}").trim()
+        preamble = Regex("""\\documentclass\s*(?:\[[^\]]*])?\s*\{[^}]*\}""").replace(preamble, "").trim()
 
-        // grab any \usepackage lines the user had (e.g., siunitx)
-        val pkgs = Regex("""\\usepackage(?:\[[^\]]*])?\{[^}]+}""")
-            .findAll(preamble).joinToString("\n") { it.value }
-
-        // robust \tikzset{...} with balanced braces
-        val tikzsets = collectBalanced("\\tikzset", preamble).joinToString("\n")
-
-        // gather all libraries the user asked for anywhere in the preamble
-        val libsSet = collectUsetikzlibsFromSource(preamble).toSortedSet()
-        val libsLine = if (libsSet.isNotEmpty()) "\\usetikzlibrary{${libsSet.joinToString(",")}}\n" else ""
-
+        val hasTikz = Regex("""\\usepackage\s*(?:\[[^\]]*])?\{[^}]*tikz[^}]*\}""").containsMatchIn(preamble)
+        val hasAms = Regex("""\\usepackage\s*(?:\[[^\]]*])?\{[^}]*amsmath[^}]*\}""").containsMatchIn(preamble)
         val needsTikzCd = Regex("""\\begin\{tikzcd}|\\usepackage\{tikz-cd}""").containsMatchIn(preamble)
-
-        return buildString {
-            appendLine("\\usepackage{tikz}")
+        val prefix = buildString {
+            if (!hasTikz) appendLine("\\usepackage{tikz}")
             if (needsTikzCd) appendLine("\\usepackage{tikz-cd}")
-            if (pkgs.isNotBlank()) appendLine(pkgs)          // keep user’s other packages (e.g., siunitx)
-            append(libsLine)                                 // only if non-empty
-            if (tikzsets.isNotBlank()) appendLine(tikzsets)  // full, balanced \tikzset blocks
+            if (!hasAms) appendLine("\\usepackage{amsmath,amssymb,bm}")
         }
+        return if (prefix.isBlank()) preamble else prefix + "\n" + preamble
     }
-
 
     // ───────────────────────── TikZ picture renderer ─────────────────────────
 
@@ -111,11 +101,155 @@ object TikzRenderer {
         return -1
     }
 
+    /** When TikZ rendering is disabled: replace each tikzpicture block with a placeholder span (no compilation). */
+    fun replaceTikzPicturesWithPlaceholder(htmlLike: String): String {
+        val beginTok = "\\begin{tikzpicture}"
+        val placeholder = """<span class="tikz-placeholder" style="display:block;margin:8px 0;padding:6px 10px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;">[TikZ uit – zet “Render TikZ” aan in de preview-balk om te renderen]</span>"""
+        val result = StringBuilder(htmlLike.length)
+        var pos = 0
+        while (true) {
+            val start = htmlLike.indexOf(beginTok, pos)
+            if (start < 0) break
+            result.append(htmlLike, pos, start)
+            var bodyStart = start + beginTok.length
+            if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
+                val closeBracket = htmlLike.indexOf(']', bodyStart)
+                if (closeBracket >= 0) bodyStart = closeBracket + 1
+            }
+            val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
+            if (bodyEnd >= 0) {
+                result.append(placeholder)
+                pos = bodyEnd
+            } else {
+                result.append(htmlLike, start, bodyStart.coerceAtMost(htmlLike.length))
+                pos = bodyStart
+            }
+        }
+        result.append(htmlLike, pos, htmlLike.length)
+        return result.toString()
+    }
+
+    /**
+     * Lazy TikZ: replace each tikzpicture with a placeholder that has a "Render" button.
+     * Registers each block in LatexTikzJobStore so the host can compile on demand (lighter for IDE/Android).
+     */
+    fun replaceTikzPicturesWithLazyPlaceholder(htmlLike: String, fullSourceNoComments: String, tikzPreamble: String): String {
+        val userMacros = extractNewcommands(fullSourceNoComments)
+        val texMacroDefs = buildTexNewcommands(userMacros)
+        val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
+        val beginTok = "\\begin{tikzpicture}"
+        val result = StringBuilder(htmlLike.length)
+        var pos = 0
+        while (true) {
+            val start = htmlLike.indexOf(beginTok, pos)
+            if (start < 0) break
+            result.append(htmlLike, pos, start)
+            var opts = ""
+            var bodyStart = start + beginTok.length
+            if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
+                val closeBracket = htmlLike.indexOf(']', bodyStart)
+                if (closeBracket >= 0) {
+                    opts = htmlLike.substring(bodyStart, closeBracket + 1)
+                    bodyStart = closeBracket + 1
+                }
+            }
+            val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
+            if (bodyEnd < 0) {
+                result.append(htmlLike, start, (start + beginTok.length).coerceAtMost(htmlLike.length))
+                pos = bodyStart
+                continue
+            }
+            val body = htmlLike.substring(bodyStart, bodyEnd - "\\end{tikzpicture}".length).trim()
+            val blockDoc = buildTikzBlockDoc(body, opts, tikzPreamble, texMacroDefs, srcLibs)
+            if (blockDoc == null) {
+                result.append(htmlLike, start, bodyEnd)
+                pos = bodyEnd
+                continue
+            }
+            val (key, texDoc) = blockDoc
+            LatexTikzJobStore.put(key, texDoc)
+            val lazyHtml = """<span class="tikz-lazy" data-tikz-key="$key" style="display:block;margin:8px 0;padding:8px 12px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;"><button type="button" class="tikz-load" data-tikz-key="$key" style="margin-right:8px;padding:4px 10px;cursor:pointer;border:1px solid #ccc;border-radius:4px;background:#fff;">Render TikZ</button><span class="tikz-status"></span></span>"""
+            result.append(lazyHtml)
+            pos = bodyEnd
+        }
+        result.append(htmlLike, pos, htmlLike.length)
+        return result.toString()
+    }
+
+    /** Build full standalone tex document for one tikzpicture block; returns (sha1Key, texDoc) or null. */
+    private fun buildTikzBlockDoc(body: String, opts: String, tikzPreamble: String, texMacroDefs: String, srcLibs: Set<String>): Pair<String, String>? {
+        val hay = opts + "\n" + body
+        val autoLibs = buildSet {
+            if (Regex("""-\{?Latex""").containsMatchIn(hay) || Regex(""">=\s*Latex""").containsMatchIn(hay)) add("arrows.meta")
+            if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(hay)) add("positioning")
+            if (Regex("""use\s+Hobby\s+shortcut|invert\s+soft\s+blanks|\[blank=""").containsMatchIn(hay)) addAll(listOf("hobby","topaths"))
+            if (Regex("""\\begin\{knot}|\bflip crossing/""").containsMatchIn(hay)) addAll(listOf("knots","hobby","intersections","decorations.pathreplacing","shapes.geometric","spath3","topaths"))
+        }
+        val allLibs = (srcLibs + autoLibs).toSortedSet()
+        val libsLine = if (allLibs.isNotEmpty()) "\\usetikzlibrary{${allLibs.joinToString(",")}}\n" else ""
+        val needsPgfplots = Regex("""\\begin\{axis\}|\\addplot|\\pgfplot|xlabel\s*=|ylabel\s*=""").containsMatchIn(hay)
+        val hasPgfplotsInPreamble = Regex("""\\usepackage\s*(?:\[[^\]]*])?\s*\{[^}]*pgfplots[^}]*\}""").containsMatchIn(tikzPreamble)
+        val (docClass, preambleBlock) = if (needsPgfplots && !hasPgfplotsInPreamble) {
+            // Figure uses axis/xlabel/ylabel but preamble has no pgfplots: add it
+            "\\documentclass[border=1pt]{standalone}" to """
+\\usepackage{pgfplots}
+\\pgfplotsset{compat=1.18}
+$tikzPreamble
+"""
+        } else if (needsPgfplots) {
+            "\\documentclass[border=1pt]{standalone}" to """
+$tikzPreamble
+\\pgfplotsset{compat=1.18}
+"""
+        } else {
+            "\\documentclass[tikz,border=1pt]{standalone}" to """
+$tikzPreamble
+"""
+        }
+        val texDoc = """
+$docClass
+$preambleBlock
+$libsLine
+$texMacroDefs
+\usetikzlibrary{
+    spath3,
+    intersections,
+    arrows,
+    arrows.meta,
+    knots,
+    calc,
+    hobby,
+    decorations.pathreplacing,
+    shapes.geometric,
+}
+
+% ---------------- Global styles (safe for 'knots') ----------------
+\tikzset{
+    knot diagram/every strand/.append style={
+        line cap=round,
+        line join=round,
+        ultra thick,
+        black
+    },
+    every knot/.style={line cap=round,line join=round,very thick},
+    strand/.style={line cap=round,line join=round,line width=3pt,draw=black},
+    over/.style={preaction={draw=white,line width=6.5pt}},
+% DO NOT set a global "every path" here; it breaks internal clip paths.
+}
+\providecommand{\swirlarrow}{\rightsquigarrow}
+\begin{document}
+\begin{tikzpicture}$opts
+$body
+\end{tikzpicture}
+\end{document}
+        """.trimIndent()
+        return sha1(texDoc) to texDoc
+    }
+
     fun convertTikzPictures(htmlLike: String, fullSourceNoComments: String, tikzPreamble: String): String {
         val userMacros = extractNewcommands(fullSourceNoComments)
         val texMacroDefs = buildTexNewcommands(userMacros)
         val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
-
         val beginTok = "\\begin{tikzpicture}"
         val result = StringBuilder(htmlLike.length)
         var pos = 0
@@ -141,89 +275,13 @@ object TikzRenderer {
                 continue
             }
             val body = htmlLike.substring(bodyStart, bodyEnd - "\\end{tikzpicture}".length).trim()
-
-            // also look at options when deciding libs
-            val hay = opts + "\n" + body
-
-            val autoLibs = buildSet {
-                // arrows.meta if -{Latex...} OR >=Latex in options
-                if (Regex("""-\{?Latex""").containsMatchIn(hay) ||
-                    Regex(""">=\s*Latex""").containsMatchIn(hay)) {
-                    add("arrows.meta")
-                }
-                // positioning if "left/right/above/below=of"
-                if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(hay)) {
-                    add("positioning")
-                }
-                // hobby/topaths if hobby shortcuts or blanks appear (in opts or body)
-                if (Regex("""use\s+Hobby\s+shortcut|invert\s+soft\s+blanks|\[blank=""").containsMatchIn(hay)) {
-                    addAll(listOf("hobby","topaths"))
-                }
-                // knots stack (same as before, kept intact, just look in hay)
-                if (Regex("""\\begin\{knot}|\bflip crossing/""").containsMatchIn(hay)) {
-                    addAll(listOf("knots","hobby","intersections","decorations.pathreplacing","shapes.geometric","spath3","topaths"))
-                }
+            val blockDoc = buildTikzBlockDoc(body, opts, tikzPreamble, texMacroDefs, srcLibs)
+            if (blockDoc == null) {
+                result.append(htmlLike, start, bodyEnd)
+                pos = bodyEnd
+                continue
             }
-
-            val allLibs = (srcLibs + autoLibs).toSortedSet()
-            val libsLine = if (allLibs.isNotEmpty()) "\\usetikzlibrary{${allLibs.joinToString(",")}}\n" else ""
-
-            val needsPgfplots = Regex("""\\begin\{axis\}|\\addplot|\\pgfplot|xlabel\s*=|ylabel\s*=""")
-                .containsMatchIn(hay)
-            val pgfplotsBlock = if (needsPgfplots) """
-\usepackage{pgfplots}
-\pgfplotsset{compat=1.18}
-""" else ""
-
-            val texDoc = """
-\documentclass[tikz,border=1pt]{standalone}
-\usepackage{amsmath,amssymb,bm}
-\usepackage{tikz}
-$pgfplotsBlock$libsLine
-$texMacroDefs
-$tikzPreamble
-\usetikzlibrary{
-    spath3,
-    intersections,
-    arrows,
-    knots,
-    calc,
-    hobby,
-    decorations.pathreplacing,
-    shapes.geometric,
-}
-
-% ---------------- Global styles (safe for 'knots') ----------------
-\tikzset{
-    knot diagram/every strand/.append style={
-        line cap=round,
-        line join=round,
-        ultra thick,
-        black
-    },
-    every knot/.style={line cap=round,line join=round,very thick},
-    strand/.style={line cap=round,line join=round,line width=3pt,draw=black},
-    over/.style={preaction={draw=white,line width=6.5pt}},
-% DO NOT set a global "every path" here; it breaks internal clip paths.
-}
-% ------- TikZ Guide Lines -------
-\newcommand{\SSTGuidesPoints}[2]{% #1=basename (e.g. P), #2=last index
-    \foreach \i in {1,...,#2}{
-      \fill[blue] (#1\i) circle (1.2pt);
-      \node[blue,font=\scriptsize,above] at (#1\i) {\i};
-    }
-    \draw[gray!40, dashed]
-    \foreach \i [remember=\i as \lasti (initially 1)] in {2,...,#2,1} { (#1\lasti)--(#1\i) };
-}
-\providecommand{\swirlarrow}{\rightsquigarrow}
-\begin{document}
-\begin{tikzpicture}$opts
-$body
-\end{tikzpicture}
-\end{document}
-        """.trimIndent()
-
-            val key = sha1(texDoc)
+            val (key, texDoc) = blockDoc
             val cache = tikzCacheDir()
             val svg = File(cache, "$key.svg")
             if (svg.exists()) {
@@ -233,7 +291,7 @@ $body
             }
 
             val work = File(cache, key).apply { mkdirs() }
-            val tex = File(work, "fig.tex").apply { writeText(texDoc) }
+            File(work, "fig.tex").writeText(texDoc)
 
             ensureLocalTikzLibs(srcLibs, work)
 
@@ -278,9 +336,16 @@ $body
         return result.toString()
     }
 
+    /** When TikZ rendering is disabled: replace \SST... macro calls with a placeholder (no compilation). */
+    fun replaceSstTikzMacrosWithPlaceholder(s: String): String {
+        val placeholder = """<span class="tikz-placeholder" style="display:inline-block;margin:4px 0;padding:4px 8px;background:#f0f0f0;color:#666;font-size:11px;border-radius:4px;">[TikZ uit]</span>"""
+        val rx = Regex("""\\SST[A-Za-z]+(?:\[[^\]]*])?(?:\{[^{}]*}){0,3}""")
+        return rx.replace(s) { placeholder }
+    }
+
     // Detect and render macro calls like \SSTdown, \SSTHopfLink[...]{...}{...}, etc.
     fun convertSstTikzMacros(s: String, srcNoComments: String): String {
-        // If user didn’t \usetikzlibrary{sstknots} but uses \SST* macros, add it.
+        // If user didn't \usetikzlibrary{sstknots} but uses \SST* macros, add it.
         val preSeen = collectTikzPreamble(srcNoComments)
         val needsSst = Regex("""\\SST[A-Za-z]""").containsMatchIn(s) &&
                 !Regex("""\\usetikzlibrary\{[^}]*\bsstknots\b""").containsMatchIn(preSeen)
@@ -415,8 +480,8 @@ $body
         val sb = StringBuilder()
         for ((name, m) in macros) {
             val nargs = m.nargs.coerceAtLeast(0)
-            if (nargs == 0) sb.append("\\newcommand{\\$name}{${m.def}}\n")
-            else            sb.append("\\newcommand{\\$name}[$nargs]{${m.def}}\n")
+            if (nargs == 0) sb.append("\\providecommand{\\$name}{${m.def}}\n")
+            else            sb.append("\\providecommand{\\$name}[$nargs]{${m.def}}\n")
         }
         return sb.toString()
     }

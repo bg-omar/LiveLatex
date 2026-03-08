@@ -1,4 +1,3 @@
-import java.io.File
 import kotlin.text.substringAfter
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
@@ -13,7 +12,7 @@ val pluginVersion: String by project
 
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "1.9.10"
+    id("org.jetbrains.kotlin.jvm") version "2.1.0"
     id("org.jetbrains.intellij.platform") version "2.5.0"
     id("org.jetbrains.changelog") version "2.2.0"
 }
@@ -57,7 +56,7 @@ tasks {
         version = properties("pluginVersion").orNull ?: project.version.toString()
         sinceBuild = properties("pluginSinceBuild").orNull
         untilBuild = properties("pluginUntilBuild").orNull
-        updatePluginXml()
+        updatePluginXml(project)
         // Extract the <!-- Plugin description --> section from README.md and provide for the plugin's manifest
         pluginDescription.set(
             file("README.md").readText().lines().run {
@@ -117,14 +116,9 @@ tasks.register<Jar>("releaseJar") {
 }
 
 
-fun updatePluginXml() {
-    val pluginXmlFile = File("src/main/resources/META-INF/plugin.xml")
-
+fun updatePluginXml(project: org.gradle.api.Project) {
+    val pluginXmlFile = project.layout.projectDirectory.file("src/main/resources/META-INF/plugin.xml").asFile
+    if (!pluginXmlFile.isFile) return
     val pluginXmlContent = pluginXmlFile.readText()
-
-
-
-
     pluginXmlFile.writeText(pluginXmlContent)
-
 }

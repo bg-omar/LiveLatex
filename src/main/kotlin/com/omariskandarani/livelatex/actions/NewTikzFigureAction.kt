@@ -8,6 +8,85 @@ import com.intellij.openapi.ui.Messages
 
 private data class TikzBlock(val start: Int, val end: Int, val body: String)
 
+/** Flatten nested \begin{tikzpicture}...\end{tikzpicture}: replace each inner picture with just its content. */
+private fun flattenNestedTikzpicture(body: String): String {
+    val beginTok = "\\begin{tikzpicture}"
+    val endTok = "\\end{tikzpicture}"
+    var s = body
+    while (true) {
+        val innerBegin = s.indexOf(beginTok)
+        if (innerBegin < 0) break
+        var bodyStart = innerBegin + beginTok.length
+        if (bodyStart < s.length && s[bodyStart] == '[') {
+            val closeBracket = s.indexOf(']', bodyStart)
+            if (closeBracket >= 0) bodyStart = closeBracket + 1
+        }
+        var depth = 1
+        var i = bodyStart
+        var innerEnd = -1
+        while (i < s.length && depth > 0) {
+            val nextBegin = s.indexOf(beginTok, i)
+            val nextEnd = s.indexOf(endTok, i)
+            if (nextEnd < 0) break
+            if (nextBegin >= 0 && nextBegin < nextEnd) {
+                depth++
+                i = nextBegin + beginTok.length
+            } else {
+                depth--
+                if (depth == 0) {
+                    innerEnd = nextEnd + endTok.length
+                    break
+                }
+                i = nextEnd + endTok.length
+            }
+        }
+        if (innerEnd < 0) break
+        val innerContent = s.substring(bodyStart, innerEnd - endTok.length).trim()
+        s = s.substring(0, innerBegin) + innerContent + s.substring(innerEnd)
+    }
+    return s
+}
+
+private fun findAnyTikzBlockAtCaret(text: String, caretOffset: Int): TikzBlock? {
+    val beginTok = "\\begin{tikzpicture}"
+    val endTok = "\\end{tikzpicture}"
+    var pos = 0
+    while (true) {
+        val start = text.indexOf(beginTok, pos)
+        if (start < 0) break
+        var bodyStart = start + beginTok.length
+        if (bodyStart < text.length && text[bodyStart] == '[') {
+            val closeBracket = text.indexOf(']', bodyStart)
+            if (closeBracket >= 0) bodyStart = closeBracket + 1
+        }
+        var depth = 1
+        var i = bodyStart
+        var blockEnd = -1
+        while (i < text.length && depth > 0) {
+            val nextBegin = text.indexOf(beginTok, i)
+            val nextEnd = text.indexOf(endTok, i)
+            if (nextEnd < 0) break
+            if (nextBegin >= 0 && nextBegin < nextEnd) {
+                depth++
+                i = nextBegin + beginTok.length
+            } else {
+                depth--
+                if (depth == 0) {
+                    blockEnd = nextEnd + endTok.length
+                    break
+                }
+                i = nextEnd + endTok.length
+            }
+        }
+        if (blockEnd >= 0 && caretOffset >= start && caretOffset <= blockEnd) {
+            val body = text.substring(bodyStart, blockEnd - endTok.length).trim()
+            return TikzBlock(start, blockEnd, body)
+        }
+        pos = bodyStart
+    }
+    return null
+}
+
 private fun findHobbyTikzBlockAtCaret(text: String, caretOffset: Int): TikzBlock? {
     val beginTok = "\\begin{tikzpicture}"
     val endTok = "\\end{tikzpicture}"
@@ -63,16 +142,17 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
         val document = editor.document
         val text = document.text
         val caret = editor.caretModel.offset
-        val editBlock = findHobbyTikzBlockAtCaret(text, caret)
-        val initialTikz = editBlock?.body ?: editor.selectionModel.selectedText
+        val editBlock = findHobbyTikzBlockAtCaret(text, caret) ?: findAnyTikzBlockAtCaret(text, caret)
+        val rawInitial = editBlock?.body ?: editor.selectionModel.selectedText
+        val initialTikz = rawInitial?.let { flattenNestedTikzpicture(it) }
 
         // Minimal libs required for the new two-strand exporter
         val minimalLibs = setOf("hobby", "decorations.markings")
 
-        // Base preamble (always)
+        // Base preamble (always): use \usepackage{tikz} so preamble has the include package when missing
         val basePreamble = """
 % ------- TikZ Preamble -------
-\RequirePackage{tikz}
+\usepackage{tikz}
 \usetikzlibrary{knots,hobby,calc,intersections,decorations.pathreplacing,decorations.markings,shapes.geometric,spath3}
 % ------- TikZ Preamble -------
         """.trimIndent()
@@ -132,10 +212,10 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
                     document.insertString(pos, preamble + "\n\n")
                     preambleInserted = true
                 } else {
-                    // Ensure \RequirePackage{tikz}
+                    // Ensure \usepackage{tikz} in preamble when not yet present
                     if (!hasRequireTikz(document.text)) {
                         val pos = findAfterDocumentClass(document.text)
-                        document.insertString(pos, "\\RequirePackage{tikz}\n")
+                        document.insertString(pos, "\\usepackage{tikz}\n")
                     }
                     // Ensure minimal libs are loaded (append a new \usetikzlibrary line with only the missing ones)
                     if (missingMinimal.isNotEmpty()) {
@@ -195,7 +275,7 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
         if (ok && editor != null) {
             val text = editor.document.text
             val caret = editor.caretModel.offset
-            val inEdit = findHobbyTikzBlockAtCaret(text, caret) != null
+            val inEdit = findHobbyTikzBlockAtCaret(text, caret) != null || findAnyTikzBlockAtCaret(text, caret) != null
             e.presentation.text = if (inEdit) "Edit TikZ…" else "New TikZ Figure…"
             e.presentation.description = if (inEdit) "Edit the TikZ picture in the canvas" else "Draw a quick TikZ picture and insert it"
         }

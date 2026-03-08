@@ -35,10 +35,7 @@ class TikzKnotStore(private val project: Project) : PersistentStateComponent<Tik
             val clean = State(
                 entries = s.entries.orEmpty().mapNotNull { e ->
                     if (e.name.isBlank()) return@mapNotNull null
-                    val pts = e.points.orEmpty().mapNotNull { p ->
-                        // guard for nulls / wrong numbers
-                        if (p == null) null else PointBean(p.x, p.y)
-                    }.toMutableList()
+                    val pts = e.points.orEmpty().map { p -> PointBean(p.x, p.y) }.toMutableList()
                     Entry(e.name, pts)
                 }.toMutableList(),
                 maxItems = if (s.maxItems <= 0) 9 else s.maxItems

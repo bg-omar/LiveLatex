@@ -7,6 +7,27 @@ import kotlin.text.RegexOption
  * LaTeX prose-to-HTML conversions. Part of LatexHtml multi-file object.
  */
 
+/** Collect (id, label) for all \\section, \\subsection, \\subsubsection, \\paragraph in order (for IDE dropdown without JS bridge). */
+internal fun collectSectionsList(s: String, _absOffset: Int): List<Pair<String, String>> {
+    val out = mutableListOf<Pair<String, String>>()
+    fun collect(kind: String, input: String) {
+        val rx = Regex("\\\\$kind\\*?\\{([^}]*)\\}")
+        rx.findAll(input).forEach { m ->
+            val title = m.groupValues[1].trim()
+            val id = "$kind-${slugify(title)}"
+            out.add(id to title)
+        }
+    }
+    collect("section", s)
+    collect("subsection", s)
+    collect("subsubsection", s)
+    Regex("\\\\paragraph\\{([^}]*)\\}").findAll(s).forEach { m ->
+        val title = m.groupValues[1].trim()
+        out.add("paragraph-${slugify(title)}" to title)
+    }
+    return out
+}
+
 internal fun convertSections(s: String, absOffset: Int): String {
     fun inject(kind: String, tag: String, input: String): String {
         val rx = Regex("\\\\$kind\\*?\\{([^}]*)\\}")
@@ -30,7 +51,7 @@ internal fun convertSections(s: String, absOffset: Int): String {
         """<span class="llmark" data-id="$id" data-abs="$abs"></span><h5 id="$id" style="margin:1em 0 .3em 0;">$htm</h5>"""
     }
     val texorpdfRx = Regex("\\\\texorpdfstring\\{([^}]*)\\}\\{([^}]*)\\}")
-    t = t.replace(texorpdfRx) { m -> latexProseToHtmlWithMath(m.groupValues[2]) }
+    t = t.replace(texorpdfRx) { m -> latexProseToHtmlWithMath(m.groupValues[1]) }
     val appendixHr = "<hr style=\"border:none;border-top:1px solid var(--border);margin:16px 0;\"/>"
     t = t.replace(Regex("\\\\appendix"), appendixHr)
     return t
@@ -178,7 +199,19 @@ internal fun formatInlineProseNonMath(s0: String): String {
                 "<code>$code</code>"
             }
         t = t.replace(Regex("""\\noindent\b"""), "")
-        t = t.replace(Regex("""\\small\b"""), "")  // font switch; strip or wrap—strip for simplicity
+        t = t.replace(Regex("""\\quad\b"""), """<span style="display:inline-block;width:1em;"></span>""")
+        t = t.replace(Regex("""\\qquad\b"""), """<span style="display:inline-block;width:2em;"></span>""")
+        t = Regex("""\\vspace\*?\s*\{([^}]*)\}""").replace(t) { m ->
+            val arg = m.groupValues[1].trim().replace(',', '.')
+            val numMatch = Regex("""([\d.]+)\s*(cm|mm|pt|em|ex|in)?""").find(arg)
+            if (numMatch != null) {
+                val num = numMatch.groupValues[1]
+                val unit = numMatch.groupValues[2].ifEmpty { "em" }
+                """<div style="height:${num}$unit"></div>"""
+            } else """<div style="height:1em"></div>"""
+        }
+        t = replaceCmd1ArgBalanced(t, "small") { "<small>${applyFmt(it, true)}</small>" }
+        t = t.replace(Regex("""\\small\b(?!\s*\{)"""), "")  // standalone \small: strip (scope would need paragraph end)
         t = t.replace(Regex("""\\smallbreak\b"""), """<div style="height:.5em"></div>""")
             .replace(Regex("""\\medbreak\b"""),   """<div style="height:1em"></div>""")
             .replace(Regex("""\\bigbreak\b"""),   """<div style="height:1.5em"></div>""")

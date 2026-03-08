@@ -38,28 +38,12 @@
 \usepackage{textgreek,textcomp,gensymb,stix}
 \usepackage{longtable}
 
-% ==== Swirl String Theory (SST) macros ====
-% Context-aware subscript symbol; uses math styles, not \scriptsize
-\newcommand{\swirlarrow}{%
-    \mathchoice{\mkern-2mu\scriptstyle\boldsymbol{\circlearrowleft}}%
-    {\mkern-2mu\scriptstyle\boldsymbol{\circlearrowleft}}%
-    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}%
-    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}%
-}
-\newcommand{\swirlarrowcw}{%
-    \mathchoice{\mkern-2mu\scriptstyle\boldsymbol{\circlearrowright}}%
-    {\mkern-2mu\scriptstyle\boldsymbol{\circlearrowright}}%
-    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowright}}%
-    {\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowright}}%
-}
 
 % Canonical symbols
-\newcommand{\vswirl}{\mathbf{v}_{\swirlarrow}}
-\newcommand{\vswirlcw}{\mathbf{v}_{\swirlarrowcw}}
-\newcommand{\SwirlClock}{S_{(t)}^{\swirlarrow}}
-\newcommand{\SwirlClockcw}{S_{(t)}^{\swirlarrowcw}}
-\newcommand{\omegas}{\boldsymbol{\omega}_{\swirlarrow}}  % swirl vorticity
-\newcommand{\vscore}{v_{\swirlarrow}}                    % shorthand: |v_swirl| at r=r_c
+\newcommand{\vswirl}{\mathbf{v}_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}
+\newcommand{\SwirlClock}{S_{(t)}^{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}
+\newcommand{\omegas}{\boldsymbol{\omega}_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}  % swirl vorticity
+\newcommand{\vscore}{\mathbf{v}_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}                    % shorthand: |v_swirl| at r=r_c
 \newcommand{\vnorm}{\lVert \vswirl \rVert}               % swirl speed magnitude
 \newcommand{\rhof}{\rho_{\!f}}                           % effective fluid density
 \newcommand{\rhoE}{\rho_{\!E}}                           % swirl energy density /c^2? (we define clearly below)
@@ -68,7 +52,7 @@
 \newcommand{\FmaxEM}{F_{\mathrm{EM}}^{\max}}             % EM-like maximal force scale
 \newcommand{\FmaxG}{F_{\mathrm{G}}^{\max}}               % G-like maximal force scale
 \newcommand{\Lam}{\Lambda}                               % Swirl Coulomb constant
-\newcommand{\Om}{\Omega_{\swirlarrow}}                   % swirl angular frequency profile
+\newcommand{\Om}{\Omega_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}                   % swirl angular frequency profile
 \newcommand{\alpg}{\alpha_g}                             % gravitational fine-structure analogue
 
 % Policy: the golden constant is only allowed via hyperbolic functions.
@@ -201,7 +185,7 @@
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=0.7\linewidth]{figures/Screenshot 2023-04-07 145654.png}
+  \includegraphics[width=0.7\linewidth]{src/main/resources/META-INF/pluginIcon.png}
   \caption{Screenshot 2023 04 07 145654}
   \label{fig:screenshot-2023-04-07-145654}
 \end{figure}

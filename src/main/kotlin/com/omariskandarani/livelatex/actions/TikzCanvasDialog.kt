@@ -462,6 +462,7 @@ class TikzCanvasDialog(
     private var longPressFired: Boolean = false // Add near other press state
     private var longPressReady: Boolean = false // readiness flag for long-press add
     private var initialPresetLoaded = false
+    private var initialTikzImported = false
 
     // --------- UI controls ----------
     private lateinit var rootPanel: JPanel
@@ -703,16 +704,19 @@ class TikzCanvasDialog(
         initUI()
         init() // DialogWrapper init
         setSize((Toolkit.getDefaultToolkit().screenSize.width * 0.8).toInt(), (Toolkit.getDefaultToolkit().screenSize.height * 0.8).toInt())
-        initialTikz?.let { importCoordinates(it) }
 
         canvas.addComponentListener(object : java.awt.event.ComponentAdapter() {
             override fun componentResized(e: java.awt.event.ComponentEvent?) {
+                // When editing a knot from .tex: import coordinates once canvas has size, then skip preset
+                if (initialTikz != null && !initialTikzImported && canvas.width > 0 && canvas.height > 0) {
+                    importCoordinates(initialTikz)
+                    initialTikzImported = true
+                    initialPresetLoaded = true
+                }
                 if (!initialPresetLoaded && presets.isNotEmpty()) {
                     titleCombo.selectedIndex = 0
                     doLoadSelected()
                     initialPresetLoaded = true
-                    // Optional: remove listener if it should only ever fire once
-                    // canvas.removeComponentListener(this)
                 }
             }
         })
@@ -1251,10 +1255,17 @@ class TikzCanvasDialog(
     }
 
     // ---------- import/export ----------
+    /** Parses coordinates and optional flip list from .tex body and loads them into the canvas for editing. */
     private fun importCoordinates(tikz: String) {
-        val rx = Regex("""\\coordinate\s*\(P(\d+)\)\s*at\s*\(\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)\s*\)\s*;""")
-        val pairs = rx.findAll(tikz)
-            .map { it.groupValues[1].toInt() to Pair(it.groupValues[2].toDouble(), it.groupValues[3].toDouble()) }
+        // \coordinate (P1) at (0, 2); or ( 0.5, -2 ) etc.
+        val coordRx = Regex("""\\coordinate\s*\(P(\d+)\)\s*at\s*\(\s*([+-]?\s*\d+(?:\.\d+)?)\s*,\s*([+-]?\s*\d+(?:\.\d+)?)\s*\)\s*;""")
+        val pairs = coordRx.findAll(tikz)
+            .map { m ->
+                val idx = m.groupValues[1].toInt()
+                val x = m.groupValues[2].replace(" ", "").toDouble()
+                val y = m.groupValues[3].replace(" ", "").toDouble()
+                idx to (x to y)
+            }
             .sortedBy { it.first }
             .map { it.second }
             .toList()
@@ -1262,7 +1273,13 @@ class TikzCanvasDialog(
         val cx = canvas.width / 2; val cy = canvas.height / 2
         knotPts.clear()
         knotPts.addAll(pairs.map { (x, y) -> Point(cx + fromUnits(x), cy - fromUnits(y)) })
-        dirty = true; canvas.repaint()
+        // Parse flip crossing/.list={2,4,6,...} from \begin{knot}[...] so edit preserves crossings
+        val flipRx = Regex("""flip\s+crossing/\s*\.list\s*=\s*\{\s*([^}]+)\s*\}""")
+        flipRx.find(tikz)?.let { m ->
+            flipField.text = m.groupValues[1].trim()
+        }
+        dirty = true
+        canvas.repaint()
     }
 
     private fun buildCurrentExportBody(): String {
