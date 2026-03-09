@@ -330,6 +330,45 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
 
 <script>
   (function(){
+    // When user scrolls the preview (incl. scrollbar drag), send line at viewport center to editor
+    function mergedAbsToOrig(mergedAbs) {
+      if (Array.isArray(window.__llM2O) && window.__llM2O.length && mergedAbs>=1 && mergedAbs<=window.__llM2O.length)
+        return window.__llM2O[mergedAbs-1];
+      return mergedAbs;
+    }
+    function lineAtViewportCenter() {
+      if (!window.sync || !window.sync.idx.length) { if (window.sync) window.sync.init(); }
+      const arr = window.sync && window.sync.idx;
+      if (!arr || !arr.length) return null;
+      const centerY = window.innerHeight / 2;
+      let best = null;
+      for (let i = 0; i < arr.length; i++) {
+        const r = arr[i].el.getBoundingClientRect();
+        if (r.top <= centerY) best = arr[i];
+      }
+      if (!best) best = arr[0];
+      return best ? mergedAbsToOrig(best.abs) : null;
+    }
+    let _scrollRaf = 0;
+    function onPreviewScroll() {
+      if (typeof window.__llAutoScrollEditor !== 'function' || !window.__llAutoScrollEditor()) return;
+      const g = window.__llGuards || {};
+      if (Date.now() < (g.suppressEmitUntil || 0)) return;
+      if (_scrollRaf) cancelAnimationFrame(_scrollRaf);
+      _scrollRaf = requestAnimationFrame(function() {
+        _scrollRaf = 0;
+        const origAbs = lineAtViewportCenter();
+        if (origAbs != null && typeof window.__jbcefMoveCaret === 'function')
+          window.__jbcefMoveCaret({ line: origAbs });
+      });
+    }
+    window.addEventListener('scroll', onPreviewScroll, { passive: true });
+    document.addEventListener('DOMContentLoaded', onPreviewScroll);
+  })();
+</script>
+
+<script>
+  (function(){
     window.addEventListener('message', (ev) => {
       const d = ev.data || {};
       if (d && d.type === 'sync-line' && Number.isFinite(d.abs)) {

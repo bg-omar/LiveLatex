@@ -14,6 +14,7 @@
         enableSingleDollar: true,
         enableProse: true,
         isGlobalEnabled: true,
+        renderEverywhere: false,
         customMacros: {}
     };
 
@@ -26,7 +27,7 @@
         for (let key in changes) {
             if (key in states) states[key] = changes[key].newValue;
         }
-        if ((changes.isGlobalEnabled && changes.isGlobalEnabled.newValue === false) || changes.customMacros) {
+        if ((changes.isGlobalEnabled && changes.isGlobalEnabled.newValue === false) || changes.customMacros || changes.renderEverywhere) {
             derenderLaTeX();
         }
     });
@@ -206,7 +207,9 @@
             container.parentNode.insertBefore(wrapper, container.nextSibling);
         });
 
-        const richContainers = document.querySelectorAll('message-content, .message-content');
+        const richContainers = states.renderEverywhere
+            ? [document.body]
+            : document.querySelectorAll('message-content, .message-content');
         richContainers.forEach(container => {
             const treeWalker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
                 acceptNode: function(node) {
