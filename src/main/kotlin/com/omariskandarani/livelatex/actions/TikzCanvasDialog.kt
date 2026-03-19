@@ -1,6 +1,7 @@
 package com.omariskandarani.livelatex.actions
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.wm.WindowManager
@@ -1323,6 +1324,7 @@ $body
             try {
                 val baseDir = project.basePath
                 if (baseDir != null) TikzRenderer.currentBaseDir = baseDir
+                TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
                 val key = "tikz-knot-preview"
                 val svgFile = LatexHtmlTikz.renderTexToSvg(texDoc, key)
                 ApplicationManager.getApplication().invokeLater {

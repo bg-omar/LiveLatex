@@ -3,8 +3,10 @@ package com.omariskandarani.livelatex.core
 import com.omariskandarani.livelatex.html.LatexHtml
 import com.omariskandarani.livelatex.html.LatexHtmlTikz
 import com.omariskandarani.livelatex.html.LatexTikzJobStore
+import com.omariskandarani.livelatex.html.TikzRenderer
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.LogicalPosition
@@ -212,10 +214,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private fun clearCacheForPaper() {
-        val pair = currentTexFileAndText() ?: return
-        val vf = pair.first
-        val baseDir = File(vf.path).parentFile ?: return
-        val cacheDir = File(baseDir, ".livelatex-cache")
+        val cacheDir = File(PathManager.getSystemPath(), "livelatex-cache")
         if (cacheDir.exists()) {
             cacheDir.deleteRecursively()
         }
@@ -267,11 +266,12 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val file = event.newFile
                     if (file?.name?.endsWith(".tex") == true) {
                         toolWindow.setWidth(400)
+                        toolWindow.show()
                         rebindToSelectedEditor()
                     } else {
                         unbindEditor()
-                        toolWindow.setWidth(40)
-                        toolWindow.hide()
+                        toolWindow.setWidth(10)
+                        // do not hide — keep strip visible so it re-expands when back on .tex
                     }
                     scheduleRefresh()
                 }
@@ -451,6 +451,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private fun refresh() {
+        // Use JetBrains system cache for TikZ/output instead of the LaTeX file directory
+        TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
         val fem = FileEditorManager.getInstance(project)
         val editor = fem.selectedTextEditor
         val caretLine = editor?.caretModel?.logicalPosition?.line?.plus(1) ?: 1

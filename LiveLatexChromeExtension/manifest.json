@@ -20,20 +20,20 @@
       "matches": [
         "https://gemini.google.com/*"
       ],
-      "css": ["katex.min.css", "gemini.css"],
+      "css": ["katex.min.css"],
       "js": ["katex.min.js", "content.js", "gemini_tree.js"]
     },
     {
       "matches": [
         "https://chatgpt.com/*"
       ],
-      "css": ["katex.min.css", "chatgpt.css"],
+      "css": ["katex.min.css"],
       "js": ["katex.min.js", "content.js", "chatgpt.js"]
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["fonts/*", "fetch_patch.js"],
+      "resources": ["fonts/*", "fetch_patch.js", "chatgpt.css", "gemini.css"],
       "matches": [
         "https://gemini.google.com/*",
         "https://chatgpt.com/*"

@@ -21,7 +21,7 @@ function updateIcon(isEnabled) {
         chrome.action.setBadgeBackgroundColor({ color: "#3544ea" });
     } else {
         // Toon een duidelijke rode "UIT" badge als hij gepauzeerd is
-        chrome.action.setBadgeText({ text: "..." });
-        //chrome.action.setBadgeBackgroundColor({ color: "#70221b" });
+        chrome.action.setBadgeText({ text: "off" });
+        chrome.action.setBadgeBackgroundColor({ color: "#70221b" });
     }
 }

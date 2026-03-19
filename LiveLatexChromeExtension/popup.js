@@ -11,7 +11,9 @@ document.addEventListener('DOMContentLoaded', () => {
         enableSidebarSort: document.getElementById('sortToggle'),
         enableAutoScroll: document.getElementById('scrollToggle'),
         enableGeminiTree: document.getElementById('geminiTreeToggle'),
-        enableGeminiScroll: document.getElementById('geminiScrollToggle')
+        enableGeminiScroll: document.getElementById('geminiScrollToggle'),
+        activateChatgptCss: document.getElementById('activateChatgptCss'),
+        activateGeminiCss: document.getElementById('activateGeminiCss')
     };
 
     const btnSelectAll = document.getElementById('btnSelectAll');
@@ -28,6 +30,8 @@ document.addEventListener('DOMContentLoaded', () => {
         enableChatTree: true,
         enableSidebarSort: true,
         enableAutoScroll: false, enableGeminiTree: true,
+        activateChatgptCss: true,
+        activateGeminiCss: true,
         customMacros: {
             "\\vswirl": "\\mathbf{v}_{\\!\\scriptscriptstyle\\boldsymbol{\\circlearrowleft}}",
             "\\rhocore": "\\rho_{\\text{core}}",

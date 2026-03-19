@@ -15,17 +15,45 @@
         enableProse: true,
         isGlobalEnabled: true,
         renderEverywhere: false,
+        activateChatgptCss: true,
+        activateGeminiCss: true,
         customMacros: {}
     };
 
+    let optionalCssLink = null;
+
+    function applyOptionalCss() {
+        const host = location.hostname;
+        const id = 'livelatex-optional-css';
+        const existing = document.getElementById(id);
+        if (existing) existing.remove();
+        optionalCssLink = null;
+
+        let href = null;
+        if (host.includes('chatgpt.com') && states.activateChatgptCss) href = chrome.runtime.getURL('chatgpt.css');
+        if (host.includes('gemini.google.com') && states.activateGeminiCss) href = chrome.runtime.getURL('gemini.css');
+
+        if (href) {
+            optionalCssLink = document.createElement('link');
+            optionalCssLink.id = id;
+            optionalCssLink.rel = 'stylesheet';
+            optionalCssLink.href = href;
+            (document.head || document.documentElement).appendChild(optionalCssLink);
+        }
+    }
+
     chrome.storage.local.get(states, (result) => {
         states = result;
+        applyOptionalCss();
         startRepeater();
     });
 
     chrome.storage.onChanged.addListener((changes) => {
         for (let key in changes) {
             if (key in states) states[key] = changes[key].newValue;
+        }
+        if (changes.activateChatgptCss || changes.activateGeminiCss) {
+            applyOptionalCss();
         }
         if ((changes.isGlobalEnabled && changes.isGlobalEnabled.newValue === false) || changes.customMacros || changes.renderEverywhere) {
             derenderLaTeX();

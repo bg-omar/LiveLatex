@@ -6,17 +6,25 @@ import java.security.MessageDigest
 /**
  * Extracted TikZ renderer — functions kept intact (no refactors).
  * Note: LatexHtml should set TikzRenderer.currentBaseDir in wrapWithInputs().
+ * When [pluginCacheRoot] is set (e.g. by the IDE plugin), cache is stored there instead of next to the .tex file.
  */
 object TikzRenderer {
 
     // —— Config / cache ————————————————————————————————————————————————
-    /** Base dir of the main .tex file (set by caller; mirrors LatexHtml's). */
+    /** Base dir of the main .tex file (set by caller; mirrors LatexHtml's). Used for TEXINPUTS and \input resolution. */
     var currentBaseDir: String? = null
 
-    // --- path where we cache compiled SVGs (project-local)
+    /** When set (e.g. by JetBrains IDE), TikZ cache is stored here instead of .livelatex-cache next to the .tex file. */
+    var pluginCacheRoot: String? = null
+
+    // --- path where we cache compiled SVGs (plugin cache or project-local)
     private fun tikzCacheDir(): File {
-        val base = currentBaseDir?.let(::File) ?: File(".")
-        val dir  = File(base, ".livelatex-cache/tikz")
+        val dir = if (pluginCacheRoot != null) {
+            File(pluginCacheRoot, "tikz")
+        } else {
+            val base = currentBaseDir?.let(::File) ?: File(".")
+            File(base, ".livelatex-cache/tikz")
+        }
         if (!dir.exists()) dir.mkdirs()
         return dir
     }

@@ -50,8 +50,12 @@ object LatexHtmlTikz {
     }
 
     private fun tikzCacheDir(): File {
-        val base = TikzRenderer.currentBaseDir?.let(::File) ?: File(".")
-        val dir = File(base, ".livelatex-cache/tikz")
+        val dir = if (TikzRenderer.pluginCacheRoot != null) {
+            File(TikzRenderer.pluginCacheRoot, "tikz")
+        } else {
+            val base = TikzRenderer.currentBaseDir?.let(::File) ?: File(".")
+            File(base, ".livelatex-cache/tikz")
+        }
         if (!dir.exists()) dir.mkdirs()
         return dir
     }
