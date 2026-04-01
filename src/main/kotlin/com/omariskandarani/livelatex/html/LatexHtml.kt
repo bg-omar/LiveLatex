@@ -73,14 +73,25 @@ object LatexHtml {
         val body2b = convertIncludeGraphics(body2)
 
         val renderTikz = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview
-        val body2c = if (renderTikz)
-            TikzRenderer.convertTikzPictures(body2b, srcNoComments, tikzPreamble)
-        else
-            TikzRenderer.replaceTikzPicturesWithLazyPlaceholder(body2b, srcNoComments, tikzPreamble)
-        val body2d = if (renderTikz)
-            TikzRenderer.convertSstTikzMacros(body2c, srcNoComments)
-        else
-            TikzRenderer.replaceSstTikzMacrosWithPlaceholder(body2c)
+        val body2c: String
+        val body2d: String
+        try {
+            if (renderTikz) {
+                val nTikz = TikzRenderer.countTikzPictureStarts(body2b)
+                val nSst = TikzRenderer.countSstStandaloneMacros(body2b)
+                TikzRenderer.initLiveRenderProgress(nTikz + nSst)
+            }
+            body2c = if (renderTikz)
+                TikzRenderer.convertTikzPictures(body2b, srcNoComments, tikzPreamble)
+            else
+                TikzRenderer.replaceTikzPicturesWithLazyPlaceholder(body2b, srcNoComments, tikzPreamble)
+            body2d = if (renderTikz)
+                TikzRenderer.convertSstTikzMacros(body2c, srcNoComments)
+            else
+                TikzRenderer.replaceSstTikzMacrosWithPlaceholder(body2c)
+        } finally {
+            TikzRenderer.finishLiveRenderProgressPhase()
+        }
 
         lastCollectedSections = collectSectionsList(body2d, absOffset)
         val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments, tikzPreamble)
@@ -136,8 +147,6 @@ object LatexHtml {
     // peelTopLevelTextWrapper, ColSpec, convertTcolorboxes, parseTcolorOptions, findBalancedBraceAllowMath,
     // xcolorToCss, convertTabulars, parseColSpecBalanced, linewidthToPercent, convertHref, stripAuxDirectives,
     // convertTableEnvs, convertLongtablesToTables, convertFigureEnvs, convertTheBibliography,
-    // convertAlignWithMultipleTagsToBlocks -> LatexHtmlBlocks.kt
-
     // sanitizeForMathJaxProse, convertSiunitx -> LatexHtmlSanitizer.kt
 
     // fixInlineBoundarySpaces, TitleMeta, findLastCmdArg, extractTitleMeta, renderDate, splitAuthors,

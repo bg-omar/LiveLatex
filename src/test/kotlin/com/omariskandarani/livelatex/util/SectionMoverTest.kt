@@ -1,12 +1,25 @@
 package com.omariskandarani.livelatex.util
 
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.Assert.*
 
 class SectionMoverTest {
     @Test
     fun parseTwoSectionsWithLabels() {
-        val text = """\n            \\section{Swirl 1}\n            \\label{sec:swirl1}\n            Line A\n            Line B\n            \\subsection{Inner}\n            More text\n            \\section{Swirl 2}\n            \\label{sec:swirl2}\n            Body 2\n        """.trimIndent()
+        val text = """
+            \section{Swirl 1}
+            \label{sec:swirl1}
+            Line A
+            Line B
+            \subsection{Inner}
+            More text
+            \section{Swirl 2}
+            \label{sec:swirl2}
+            Body 2
+        """.trimIndent()
         val sections = SectionMover.extractSectionsForTesting(text)
         assertEquals(2, sections.size)
         val s1 = sections[0]
@@ -22,7 +35,11 @@ class SectionMoverTest {
 
     @Test
     fun parseSectionWithoutLabel() {
-        val text = """\n            \\section{Alpha}\n            Body line 1\n            Body line 2\n        """.trimIndent()
+        val text = """
+            \section{Alpha}
+            Body line 1
+            Body line 2
+        """.trimIndent()
         val sections = SectionMover.extractSectionsForTesting(text)
         assertEquals(1, sections.size)
         val s = sections[0]

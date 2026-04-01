@@ -83,10 +83,27 @@ class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opti
                     svc.evalJs("try { localStorage.setItem('ll_auto_scroll_editor', $state); } catch(e){}")
                 }
             })
+            add(object : ToggleAction("Show TikZ debug", "Toon/verberg TikZ debug badges", null) {
+                override fun isSelected(e2: AnActionEvent) = settings.showTikzDebugOverlay
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.showTikzDebugOverlay = state
+                    svc.evalJs(
+                        "try { " +
+                            "localStorage.setItem('ll_show_tikz_debug', $state); " +
+                            "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug($state); " +
+                        "} catch(e){}"
+                    )
+                }
+            })
             add(Separator.getInstance())
             add(object : AnAction("Cache legen voor dit document") {
                 override fun actionPerformed(e2: AnActionEvent) {
                     svc.requestClearCache()
+                }
+            })
+            add(object : AnAction("Alle cache legen") {
+                override fun actionPerformed(e2: AnActionEvent) {
+                    svc.requestClearAllCache()
                 }
             })
         }

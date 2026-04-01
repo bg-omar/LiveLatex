@@ -1,15 +1,20 @@
 package com.omariskandarani.livelatex.actions
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.jcef.JBCefBrowser
 import com.omariskandarani.livelatex.html.LatexHtmlTikz
 import com.omariskandarani.livelatex.html.TikzRenderer
 import java.awt.*
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
+import java.awt.geom.AffineTransform
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.event.KeyAdapter
@@ -19,6 +24,8 @@ import java.awt.event.MouseEvent
 import java.io.File
 import javax.imageio.ImageIO
 import javax.swing.*
+import javax.swing.event.AncestorEvent
+import javax.swing.event.AncestorListener
 import kotlin.math.*
 
 private fun segmentDist2(p: Point, a: Point, b: Point): Int {
@@ -492,6 +499,8 @@ class TikzCanvasDialog(
         toolTipText = "Remove background image"
     }
     private lateinit var bgOpacitySpinner: JSpinner
+    /** Whole knot/shapes preview & export rotation (degrees), 0–360; matches TikZ `rotate`. */
+    private lateinit var spKnotRotate: JSpinner
 
     private val exportSetupBtn = JButton("Export")
     private val importSetupBtn = JButton("Import")
@@ -499,6 +508,15 @@ class TikzCanvasDialog(
         toolTipText = "Render and preview the knot before export"
     }
 
+    private val livePreviewCheck = JCheckBox("Live preview").apply {
+        toolTipText = "TikZ-preview rechtsonder op het canvas; werkt mee na wijzigingen (debounce)"
+    }
+
+    private lateinit var canvasLayerHost: JLayeredPane
+    private lateinit var knotPreviewEmbedCard: JPanel
+    private var knotPreviewBrowser: JBCefBrowser? = null
+    private var livePreviewTimer: Timer? = null
+    private var livePreviewRequestSeq = 0
 
     private lateinit var twoStrandBox: JCheckBox
 
@@ -639,7 +657,10 @@ class TikzCanvasDialog(
                 g2.drawString(i.toString(), cx + 6, cy + i * STEP + 12)
             }
 
-            // shapes
+            // Shapes + knot + in-progress previews (rotated; grid/axes stay fixed)
+            val savedTx = AffineTransform(g2.transform)
+            g2.transform(forwardKnotViewTransform())
+
             drawShapes(g2)
 
             // knot working polyline
@@ -697,6 +718,8 @@ class TikzCanvasDialog(
                 val minY = min(r.a.y, r.b.y); val maxY = max(r.a.y, r.b.y)
                 g2.drawRect(minX, minY, maxX - minX, maxY - minY)
             }
+
+            g2.setTransform(savedTx)
         }
     }
 
@@ -719,8 +742,10 @@ class TikzCanvasDialog(
                     doLoadSelected()
                     initialPresetLoaded = true
                 }
+                layoutCanvasPreviewOverlay()
             }
         })
+        SwingUtilities.invokeLater { layoutCanvasPreviewOverlay() }
     }
 
     private fun drawShapes(g2: Graphics2D) {
@@ -758,6 +783,56 @@ class TikzCanvasDialog(
         }
     }
 
+    /** Normalized degrees in [0, 360), 0 = no rotation; matches TikZ `rotate` (CCW in standard coords). */
+    private fun knotViewRotateDeg(): Double {
+        val v = (spKnotRotate.value as? Number)?.toDouble() ?: 0.0
+        var d = v % 360.0
+        if (d < 0) d += 360.0
+        if (abs(d) < 1e-9 || abs(d - 360.0) < 1e-9) return 0.0
+        return d
+    }
+
+    /** Java2D rotation that matches TikZ `rotate` for the same numeric angle (screen y-down vs. paper y-up). */
+    private fun forwardKnotViewTransform(): AffineTransform {
+        val cx = canvas.width / 2.0
+        val cy = canvas.height / 2.0
+        val at = AffineTransform()
+        at.translate(cx, cy)
+        at.rotate(-Math.toRadians(knotViewRotateDeg()))
+        at.translate(-cx, -cy)
+        return at
+    }
+
+    private fun screenToModel(screen: Point): Point {
+        if (knotViewRotateDeg() < 1e-9) return Point(screen)
+        val inv = AffineTransform(forwardKnotViewTransform())
+        try {
+            inv.invert()
+        } catch (_: Exception) {
+            return Point(screen)
+        }
+        val pts = doubleArrayOf(screen.x.toDouble(), screen.y.toDouble())
+        inv.transform(pts, 0, pts, 0, 1)
+        return Point(pts[0].roundToInt(), pts[1].roundToInt())
+    }
+
+    private fun modelToScreen(m: Point): Point {
+        if (knotViewRotateDeg() < 1e-9) return Point(m)
+        val at = forwardKnotViewTransform()
+        val pts = doubleArrayOf(m.x.toDouble(), m.y.toDouble())
+        at.transform(pts, 0, pts, 0, 1)
+        return Point(pts[0].roundToInt(), pts[1].roundToInt())
+    }
+
+    private fun modelPoint(e: MouseEvent): Point = screenToModel(e.point)
+
+    private fun tikzRotatePictureSuffix(): String {
+        val d = knotViewRotateDeg()
+        if (d < 1e-9) return ""
+        val s = if (abs(d - d.roundToInt()) < 1e-9) d.roundToInt().toString() else formatQ(d)
+        return ", rotate=$s"
+    }
+
 
     // ---------- UI build ----------
     private fun initUI() {
@@ -790,11 +865,26 @@ class TikzCanvasDialog(
         clearBgBtn.addActionListener { clearBackgroundImage() }
         bgOpacitySpinner.addChangeListener { canvas.repaint() }
 
+        spKnotRotate = JSpinner(SpinnerNumberModel(0, 0, 360, 1)).apply {
+            toolTipText = "Rotate entire knot and shapes (0–360°, matches TikZ rotate)"
+            preferredSize = Dimension(56, preferredSize.height)
+            addChangeListener {
+                canvas.repaint()
+                textEditPending?.let { pending ->
+                    textEditField?.setBounds(modelToScreen(pending).x, modelToScreen(pending).y, 180, 24)
+                }
+                scheduleEmbedLivePreview()
+            }
+        }
+
         val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
             add(optionsBtn)
             add(Box.createHorizontalStrut(12))
             add(JLabel("Tool:"))
             add(toolCombo)
+            add(Box.createHorizontalStrut(12))
+            add(JLabel("Rotate °"))
+            add(spKnotRotate)
             add(Box.createHorizontalStrut(12))
             add(loadBgBtn); add(clearBgBtn)
         }
@@ -824,11 +914,27 @@ class TikzCanvasDialog(
             add(importSetupBtn)
             add(Box.createHorizontalStrut(12))
             add(previewBtn)
+            add(Box.createHorizontalStrut(8))
+            add(livePreviewCheck)
         }
 
         exportSetupBtn.addActionListener { saveSetupToFile() }
         importSetupBtn.addActionListener { loadSetupFromFile() }
         previewBtn.addActionListener { doPreview() }
+
+        livePreviewCheck.addItemListener {
+            val on = livePreviewCheck.isSelected
+            knotPreviewEmbedCard.isVisible = on
+            if (on) {
+                ensureKnotPreviewBrowserInCard()
+                layoutCanvasPreviewOverlay()
+                scheduleEmbedLivePreview()
+            } else {
+                livePreviewTimer?.stop()
+            }
+            canvasLayerHost.revalidate()
+            canvasLayerHost.repaint()
+        }
 
         optionsBtn.addActionListener { showKnotOptionsModal() }
 
@@ -837,10 +943,38 @@ class TikzCanvasDialog(
         header.add(toolsRow)
         header.add(fileRow)
 
+        val scrollCanvas = JScrollPane(canvas)
+        knotPreviewEmbedCard = JPanel(BorderLayout()).apply {
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.border(), 1),
+                BorderFactory.createEmptyBorder(4, 4, 4, 4)
+            )
+            background = JBColor.namedColor("Panel.background", Color(0xF2, 0xF3, 0xF5))
+            isOpaque = true
+            isVisible = false
+        }
+        canvasLayerHost = JLayeredPane().apply {
+            preferredSize = Dimension(640, 480)
+            add(scrollCanvas, Integer.valueOf(JLayeredPane.DEFAULT_LAYER))
+            add(knotPreviewEmbedCard, Integer.valueOf(JLayeredPane.PALETTE_LAYER))
+            addComponentListener(object : ComponentAdapter() {
+                override fun componentResized(e: ComponentEvent?) {
+                    layoutCanvasPreviewOverlay()
+                }
+            })
+        }
+
         rootPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createEmptyBorder(6, 6, 6, 6)
             add(header, BorderLayout.NORTH)
-            add(JScrollPane(canvas), BorderLayout.CENTER)
+            add(canvasLayerHost, BorderLayout.CENTER)
+            addAncestorListener(object : AncestorListener {
+                override fun ancestorAdded(event: AncestorEvent) {}
+                override fun ancestorRemoved(event: AncestorEvent) {
+                    disposeKnotPreviewEmbed()
+                }
+                override fun ancestorMoved(event: AncestorEvent) {}
+            })
         }
 
         setOKButtonText("Add to TeX")
@@ -851,10 +985,10 @@ class TikzCanvasDialog(
 
     // ---------- Mouse handling ----------
     private fun onPress(e: MouseEvent) {
-        val p = snap(e.point)
+        val p = snap(modelPoint(e))
         pressStartMs = System.currentTimeMillis()
         pressButton = e.button
-        pressRaw = e.point
+        pressRaw = modelPoint(e)
         provisionalAdd = null
         autoMoveGrab = false
         longPressFired = false // Add near other press state
@@ -864,7 +998,7 @@ class TikzCanvasDialog(
             Tool.KNOT -> {
                 // Right-click deletes nearest point
                 if (SwingUtilities.isRightMouseButton(e) || e.button == MouseEvent.BUTTON3 || e.isPopupTrigger) {
-                    nearestKnot(e.point)?.let { idx ->
+                    nearestKnot(modelPoint(e))?.let { idx ->
                         knotPts.removeAt(idx)
                         markDirty()
                         canvas.repaint()
@@ -875,7 +1009,7 @@ class TikzCanvasDialog(
                 // Left-click behavior
                 if (SwingUtilities.isLeftMouseButton(e) || e.button == MouseEvent.BUTTON1) {
                     // If we clicked an existing point, auto-grab to move
-                    val near = nearestKnot(e.point)
+                    val near = nearestKnot(modelPoint(e))
                     if (near != null) {
                         dragKnotIndex = near
                         autoMoveGrab = true
@@ -914,7 +1048,7 @@ class TikzCanvasDialog(
     }
 
     private fun onDrag(e: MouseEvent) {
-        val p = snap(e.point)
+        val p = snap(modelPoint(e))
         when (tool) {
             Tool.KNOT -> {
                 if (autoMoveGrab || mode == EditMode.MOVE) {
@@ -1021,7 +1155,7 @@ class TikzCanvasDialog(
     }
 
     private fun onRelease(e: MouseEvent) {
-        val p = snap(e.point)
+        val p = snap(modelPoint(e))
         when (tool) {
             Tool.KNOT -> {
                 // If we were dragging an existing point, just end the drag
@@ -1029,7 +1163,7 @@ class TikzCanvasDialog(
                     // no-op; dragKnotIndex cleared in reset
                 } else if (pressButton == MouseEvent.BUTTON1 && longPressReady) {
                     // Commit add on release if the press lasted long enough
-                    val raw = pressRaw ?: e.point
+                    val raw = pressRaw ?: modelPoint(e)
                     val segIdx = segmentAt(raw)
                     val candidate = if (segIdx != null) {
                         val proj = projectOntoSegment(raw, knotPts[segIdx], knotPts[segIdx + 1])
@@ -1103,10 +1237,11 @@ class TikzCanvasDialog(
 
     // ---------- dragging helpers ----------
     private fun startShapeDrag(e: MouseEvent, preferKinds: List<String>) {
-        val idx = pickShape(e.point) ?: return
+        val mp = modelPoint(e)
+        val idx = pickShape(mp) ?: return
         val s = shapes[idx]
         val tol2 = PICK_R * PICK_R
-        val hit = s.hit(e.point, tol2) ?: return
+        val hit = s.hit(mp, tol2) ?: return
         if (preferKinds.isNotEmpty() && hit.kind !in preferKinds) return
         val orig = when (s) {
             is Dot   -> Point(s.p)
@@ -1115,7 +1250,7 @@ class TikzCanvasDialog(
             is Rect  -> Pair(Point(s.a), Point(s.b))
             is Circ -> Pair(Point(s.c), s.rUnits)
         }
-        drag = DragCtx(idx, hit, e.point, orig)
+        drag = DragCtx(idx, hit, mp, orig)
         dragKind = hit.kind
     }
 
@@ -1305,21 +1440,12 @@ class TikzCanvasDialog(
     }
 
     private fun doPreview() {
-        val body = buildCurrentExportBody()
-        if (body.startsWith("%") || body.isBlank()) {
+        val texDoc = buildKnotPreviewTexDocument()
+        if (texDoc == null) {
             JOptionPane.showMessageDialog(rootPanel, "Add knot points or draw shapes to preview.", "Preview", JOptionPane.WARNING_MESSAGE)
             return
         }
         previewBtn.isEnabled = false
-        val texDoc = """
-\documentclass[tikz,border=2pt]{standalone}
-\usepackage{tikz}
-\usetikzlibrary{knots,hobby,calc,intersections,decorations.pathreplacing,decorations.markings,shapes.geometric,spath3,topaths}
-\newcommand{\SSTGuidesPoints}[2]{}
-\begin{document}
-$body
-\end{document}
-        """.trimIndent()
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
                 val baseDir = project.basePath
@@ -1327,39 +1453,52 @@ $body
                 TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
                 val key = "tikz-knot-preview"
                 val svgFile = LatexHtmlTikz.renderTexToSvg(texDoc, key)
-                ApplicationManager.getApplication().invokeLater {
-                    previewBtn.isEnabled = true
-                    if (svgFile != null && svgFile.exists()) {
-                        val svgText = svgFile.readText()
-                        val html = """
+                // ModalityState.any(): run while the modal TikZ dialog is still open (default invokeLater waits until it closes).
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        previewBtn.isEnabled = true
+                        if (svgFile != null && svgFile.exists()) {
+                            val svgText = svgFile.readText()
+                            val html = """
 <!DOCTYPE html><html><head><meta charset="utf-8"/></head>
 <body style="margin:0;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;">
 <div style="background:white;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">$svgText</div>
 </body></html>
-                        """.trimIndent()
-                        val owner = WindowManager.getInstance().getFrame(project) as? Window
-                        val dlg = JDialog(owner, "Knot Preview", Dialog.ModalityType.MODELESS)
-                        dlg.defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
-                        dlg.layout = BorderLayout()
-                        val browser = JBCefBrowser()
-                        browser.loadHTML(html, "about:blank")
-                        dlg.add(browser.component, BorderLayout.CENTER)
-                        dlg.setSize(500, 500)
-                        dlg.setLocationRelativeTo(owner)
-                        dlg.isVisible = true
-                        dlg.toFront()
-                        dlg.requestFocus()
-                    } else {
-                        JOptionPane.showMessageDialog(rootPanel,
-                            "TikZ compilation failed. Ensure pdflatex and dvisvgm/pdf2svg are installed.",
-                            "Preview", JOptionPane.ERROR_MESSAGE)
-                    }
-                }
+                            """.trimIndent()
+                            val canvasWindow = SwingUtilities.getWindowAncestor(rootPanel) as? Window
+                            val owner = canvasWindow ?: WindowManager.getInstance().getFrame(project) as? Window
+                            val dlg = JDialog(owner, "Knot Preview", Dialog.ModalityType.MODELESS)
+                            dlg.defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
+                            dlg.layout = BorderLayout()
+                            val browser = JBCefBrowser()
+                            browser.loadHTML(html, "about:blank")
+                            dlg.add(browser.component, BorderLayout.CENTER)
+                            dlg.setSize(500, 500)
+                            dlg.setLocationRelativeTo(owner)
+                            dlg.isVisible = true
+                            dlg.toFront()
+                            dlg.requestFocus()
+                            // JCEF can reparent HWNDs slightly later on Windows; second bump keeps preview above the modal editor.
+                            SwingUtilities.invokeLater {
+                                dlg.toFront()
+                                dlg.requestFocus()
+                            }
+                        } else {
+                            JOptionPane.showMessageDialog(rootPanel,
+                                "TikZ compilation failed. Ensure pdflatex and dvisvgm/pdf2svg are installed.",
+                                "Preview", JOptionPane.ERROR_MESSAGE)
+                        }
+                    },
+                    ModalityState.any()
+                )
             } catch (t: Throwable) {
-                ApplicationManager.getApplication().invokeLater {
-                    previewBtn.isEnabled = true
-                    JOptionPane.showMessageDialog(rootPanel, "Preview error: ${t.message}", "Preview", JOptionPane.ERROR_MESSAGE)
-                }
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        previewBtn.isEnabled = true
+                        JOptionPane.showMessageDialog(rootPanel, "Preview error: ${t.message}", "Preview", JOptionPane.ERROR_MESSAGE)
+                    },
+                    ModalityState.any()
+                )
             }
         }
     }
@@ -1414,7 +1553,7 @@ $body
 
         val sb = StringBuilder()
 
-        sb.appendLine("\\begin{tikzpicture}[use Hobby shortcut, line cap=round, line join=round, scale=1.05]")
+        sb.appendLine("\\begin{tikzpicture}[use Hobby shortcut, line cap=round, line join=round, scale=1.05${tikzRotatePictureSuffix()}]")
         sb.appendLine()
         sb.appendLine("% ---- controls ----")
         sb.appendLine("\\def\\Amp{${fmtQ(amp)}}")
@@ -1517,7 +1656,7 @@ $body
             sb.append("\\begin{figure}[t]\n")
             sb.append("    \\centering\n")
         }
-        sb.append("    \\begin{tikzpicture}[use Hobby shortcut]\n")
+        sb.append("    \\begin{tikzpicture}[use Hobby shortcut${tikzRotatePictureSuffix()}]\n")
 
         // Optional color for the strand
         if (!knotColor.isNullOrBlank()) {
@@ -1597,7 +1736,7 @@ $body
     private fun exportShapesOnly(): String {
         if (shapes.isEmpty()) return "% No content."
         val sb = StringBuilder()
-        sb.append("    \\begin{tikzpicture}[use Hobby shortcut]\n")
+        sb.append("    \\begin{tikzpicture}[use Hobby shortcut${tikzRotatePictureSuffix()}]\n")
         appendShapesToTikz(sb)
         sb.append("    \\end{tikzpicture}\n")
         return sb.toString().trimEnd()
@@ -1698,7 +1837,104 @@ $body
             .replace("^", "\\^{}")
             .replace("~", "\\~{}")
 
-    private fun markDirty() { dirty = true }
+    private fun markDirty() {
+        dirty = true
+        scheduleEmbedLivePreview()
+    }
+
+    private fun layoutCanvasPreviewOverlay() {
+        if (!this::canvasLayerHost.isInitialized) return
+        val w = canvasLayerHost.width
+        val h = canvasLayerHost.height
+        if (w <= 0 || h <= 0) return
+        val scroll = canvasLayerHost.getComponent(0) as? JScrollPane ?: return
+        scroll.setBounds(0, 0, w, h)
+        if (!knotPreviewEmbedCard.isVisible) return
+        val pw = (w * 0.36).toInt().coerceIn(180, 340)
+        val ph = (h * 0.40).toInt().coerceIn(150, 300)
+        val m = 10
+        knotPreviewEmbedCard.setBounds((w - pw - m).coerceAtLeast(0), (h - ph - m).coerceAtLeast(0), pw, ph)
+    }
+
+    private fun ensureKnotPreviewBrowserInCard() {
+        if (knotPreviewBrowser != null) return
+        val b = JBCefBrowser()
+        knotPreviewBrowser = b
+        knotPreviewEmbedCard.removeAll()
+        knotPreviewEmbedCard.add(b.component, BorderLayout.CENTER)
+    }
+
+    private fun disposeKnotPreviewEmbed() {
+        livePreviewTimer?.stop()
+        livePreviewTimer = null
+        knotPreviewBrowser?.let {
+            try {
+                Disposer.dispose(it)
+            } catch (_: Throwable) {
+            }
+        }
+        knotPreviewBrowser = null
+        if (this::knotPreviewEmbedCard.isInitialized) {
+            knotPreviewEmbedCard.removeAll()
+        }
+    }
+
+    private fun scheduleEmbedLivePreview() {
+        if (!livePreviewCheck.isSelected) return
+        livePreviewRequestSeq++
+        val req = livePreviewRequestSeq
+        livePreviewTimer?.stop()
+        val t = Timer(400) {
+            livePreviewTimer?.stop()
+            runEmbedLivePreview(req)
+        }
+        t.isRepeats = false
+        livePreviewTimer = t
+        t.start()
+    }
+
+    private fun buildKnotPreviewTexDocument(): String? {
+        val body = buildCurrentExportBody()
+        if (body.startsWith("%") || body.isBlank()) return null
+        return """
+\documentclass[tikz,border=2pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{knots,hobby,calc,intersections,decorations.pathreplacing,decorations.markings,shapes.geometric,spath3,topaths}
+\newcommand{\SSTGuidesPoints}[2]{}
+\begin{document}
+$body
+\end{document}
+        """.trimIndent()
+    }
+
+    private fun runEmbedLivePreview(requestId: Int) {
+        if (!livePreviewCheck.isSelected || requestId != livePreviewRequestSeq) return
+        val texDoc = buildKnotPreviewTexDocument() ?: return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            if (requestId != livePreviewRequestSeq) return@executeOnPooledThread
+            try {
+                val baseDir = project.basePath
+                if (baseDir != null) TikzRenderer.currentBaseDir = baseDir
+                TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
+                val jobKey = "tikz-canvas-live-" + texDoc.hashCode()
+                val svgFile = LatexHtmlTikz.renderTexToSvg(texDoc, jobKey)
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        if (!livePreviewCheck.isSelected || requestId != livePreviewRequestSeq) return@invokeLater
+                        val svg = svgFile?.takeIf { it.exists() }?.readText() ?: return@invokeLater
+                        val html = """
+<!DOCTYPE html><html><head><meta charset="utf-8"/><style>html,body{margin:0;height:100%;background:#f0f0f0;}body{display:flex;align-items:center;justify-content:center;overflow:hidden;}</style></head>
+<body><div style="max-width:100%;max-height:100%;">$svg</div></body></html>
+                        """.trimIndent()
+                        ensureKnotPreviewBrowserInCard()
+                        knotPreviewBrowser?.loadHTML(html, "about:blank")
+                    },
+                    ModalityState.any()
+                )
+            } catch (_: Throwable) {
+            }
+        }
+    }
 
 
     // Translate all geometry by dx, dy (canvas center shift)
@@ -1731,16 +1967,17 @@ $body
         rectPreview = rectPreview?.let { Rect(Point(it.a.x + dx, it.a.y + dy), Point(it.b.x + dx, it.b.y + dy)) }
         circlePreview = circlePreview?.let { Circ(Point(it.c.x + dx, it.c.y + dy), it.rUnits) }
         textEditPending = textEditPending?.let { Point(it.x + dx, it.y + dy) }
-        textEditField?.let { tf ->
-            tf.setBounds(tf.x + dx, tf.y + dy, tf.width, tf.height)
+        textEditPending?.let { pending ->
+            textEditField?.setBounds(modelToScreen(pending).x, modelToScreen(pending).y, 180, 24)
         }
         canvas.repaint()
     }
 
     private fun showInlineTextEditor(p: Point) {
         cancelInlineText()
+        val screenPos = modelToScreen(p)
         val tf = JTextField("", 16).apply {
-            setBounds(p.x, p.y, 180, 24)
+            setBounds(screenPos.x, screenPos.y, 180, 24)
             font = Font(font.name, font.style, 14)
             addActionListener { commitInlineText() }
             addFocusListener(object : FocusAdapter() {
@@ -1888,6 +2125,7 @@ $body
             props["showPoints"] = showPointsBox.isSelected.toString()
             props["twin"] = twinBox.isSelected.toString()
             props["twinOffset"] = twinOffset.value.toString()
+            props["knotRotate"] = spKnotRotate.value.toString()
             props.store(java.io.FileOutputStream(file), "Tikz Setup")
         }
     }
@@ -1920,6 +2158,7 @@ $body
             showPointsBox.isSelected = props.getProperty("showPoints")?.toBoolean() ?: showPointsBox.isSelected
             twinBox.isSelected = props.getProperty("twin")?.toBoolean() ?: twinBox.isSelected
             twinOffset.value = props.getProperty("twinOffset")?.toDoubleOrNull() ?: twinOffset.value
+            props.getProperty("knotRotate")?.toIntOrNull()?.let { spKnotRotate.value = it }
             canvas.repaint()
         }
     }

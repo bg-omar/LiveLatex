@@ -8,10 +8,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.omariskandarani.livelatex.core.LatexPreviewService
 import com.omariskandarani.livelatex.core.LiveLatexSettings
 
-/** Toggle for "Render TikZ" in the LaTeX preview. When off, TikZ is not compiled so the IDE stays responsive. */
+/** Toggle for LiveRender (TikZ in preview). When off, TikZ is not compiled so the IDE stays responsive. */
 class RenderTikzToggleAction : ToggleAction(
-    "Render TikZ",
-    "TikZ in preview aan of uit (uit = snellere IDE)",
+    "LiveRender",
+    "TikZ automatisch in de preview compileren (uit = snellere IDE)",
     AllIcons.FileTypes.Image
 ) {
     override fun isSelected(e: AnActionEvent): Boolean =

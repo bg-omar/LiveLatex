@@ -8,17 +8,20 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.LogicalPosition
 import com.intellij.openapi.editor.event.*
 import com.intellij.openapi.fileEditor.*
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Condition
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
+import com.intellij.openapi.diagnostic.Logger
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 
 import com.intellij.openapi.wm.ToolWindow
@@ -30,9 +33,13 @@ import java.awt.Point
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.omariskandarani.livelatex.ui.PreviewToolbarPanel
 import java.io.File
+import java.security.MessageDigest
 
 
 class LatexPreviewService(private val project: Project) : Disposable {
+    companion object {
+        private val LOG = Logger.getInstance(LatexPreviewService::class.java)
+    }
 
     private var browser: JBCefBrowser? = null
     private var pageReady = false
@@ -51,9 +58,23 @@ class LatexPreviewService(private val project: Project) : Disposable {
     var toolbarPanel: PreviewToolbarPanel? = null
         set(value) { field = value }
     private val tikzExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor("TikzPool", 1)
+    /** Single-thread pool so only one `wrapWithInputs` runs at a time (mutates LatexHtml / TikzRenderer globals). */
+    private val previewBuildExecutor: ExecutorService =
+        AppExecutorUtil.createBoundedApplicationPoolExecutor("LiveLatexPreview", 1)
 
+    @Volatile
+    private var previewBuildGeneration = 0
+
+    /** Alleen voor sectie-sync / vertraagde JS (niet voor preview-debounce). */
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+    /** Aparte alarm: `scheduleRefresh` mag niet `cancelAllRequests` op de sectie-alarm uitvoeren. */
+    private val refreshDebounceAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private val debounceMs = 150
+
+    private fun isLiveLatexPreviewFile(file: VirtualFile?): Boolean {
+        val ext = file?.extension?.lowercase() ?: return false
+        return ext in listOf("tex", "ltx", "latex", "tikz")
+    }
 
     /** True while we're moving editor caret/scroll from a preview click/scroll; prevents feedback loop (editor→preview sync). */
     @Volatile
@@ -87,6 +108,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
         jsRenderTikzQuery = JBCefJSQuery.create(browser).also { q ->
             Disposer.register(this, q)
             q.addHandler { key ->
+                LOG.warn("LiveLatex TikZ request received: key=$key")
                 // Submit the compile work on our 1-thread pool
                 val f = tikzExecutor.submit<TikzResult> {
                     runTikzCompileSafely(key)
@@ -94,9 +116,10 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
                 ApplicationManager.getApplication().executeOnPooledThread {
                     val result: TikzResult = try {
-                        f.get(60, TimeUnit.SECONDS) // hard timeout
+                        f.get(3, TimeUnit.MINUTES) // must exceed LatexHtmlTikz PDF build + dvisvgm for heavy figures
                     } catch (t: Throwable) {
                         f.cancel(true)
+                        LOG.warn("LiveLatex TikZ request failed/timed out: key=$key, err=${t.message}")
                         TikzResult.fail(key, "Compile timeout or error: ${t.message ?: t::class.java.simpleName}")
                     }
 
@@ -105,6 +128,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val json = result.toJsonForJs()
                     ApplicationManager.getApplication().invokeLater({
                         // double-check browser still alive
+                        LOG.warn("LiveLatex TikZ posting result: key=$key, ok=${result.ok}, hasUrl=${result.url != null}, hasSvg=${result.svgText != null}")
                         cef.executeJavaScript("window.postMessage($json, '*');", cef.url, 0)
                     }, { project.isDisposed })
                 }
@@ -114,19 +138,22 @@ class LatexPreviewService(private val project: Project) : Disposable {
             }
 
         }
+        installTikzBridgeJs(browser)
+    }
 
-        // Expose a callable bridge in the page
+    private fun installTikzBridgeJs(browser: JBCefBrowserBase) {
+        val q = jsRenderTikzQuery ?: return
         val js = """
         (function(){
           window.__llHostRenderTikz = function(key){
-            try { return ${jsRenderTikzQuery!!.inject("key")}; }
+            try { return ${q.inject("key")}; }
             catch(e){ /* ignore; page has a timeout */ }
           };
           // Fallback route: page asks via postMessage → we call the bridge
           window.addEventListener('message', function(ev){
             var d = ev.data||{};
             if (d.type==='tikz-render' && d.key){
-              try { ${jsRenderTikzQuery!!.inject("d.key")} } catch(e){}
+              try { ${q.inject("d.key")} } catch(e){}
             }
           }, false);
         })();
@@ -144,14 +171,19 @@ class LatexPreviewService(private val project: Project) : Disposable {
                 JBCefJSQuery.Response("OK")
             }
         }
+        installClearCacheBridgeJs(browser)
+    }
+
+    private fun installClearCacheBridgeJs(browser: JBCefBrowserBase) {
+        val q = jsClearCacheQuery ?: return
         val js = """
         (function(){
           window.__llHostClearCache = function(){
-            try { ${jsClearCacheQuery!!.inject("''")}; } catch(e){}
+            try { ${q.inject("''")}; } catch(e){}
           };
           window.addEventListener('message', function(ev){
             var d = ev.data||{};
-            if (d.type==='clear-cache'){ try { ${jsClearCacheQuery!!.inject("''")}; } catch(e){} }
+            if (d.type==='clear-cache'){ try { ${q.inject("''")}; } catch(e){} }
           }, false);
         })();
         """.trimIndent()
@@ -170,16 +202,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                 JBCefJSQuery.Response("OK")
             }
         }
-        val js = """
-        (function(){
-          window.__llHostSectionsReady = function(json){
-            try { return ${jsSectionsQuery!!.inject("json")}; }
-            catch(e){ return ''; }
-          };
-          if (typeof window.sendSectionsToHost === 'function') window.sendSectionsToHost();
-        })();
-        """.trimIndent()
-        browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
+        installSectionsBridgeJs(browser)
         // Vraag secties meerdere keren (bridge kan laat klaar zijn; MathJax kan DOM later updaten)
         listOf(400, 900, 1800).forEach { delayMs ->
             alarm.addRequest({
@@ -189,10 +212,31 @@ class LatexPreviewService(private val project: Project) : Disposable {
         }
     }
 
+    private fun installSectionsBridgeJs(browser: JBCefBrowserBase) {
+        val q = jsSectionsQuery ?: return
+        val js = """
+        (function(){
+          window.__llHostSectionsReady = function(json){
+            try { return ${q.inject("json")}; }
+            catch(e){ return ''; }
+          };
+          if (typeof window.sendSectionsToHost === 'function') window.sendSectionsToHost();
+        })();
+        """.trimIndent()
+        browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
+    }
+
     /** Zet auto-scroll state uit IDE-instellingen in de preview-pagina (localStorage). */
     private fun syncAutoScrollSettingsToPage() {
         val settings = ApplicationManager.getApplication().getService(com.omariskandarani.livelatex.core.LiveLatexSettings::class.java)
-        eval("try { localStorage.setItem('ll_auto_scroll', ${settings.autoScrollPreview}); localStorage.setItem('ll_auto_scroll_editor', ${settings.autoScrollEditor}); } catch(e){}")
+        eval(
+            "try { " +
+                "localStorage.setItem('ll_auto_scroll', ${settings.autoScrollPreview}); " +
+                "localStorage.setItem('ll_auto_scroll_editor', ${settings.autoScrollEditor}); " +
+                "localStorage.setItem('ll_show_tikz_debug', ${settings.showTikzDebugOverlay}); " +
+                "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug(${settings.showTikzDebugOverlay}); " +
+            "} catch(e){}"
+        )
     }
 
     private fun parseSectionsJson(json: String): List<Pair<String, String>> {
@@ -214,11 +258,33 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private fun clearCacheForPaper() {
-        val cacheDir = File(PathManager.getSystemPath(), "livelatex-cache")
+        val cacheDir = currentDocumentCacheDir()
         if (cacheDir.exists()) {
             cacheDir.deleteRecursively()
         }
         scheduleRefresh()
+    }
+
+    private fun clearAllCache() {
+        val cacheDir = globalCacheDir()
+        if (cacheDir.exists()) {
+            cacheDir.deleteRecursively()
+        }
+        scheduleRefresh()
+    }
+
+    private fun globalCacheDir(): File =
+        File(PathManager.getSystemPath(), "livelatex-cache")
+
+    private fun currentDocumentCacheDir(): File {
+        val path = currentTexFileAndText()?.first?.path
+        if (path.isNullOrBlank()) return globalCacheDir()
+        return File(globalCacheDir(), sha1(path))
+    }
+
+    private fun sha1(s: String): String {
+        val md = MessageDigest.getInstance("SHA-1")
+        return md.digest(s.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 
     // Compile and capture output/errors safely
@@ -226,13 +292,24 @@ class LatexPreviewService(private val project: Project) : Disposable {
         return try {
             // choose a single cache under the project ROOT, not user home:
             val texDoc = LatexTikzJobStore.get(key)
+            if (texDoc == null) {
+                LOG.warn("LiveLatex TikZ job miss: key=$key")
+            } else {
+                LOG.warn("LiveLatex TikZ job hit: key=$key, texLen=${texDoc.length}")
+            }
             val out = if (texDoc != null) LatexHtmlTikz.renderTexToSvg(texDoc, key) else null
             if (out != null && out.exists()) {
-                TikzResult.okSvg(key, out.readText())
+                // Return URL instead of inline SVG text to avoid SVG id collisions
+                // across multiple rendered TikZ blocks in the same HTML document.
+                val bust = out.lastModified()
+                LOG.warn("LiveLatex TikZ compile ok: key=$key, out=${out.absolutePath}")
+                TikzResult.okUrl(key, out.toURI().toString() + "?v=" + bust)
             } else {
+                LOG.warn("LiveLatex TikZ compile produced no SVG: key=$key")
                 TikzResult.fail(key, "TikZ compile produced no SVG. See last-compile.log.")
             }
         } catch (t: Throwable) {
+            LOG.warn("LiveLatex TikZ compile exception: key=$key, err=${t.message}", t)
             TikzResult.fail(key, (t.message ?: t.toString()))
         }
     }
@@ -264,7 +341,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                 override fun selectionChanged(event: FileEditorManagerEvent) {
                     val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview") ?: return
                     val file = event.newFile
-                    if (file?.name?.endsWith(".tex") == true) {
+                    if (isLiveLatexPreviewFile(file)) {
                         toolWindow.setWidth(400)
                         toolWindow.show()
                         rebindToSelectedEditor()
@@ -273,7 +350,14 @@ class LatexPreviewService(private val project: Project) : Disposable {
                         toolWindow.setWidth(10)
                         // do not hide — keep strip visible so it re-expands when back on .tex
                     }
-                    scheduleRefresh()
+                    // Next EDT tick so FileEditorManager / document match the newly selected tab (avoids stale snapshot).
+                    ApplicationManager.getApplication().invokeLater(
+                        {
+                            if (project.isDisposed) return@invokeLater
+                            refresh()
+                        },
+                        Condition<Any?> { project.isDisposed }
+                    )
                 }
             }
         )
@@ -337,15 +421,15 @@ class LatexPreviewService(private val project: Project) : Disposable {
             ) {
                 if (!isLoading) {
                     pageReady = true
+                    installTikzBridgeJs(base)
+                    installClearCacheBridgeJs(base)
+                    installSectionsBridgeJs(base)
                     flushPending()
                 }
             }
         }, b.cefBrowser)
 
-        // global doc changes → refresh
-        EditorFactory.getInstance().eventMulticaster.addDocumentListener(docListener, this)
-
-        // bind to selected editor + initial render
+        // bind to selected editor + initial render (document listener per editor, betrouwbaarder dan alleen multicaster)
         rebindToSelectedEditor()
         scheduleRefresh()
     }
@@ -370,6 +454,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
         if (boundEditor == editor) return
         unbindEditor()
         boundEditor = editor
+        editor?.document?.addDocumentListener(docListener)
         editor?.caretModel?.addCaretListener(caretListener, this)
         editor?.scrollingModel?.addVisibleAreaListener(visibleListener, this)
         if (editor != null) {
@@ -380,6 +465,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
     private fun unbindEditor() {
         boundEditor?.let { ed ->
+            ed.document.removeDocumentListener(docListener)
             ed.caretModel.removeCaretListener(caretListener)
             ed.scrollingModel.removeVisibleAreaListener(visibleListener)
         }
@@ -419,8 +505,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private fun scheduleRefresh() {
-        alarm.cancelAllRequests()
-        alarm.addRequest({ refresh() }, debounceMs)
+        refreshDebounceAlarm.cancelAllRequests()
+        refreshDebounceAlarm.addRequest({ refresh() }, debounceMs)
     }
 
     /** Call to refresh the preview (e.g. after toggling TikZ rendering). */
@@ -445,54 +531,110 @@ class LatexPreviewService(private val project: Project) : Disposable {
         clearCacheForPaper()
     }
 
+    fun requestClearAllCache() {
+        clearAllCache()
+    }
+
     fun requestJumpToSection(id: String) {
         val escaped = id.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"")
         eval("try { if (typeof window.jumpToMarkId === 'function') window.jumpToMarkId('$escaped'); } catch(e){}")
     }
 
     private fun refresh() {
-        // Use JetBrains system cache for TikZ/output instead of the LaTeX file directory
-        TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
         val fem = FileEditorManager.getInstance(project)
         val editor = fem.selectedTextEditor
         val caretLine = editor?.caretModel?.logicalPosition?.line?.plus(1) ?: 1
         val doc = editor?.document
         val vf = if (doc != null) FileDocumentManager.getInstance().getFile(doc) else null
         val ext = vf?.extension?.lowercase()
-        val html = when (ext) {
-            "tex", "ltx", "latex", "tikz" -> LatexHtml.wrapWithInputs(doc!!.text, vf.path)
-            else -> LatexHtml.wrap("<p style='opacity:.66'>Open a <code>.tex</code> file to preview.</p>")
-        }
-        if (ext in listOf("tex", "ltx", "latex", "tikz")) {
-            lastSections = LatexHtml.lastCollectedSections
+        val isTexLike = ext in listOf("tex", "ltx", "latex", "tikz")
+        val snapshotText = if (isTexLike && doc != null && vf != null) doc.text else null
+        val snapshotPath = vf?.path
+        val cacheRootForSnapshot = if (snapshotPath != null) {
+            File(globalCacheDir(), sha1(snapshotPath)).absolutePath
         } else {
-            lastSections = emptyList()
+            globalCacheDir().absolutePath
         }
-        renderHtml(html, caretLine)
+        val token = ++previewBuildGeneration
+
+        previewBuildExecutor.execute {
+            val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
+            val wantsLiveRenderProgress =
+                settings.renderTikzInPreview && isTexLike && snapshotText != null
+            if (wantsLiveRenderProgress) {
+                TikzRenderer.setLiveRenderProgressHandler { cur, tot, detail ->
+                    ApplicationManager.getApplication().invokeLater(
+                        {
+                            if (project.isDisposed || token != previewBuildGeneration) return@invokeLater
+                            toolbarPanel?.setLiveRenderProgress(cur, tot, detail)
+                        },
+                        Condition<Any?> { project.isDisposed }
+                    )
+                }
+            }
+            val html = try {
+                TikzRenderer.pluginCacheRoot = cacheRootForSnapshot
+                when {
+                    isTexLike && snapshotText != null && snapshotPath != null ->
+                        LatexHtml.wrapWithInputs(snapshotText, snapshotPath)
+                    else ->
+                        LatexHtml.wrap("<p style='opacity:.66'>Open a <code>.tex</code> file to preview.</p>")
+                }
+            } catch (t: Throwable) {
+                val msg = (t.message ?: t.toString()).replace("<", "&lt;")
+                LatexHtml.wrap("<p style='opacity:.66;color:#b91c1c'>Preview build failed: $msg</p>")
+            } finally {
+                TikzRenderer.setLiveRenderProgressHandler(null)
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        if (project.isDisposed || token != previewBuildGeneration) return@invokeLater
+                        toolbarPanel?.clearLiveRenderProgress()
+                    },
+                    Condition<Any?> { project.isDisposed }
+                )
+            }
+
+            ApplicationManager.getApplication().invokeLater(
+                {
+                    if (project.isDisposed) return@invokeLater
+                    if (token != previewBuildGeneration) return@invokeLater
+                    if (isTexLike && snapshotPath != null) {
+                        val ed = FileEditorManager.getInstance(project).selectedTextEditor ?: return@invokeLater
+                        val vfNow = FileDocumentManager.getInstance().getFile(ed.document) ?: return@invokeLater
+                        val a = FileUtil.toSystemIndependentName(snapshotPath)
+                        val b = FileUtil.toSystemIndependentName(vfNow.path)
+                        if (!FileUtil.pathsEqual(a, b)) return@invokeLater
+                    }
+                    if (isTexLike) {
+                        lastSections = LatexHtml.lastCollectedSections
+                    } else {
+                        lastSections = emptyList()
+                    }
+                    renderHtml(html, caretLine)
+                },
+                Condition<Any?> { project.isDisposed }
+            )
+        }
     }
 
+    /** Must run on EDT (invoked from [refresh] completion after background build). */
     private fun renderHtml(html: String, caretLine: Int) {
-        ApplicationManager.getApplication().invokeLater {
-            pageReady = false
-            browser?.loadHTML(html, "http://latex-preview.local/")
-            // Define the bridge function for preview → IDE
-            jsMoveCaret?.let { q ->
-                val def = (
-                    """
-                    window.__jbcefMoveCaret = function(obj){
-                      try {
-                        var s = (typeof obj === 'string') ? obj : JSON.stringify(obj);
-                        ${q.inject("s")}
-                      } catch(e) {}
-                    };
-                    """
-                ).trimIndent()
-                eval(def)
-            }
-            // Queue the initial sync; it will run after the page finishes loading.
-            postSync(caretLine, source = "initial")
+        pageReady = false
+        browser?.loadHTML(html, "http://latex-preview.local/")
+        jsMoveCaret?.let { q ->
+            val def = (
+                """
+                window.__jbcefMoveCaret = function(obj){
+                  try {
+                    var s = (typeof obj === 'string') ? obj : JSON.stringify(obj);
+                    ${q.inject("s")}
+                  } catch(e) {}
+                };
+                """
+            ).trimIndent()
+            eval(def)
         }
-
+        postSync(caretLine, source = "initial")
     }
 
     private fun currentTexFileAndText(): Pair<VirtualFile, String>? {
@@ -529,6 +671,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
 
     override fun dispose() {
+        try { previewBuildExecutor.shutdownNow() } catch (_: Throwable) {}
         try { tikzExecutor.shutdownNow() } catch (_: Throwable) {}
     }
 

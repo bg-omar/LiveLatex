@@ -870,53 +870,22 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
   </script>
 <script>
 (function(){
-  function setStatus(el, msg) {
-    const s = el.querySelector('.tikz-status');
-    if (s) s.textContent = msg;
-  }
-
-  // Click handler: ask host to render by key
-  document.addEventListener('click', function(e){
-    const btn = e.target.closest && e.target.closest('.tikz-load');
-    if (!btn) return;
-    const key = btn.dataset.tikzKey;
-    if (!key) return;
-    const holder = btn.closest('.tikz-lazy');
-    btn.disabled = true;
-    setStatus(holder, 'Rendering…');
-
-    try {
-      // Ask the host (your Kotlin side) to render this key.
-      // Your host already listens to preview messages (you post 'preview-mark' etc).
-      // Handle this new 'tikz-render' similarly in host, then post a 'tikz-render-result'.
-      window.postMessage({ type: 'tikz-render', key }, '*');
-    } catch(_) {}
-  }, true);
-
-  // Host → page: receive render result
-  window.addEventListener('message', function(ev){
-    const d = ev.data || {};
-    if (d && d.type === 'tikz-render-result' && d.key) {
-      const holder = document.querySelector('.tikz-lazy[data-tikz-key="'+d.key+'"]');
-      if (!holder) return;
-
-      if (d.ok && d.svgText) {
-        holder.outerHTML = '<span class="tikz-wrap" style="display:block;margin:12px 0;">' + d.svgText + '</span>';
-      } else if (d.ok && d.url) {
-        holder.outerHTML = '<img src="'+d.url+'" alt="tikz" style="max-width:100%;height:auto;display:block;margin:10px auto;"/>';
-      } else {
-        const msg = (d.error || 'TikZ render failed').toString().slice(0, 2000);
-        holder.innerHTML =
-          '<pre class="tikz-error" style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">'
-          + msg.replace(/[<>&]/g, s=>({ '<':'&lt;','>':'&gt;','&':'&amp;' }[s])) + '</pre>';
-      }
-    }
-  }, false);
-})();
-</script>
-<script>
-(function(){
   const TIMEOUT_MS = 20000;
+  let debugEnabled = false;
+  try { debugEnabled = localStorage.getItem('ll_show_tikz_debug') === 'true'; } catch(_) {}
+  window.__llSetTikzDebug = function(state){
+    debugEnabled = !!state;
+    try { localStorage.setItem('ll_show_tikz_debug', debugEnabled ? 'true' : 'false'); } catch(_) {}
+    document.querySelectorAll('.tikz-debug-badge').forEach(el => {
+      el.style.display = debugEnabled ? 'block' : 'none';
+    });
+    if (debugEnabled) {
+      document.querySelectorAll('.tikz-lazy[data-tikz-key]').forEach(wrap => {
+        const key = wrap.getAttribute('data-tikz-key') || '';
+        ensureDebugBadge(wrap, key, 'idle');
+      });
+    }
+  };
 
   function callHostAsync(key){
     if (typeof window.__llHostRenderTikz === 'function') {
@@ -929,6 +898,22 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
   }
 
   function setStatus(wrap, msg){ const s=wrap.querySelector('.tikz-status'); if (s) s.textContent = msg; }
+  function escHtml(s){
+    return String(s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+  }
+  function ensureDebugBadge(wrap, key, state){
+    if (!wrap) return;
+    wrap.style.position = 'relative';
+    let badge = wrap.querySelector('.tikz-debug-badge');
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.className = 'tikz-debug-badge';
+      badge.style.cssText = 'position:absolute;top:4px;right:4px;z-index:3;font:11px/1.2 monospace;background:rgba(17,24,39,.82);color:#fff;padding:2px 6px;border-radius:4px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      wrap.appendChild(badge);
+    }
+    badge.innerHTML = 'key: ' + escHtml(key) + (state ? ' | ' + escHtml(state) : '');
+    badge.style.display = debugEnabled ? 'block' : 'none';
+  }
 
   function install(){
     document.querySelectorAll('.tikz-load').forEach(btn=>{
@@ -937,6 +922,7 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
         e.preventDefault();
         const key = btn.dataset.tikzKey;
         const wrap = btn.closest('.tikz-lazy');
+        ensureDebugBadge(wrap, key, 'queued');
         setStatus(wrap, 'Rendering…');
 
         // Start render
@@ -946,8 +932,12 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
         clearTimeout(btn.__llTimeout);
         btn.__llTimeout = setTimeout(()=>{
           setStatus(wrap, 'Render timed out. Is LaTeX installed? Check logs.');
+          ensureDebugBadge(wrap, key, 'timeout');
         }, TIMEOUT_MS);
       });
+      const key = btn.dataset.tikzKey;
+      const wrap = btn.closest('.tikz-lazy');
+      ensureDebugBadge(wrap, key, 'idle');
     });
   }
 
@@ -964,13 +954,16 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
       if (d.svgText) wrap.innerHTML = d.svgText;
       else if (d.url) wrap.innerHTML = '<img alt="tikz" src="'+d.url+'">';
       else wrap.innerHTML = '<div>Rendered.</div>';
+      ensureDebugBadge(wrap, d.key, 'ok');
     } else {
       setStatus(wrap, 'Failed: ' + (d.error || 'unknown error'));
+      ensureDebugBadge(wrap, d.key, 'fail');
     }
   }, false);
 
   document.addEventListener('DOMContentLoaded', install);
   new MutationObserver(install).observe(document.documentElement, {subtree:true, childList:true});
+  document.addEventListener('DOMContentLoaded', () => window.__llSetTikzDebug(debugEnabled));
 })();
 </script>
 

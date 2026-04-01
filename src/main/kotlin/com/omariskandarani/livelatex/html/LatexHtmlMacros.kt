@@ -108,6 +108,30 @@ internal fun expandZeroArgMacros(body: String, macros: Map<String, Macro>): Stri
     var s = body
     val zeroArg = macros.filter { it.value.nargs == 0 }
     if (zeroArg.isEmpty()) return s
+
+    // Protect macro definition heads from replacement, e.g.
+    //   \def\Amp{...}, \newcommand{\Amp}{...}
+    // so expansions do not corrupt them into invalid forms.
+    val protectedHeads = linkedMapOf<String, String>()
+    var protectIdx = 0
+    for ((name, _) in zeroArg) {
+        val token = "__LL_DEF_HEAD_${protectIdx++}__"
+        val defHead = Regex("""\\def\s*\\${Regex.escape(name)}(?![A-Za-z@])""")
+        if (defHead.containsMatchIn(s)) {
+            protectedHeads[token] = "\\def\\$name"
+            s = s.replace(defHead, token)
+        }
+        val cmds = listOf("newcommand", "renewcommand", "providecommand")
+        for (cmd in cmds) {
+            val tokenCmd = "__LL_DEF_HEAD_${protectIdx++}__"
+            val cmdHead = Regex("""\\$cmd\s*\{\s*\\${Regex.escape(name)}\s*}""")
+            if (cmdHead.containsMatchIn(s)) {
+                protectedHeads[tokenCmd] = "\\$cmd{\\$name}"
+                s = s.replace(cmdHead, tokenCmd)
+            }
+        }
+    }
+
     var prev: String
     var passes = 0
     do {
@@ -115,9 +139,15 @@ internal fun expandZeroArgMacros(body: String, macros: Map<String, Macro>): Stri
         for ((name, macro) in zeroArg) {
             // Replace \name when it's a complete command (not prefix of longer name)
             val re = Regex("""\\(${Regex.escape(name)})(?![A-Za-z@])""")
-            s = s.replace(re, macro.def)
+            // Must use transform overload: replace(String) treats \ and $ as special (Matcher.replaceAll),
+            // which eats TeX backslashes inside macro.def (e.g. \mkern, \boldsymbol).
+            s = s.replace(re) { macro.def }
         }
         passes++
     } while (s != prev && passes < 10)
+
+    for ((token, original) in protectedHeads) {
+        s = s.replace(token, original)
+    }
     return s
 }

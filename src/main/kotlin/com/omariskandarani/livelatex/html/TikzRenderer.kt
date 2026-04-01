@@ -2,6 +2,8 @@ package com.omariskandarani.livelatex.html
 
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Extracted TikZ renderer — functions kept intact (no refactors).
@@ -16,6 +18,33 @@ object TikzRenderer {
 
     /** When set (e.g. by JetBrains IDE), TikZ cache is stored here instead of .livelatex-cache next to the .tex file. */
     var pluginCacheRoot: String? = null
+
+    // —— LiveRender progress (preview build thread → EDT via [setLiveRenderProgressHandler]) ——
+    private val liveRenderStep = AtomicInteger(0)
+    @Volatile private var liveRenderTotal: Int = 0
+    @Volatile private var liveRenderHandler: ((current: Int, total: Int, detail: String) -> Unit)? = null
+
+    fun setLiveRenderProgressHandler(handler: ((current: Int, total: Int, detail: String) -> Unit)?) {
+        liveRenderHandler = handler
+    }
+
+    fun initLiveRenderProgress(totalSteps: Int) {
+        liveRenderTotal = totalSteps.coerceAtLeast(0)
+        liveRenderStep.set(0)
+    }
+
+    private fun bumpLiveRenderProgress(detail: String) {
+        val tot = liveRenderTotal
+        val h = liveRenderHandler ?: return
+        if (tot <= 0) return
+        val c = liveRenderStep.incrementAndGet().coerceAtMost(tot)
+        h.invoke(c, tot, detail)
+    }
+
+    fun finishLiveRenderProgressPhase() {
+        liveRenderTotal = 0
+        liveRenderStep.set(0)
+    }
 
     // --- path where we cache compiled SVGs (plugin cache or project-local)
     private fun tikzCacheDir(): File {
@@ -48,6 +77,21 @@ object TikzRenderer {
     }
     private fun fileUrl(f: File) = f.toURI().toString()
 
+    private fun buildTexInputs(base: String): String {
+        val sep = if (System.getProperty("os.name").contains("win", true)) ";" else ":"
+        val dirs = linkedSetOf<String>()
+        var cur: File? = File(base).absoluteFile
+        var depth = 0
+        while (cur != null && depth < 4) {
+            dirs += cur.absolutePath
+            dirs += File(cur, "tex").absolutePath
+            cur = cur.parentFile
+            depth++
+        }
+        // Trailing separator preserves default TeX search path.
+        return dirs.joinToString(sep) + sep
+    }
+
     // ───────────────────────── TikZ preamble collector ─────────────────────────
 
     // helper: collect commands with a single balanced-brace argument
@@ -73,6 +117,48 @@ object TikzRenderer {
     fun collectTikzPreamble(srcNoComments: String): String {
         var preamble = srcNoComments.substringBefore("\\begin{document}").trim()
         preamble = Regex("""\\documentclass\s*(?:\[[^\]]*])?\s*\{[^}]*\}""").replace(preamble, "").trim()
+        // Common typo: \usePackage is undefined; LaTeX expects \usepackage
+        preamble = preamble.replace("\\usePackage{", "\\usepackage{")
+        // Cache builds run in a temp dir; normalize parent-relative package imports.
+        preamble = Regex("""\\usepackage(\[[^\]]*])?\{\.{2}/([^}]+)}""").replace(preamble, "\\usepackage$1{$2}")
+        // Normalize accidental escaped command form (\\pgfplotsset -> \pgfplotsset)
+        // often produced by copied markdown/HTML snippets.
+        preamble = preamble.replace("\\\\pgfplotsset", "\\pgfplotsset")
+        // Strip document-level journal metadata commands that can appear in article preambles
+        // but are undefined in standalone figure compilation.
+        val metadataCommands = listOf(
+            "firstpage", "pubvolume", "issuenum", "articlenumber", "pubyear", "copyrightyear",
+            "datereceived", "daterevised", "dateaccepted", "datepublished", "hreflink",
+            "Title", "TitleCitation", "Author", "AuthorNames", "AuthorCitation",
+            "address", "corres", "abstract", "keyword"
+        )
+        for (cmd in metadataCommands) {
+            collectBalanced("\\$cmd", preamble).forEach { snippet ->
+                preamble = preamble.replace(snippet, "")
+            }
+        }
+        // If first-page metadata was present, this helper line can linger and break standalone builds.
+        preamble = Regex("""\\setcounter\{page}\{\s*\\@firstpage\s*}""").replace(preamble, "")
+        // Trailing comma only inside \usetikzlibrary{...} (never globally: that corrupts nested \tikzset).
+        preamble = Regex("""\\usetikzlibrary\{([^}]*)\}""").replace(preamble) { m ->
+            val inner = m.groupValues[1].trimEnd().trimEnd(',')
+            "\\usetikzlibrary{$inner}"
+        }
+
+        // Standalone fig.tex emits \tikzset blocks again via [tikzsetDefs]; strip here to avoid duplicates.
+        // (Duplicate global \tikzset can confuse pgf/spath3 and trigger spurious errors.)
+        preamble = removeTikzsetBlocks(preamble).trim()
+
+        // stix loads textcomp with its own options; a separate \usepackage{textcomp,...} causes option clash.
+        if (Regex("""\\usepackage(?:\[[^\]]*])?\{[^}]*\bstix\b[^}]*\}""").containsMatchIn(preamble)) {
+            preamble = Regex("""\\usepackage(\[[^\]]*])?\{([^}]*)\}""").replace(preamble) { m ->
+                val opt = m.groupValues[1]
+                val pkgs = m.groupValues[2].split(',').map { it.trim() }.filter {
+                    it.isNotEmpty() && !it.equals("textcomp", ignoreCase = true)
+                }
+                if (pkgs.isEmpty()) "" else "\\usepackage$opt{${pkgs.joinToString(",")}}"
+            }.trim()
+        }
 
         val hasTikz = Regex("""\\usepackage\s*(?:\[[^\]]*])?\{[^}]*tikz[^}]*\}""").containsMatchIn(preamble)
         val hasAms = Regex("""\\usepackage\s*(?:\[[^\]]*])?\{[^}]*amsmath[^}]*\}""").containsMatchIn(preamble)
@@ -80,7 +166,8 @@ object TikzRenderer {
         val prefix = buildString {
             if (!hasTikz) appendLine("\\usepackage{tikz}")
             if (needsTikzCd) appendLine("\\usepackage{tikz-cd}")
-            if (!hasAms) appendLine("\\usepackage{amsmath,amssymb,bm}")
+            // amssymb/bm with stix (or other full math fonts) can exceed the symbol-font limit; amsmath alone is enough for most figures.
+            if (!hasAms) appendLine("\\usepackage{amsmath}")
         }
         return if (prefix.isBlank()) preamble else prefix + "\n" + preamble
     }
@@ -109,10 +196,33 @@ object TikzRenderer {
         return -1
     }
 
+    /**
+     * Matches preset knot macros rendered standalone (\\SSTdown, \\SSTHopfLink{...}, …).
+     * Excludes \\SSTGuidesPoints: it is a tikz-internals helper, not a full figure.
+     */
+    private val sstStandaloneMacroRegex =
+        Regex("""\\SST(?!GuidesPoints)[A-Za-z]+(?:\[[^\]]*])?(?:\{[^{}]*}){0,3}""")
+
+    /** Count of `\\begin{tikzpicture}` occurrences (used for LiveRender progress totals). */
+    fun countTikzPictureStarts(s: String): Int {
+        var c = 0
+        var i = 0
+        val tok = "\\begin{tikzpicture}"
+        while (i < s.length) {
+            val j = s.indexOf(tok, i)
+            if (j < 0) break
+            c++
+            i = j + tok.length
+        }
+        return c
+    }
+
+    fun countSstStandaloneMacros(s: String): Int = sstStandaloneMacroRegex.findAll(s).count()
+
     /** When TikZ rendering is disabled: replace each tikzpicture block with a placeholder span (no compilation). */
     fun replaceTikzPicturesWithPlaceholder(htmlLike: String): String {
         val beginTok = "\\begin{tikzpicture}"
-        val placeholder = """<span class="tikz-placeholder" style="display:block;margin:8px 0;padding:6px 10px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;">[TikZ uit – zet “Render TikZ” aan in de preview-balk om te renderen]</span>"""
+        val placeholder = """<span class="tikz-placeholder" style="display:block;margin:8px 0;padding:6px 10px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;">[TikZ uit – zet LiveRender aan in de preview-balk om te renderen]</span>"""
         val result = StringBuilder(htmlLike.length)
         var pos = 0
         while (true) {
@@ -144,6 +254,8 @@ object TikzRenderer {
     fun replaceTikzPicturesWithLazyPlaceholder(htmlLike: String, fullSourceNoComments: String, tikzPreamble: String): String {
         val userMacros = extractNewcommands(fullSourceNoComments)
         val texMacroDefs = buildTexNewcommands(userMacros)
+        val preambleOnly = fullSourceNoComments.substringBefore("\\begin{document}")
+        val tikzsetDefs = collectTikzsetBlocksFromSource(preambleOnly)
         val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
         val beginTok = "\\begin{tikzpicture}"
         val result = StringBuilder(htmlLike.length)
@@ -168,15 +280,16 @@ object TikzRenderer {
                 continue
             }
             val body = htmlLike.substring(bodyStart, bodyEnd - "\\end{tikzpicture}".length).trim()
-            val blockDoc = buildTikzBlockDoc(body, opts, tikzPreamble, texMacroDefs, srcLibs)
+            val blockDoc = buildTikzBlockDoc(body, opts, tikzPreamble, texMacroDefs, tikzsetDefs, srcLibs, userMacros.keys)
             if (blockDoc == null) {
                 result.append(htmlLike, start, bodyEnd)
                 pos = bodyEnd
                 continue
             }
-            val (key, texDoc) = blockDoc
+            val (docKey, texDoc) = blockDoc
+            val key = "$docKey-$start"
             LatexTikzJobStore.put(key, texDoc)
-            val lazyHtml = """<span class="tikz-lazy" data-tikz-key="$key" style="display:block;margin:8px 0;padding:8px 12px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;"><button type="button" class="tikz-load" data-tikz-key="$key" style="margin-right:8px;padding:4px 10px;cursor:pointer;border:1px solid #ccc;border-radius:4px;background:#fff;">Render TikZ</button><span class="tikz-status"></span></span>"""
+            val lazyHtml = """<span class="tikz-lazy" data-tikz-key="$key" style="display:block;margin:8px 0;padding:8px 12px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;"><button type="button" class="tikz-load" data-tikz-key="$key" style="margin-right:8px;padding:4px 10px;cursor:pointer;border:1px solid #ccc;border-radius:4px;background:#fff;">LiveRender</button><span class="tikz-status"></span></span>"""
             result.append(lazyHtml)
             pos = bodyEnd
         }
@@ -184,9 +297,143 @@ object TikzRenderer {
         return result.toString()
     }
 
+    /**
+     * Remove \\newcommand/\\renewcommand/\\providecommand{...} blocks from a tikzpicture body when those
+     * names are already emitted in [texMacroDefs] as \\providecommand. Otherwise LaTeX errors with
+     * "Command \\X already defined" (extractNewcommands lifts macros into the standalone preamble).
+     */
+    private fun stripTikzBodyMacroRedeclarations(body: String, injectedMacroNames: Set<String>): String {
+        if (injectedMacroNames.isEmpty()) return body
+        var s = body
+        val cmds = listOf("newcommand", "renewcommand", "providecommand")
+        for (name in injectedMacroNames) {
+            for (cmd in cmds) {
+                s = stripLatexCmdDefinition(s, cmd, name)
+            }
+        }
+        return s
+    }
+
+    private fun stripLatexCmdDefinition(s: String, cmd: String, name: String): String {
+        val escapedName = Regex.escape(name)
+        val pattern = Regex("""\\$cmd\{\\$escapedName}(?:\[\d+])?(?:\[[^\]]*])?\{""")
+        val sb = StringBuilder()
+        var pos = 0
+        while (true) {
+            val m = pattern.find(s, pos) ?: break
+            sb.append(s, pos, m.range.first)
+            val bodyOpen = m.range.last
+            val bodyClose = findBalancedBrace(s, bodyOpen)
+            if (bodyClose < 0) {
+                sb.append(s, m.range.first, s.length)
+                return sb.toString()
+            }
+            pos = bodyClose + 1
+        }
+        sb.append(s, pos, s.length)
+        return sb.toString()
+    }
+
+    /**
+     * Blank lines inside `\begin{knot}[ ... ]` become `\par` in TeX and break the optional-argument
+     * scan ("Paragraph ended before \environment knot was complete"). Collapse the bracket list to
+     * one line and strip comments so standalone TikZ jobs match normal LaTeX behavior.
+     */
+    private fun normalizeKnotOptionalArguments(body: String): String {
+        return try {
+            val marker = "\\begin{knot}"
+            val sb = StringBuilder(body.length)
+            var i = 0
+            while (i < body.length) {
+                val j = body.indexOf(marker, i)
+                if (j < 0) {
+                    sb.append(body, i, body.length)
+                    break
+                }
+                sb.append(body, i, j)
+                sb.append(marker)
+                val afterMarker = j + marker.length
+                var k = afterMarker
+                while (k < body.length && body[k].isWhitespace()) k++
+                if (k >= body.length || body[k] != '[') {
+                    sb.append(body, afterMarker, k.coerceAtMost(body.length))
+                    i = k
+                    continue
+                }
+                // Include '[' (end index is exclusive; was `k` before and dropped the bracket).
+                sb.append(body, afterMarker, k + 1)
+                val innerStart = k + 1
+                var p = innerStart
+                var braceDepth = 0
+                var closeIdx = -1
+                while (p < body.length) {
+                    when (body[p]) {
+                        '{' -> {
+                            braceDepth++
+                            p++
+                        }
+                        '}' -> {
+                            braceDepth--
+                            p++
+                        }
+                        ']' -> if (braceDepth == 0) {
+                            closeIdx = p
+                            break
+                        } else p++
+                        '%' -> if (braceDepth == 0) {
+                            while (p < body.length && body[p] != '\n' && body[p] != '\r') p++
+                            while (p < body.length && (body[p] == '\n' || body[p] == '\r')) p++
+                        } else p++
+                        else -> p++
+                    }
+                }
+                if (closeIdx < 0) {
+                    sb.append(body, (innerStart - 1).coerceAtLeast(0), body.length)
+                    break
+                }
+                val inner = body.substring(innerStart, closeIdx)
+                var collapsed = inner
+                    .replace(Regex("""\\par\b"""), " ")
+                    .replace(Regex("""%[^\n\r]*"""), " ")
+                    .replace(Regex("""\s+"""), " ")
+                    .trim()
+                // Draft crossing mode is for TeX editor debugging; it suppresses normal over/under and
+                // crossing labels often vanish in PDF→SVG. "Only when rendering" is unreliable in standalone.
+                collapsed = collapsed
+                    .replace(Regex("""draft\s+mode\s*=\s*crossings\s*,?"""), "")
+                    .replace(Regex(""",\s*draft\s+mode\s*=\s*crossings"""), "")
+                    .replace(Regex("""only\s+when\s+rendering\s*/\s*\.style\s*=\s*\{[^{}]*\}\s*,?"""), "")
+                    .replace(Regex(""",\s*only\s+when\s+rendering\s*/\s*\.style\s*=\s*\{[^{}]*\}"""), "")
+                    .replace(Regex(""",\s*,+"""), ",")
+                    .trim()
+                    .removePrefix(",")
+                    .removeSuffix(",")
+                    .trim()
+                sb.append(collapsed)
+                sb.append(']')
+                i = closeIdx + 1
+            }
+            sb.toString()
+        } catch (_: Throwable) {
+            // Fail-open: never crash preview build on normalization edge cases.
+            body
+        }
+    }
+
     /** Build full standalone tex document for one tikzpicture block; returns (sha1Key, texDoc) or null. */
-    private fun buildTikzBlockDoc(body: String, opts: String, tikzPreamble: String, texMacroDefs: String, srcLibs: Set<String>): Pair<String, String>? {
-        val hay = opts + "\n" + body
+    private fun buildTikzBlockDoc(
+        body: String,
+        opts: String,
+        tikzPreamble: String,
+        texMacroDefs: String,
+        tikzsetDefs: String,
+        srcLibs: Set<String>,
+        injectedMacroNames: Set<String>,
+    ): Pair<String, String>? {
+        val scrubbedBody = normalizeKnotOptionalArguments(
+            stripTikzBodyMacroRedeclarations(body.trim(), injectedMacroNames),
+        )
+        val hay = opts + "\n" + scrubbedBody
         val autoLibs = buildSet {
             if (Regex("""-\{?Latex""").containsMatchIn(hay) || Regex(""">=\s*Latex""").containsMatchIn(hay)) add("arrows.meta")
             if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(hay)) add("positioning")
@@ -239,15 +486,16 @@ $texMacroDefs
         ultra thick,
         black
     },
-    every knot/.style={line cap=round,line join=round,very thick},
+    every knot/.style={line cap=round,line join=round,very thick,clip width=6pt,clip radius=3pt},
     strand/.style={line cap=round,line join=round,line width=3pt,draw=black},
-    over/.style={preaction={draw=white,line width=6.5pt}},
+    over/.style={preaction={draw=white,line width=8pt}},
 % DO NOT set a global "every path" here; it breaks internal clip paths.
 }
 \providecommand{\swirlarrow}{\rightsquigarrow}
 \begin{document}
+$tikzsetDefs
 \begin{tikzpicture}$opts
-$body
+$scrubbedBody
 \end{tikzpicture}
 \end{document}
         """.trimIndent()
@@ -257,6 +505,8 @@ $body
     fun convertTikzPictures(htmlLike: String, fullSourceNoComments: String, tikzPreamble: String): String {
         val userMacros = extractNewcommands(fullSourceNoComments)
         val texMacroDefs = buildTexNewcommands(userMacros)
+        val preambleOnly = fullSourceNoComments.substringBefore("\\begin{document}")
+        val tikzsetDefs = collectTikzsetBlocksFromSource(preambleOnly)
         val srcLibs = collectUsetikzlibsFromSource(fullSourceNoComments)
         val beginTok = "\\begin{tikzpicture}"
         val result = StringBuilder(htmlLike.length)
@@ -266,6 +516,7 @@ $body
             val start = htmlLike.indexOf(beginTok, pos)
             if (start < 0) break
             result.append(htmlLike, pos, start)
+            bumpLiveRenderProgress("tikzpicture")
 
             var opts = ""
             var bodyStart = start + beginTok.length
@@ -283,7 +534,7 @@ $body
                 continue
             }
             val body = htmlLike.substring(bodyStart, bodyEnd - "\\end{tikzpicture}".length).trim()
-            val blockDoc = buildTikzBlockDoc(body, opts, tikzPreamble, texMacroDefs, srcLibs)
+            val blockDoc = buildTikzBlockDoc(body, opts, tikzPreamble, texMacroDefs, tikzsetDefs, srcLibs, userMacros.keys)
             if (blockDoc == null) {
                 result.append(htmlLike, start, bodyEnd)
                 pos = bodyEnd
@@ -293,31 +544,59 @@ $body
             val cache = tikzCacheDir()
             val svg = File(cache, "$key.svg")
             if (svg.exists()) {
-                result.append("""<span class="tikz-wrap" style="display:block;margin:12px 0;">${svg.readText()}</span>""")
+                result.append(
+                    """<span class="tikz-wrap" style="display:block;margin:12px 0;"><img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;"/></span>"""
+                )
                 pos = bodyEnd
                 continue
             }
 
             val work = File(cache, key).apply { mkdirs() }
-            File(work, "fig.tex").writeText(texDoc)
+            val texFile = File(work, "fig.tex")
+            val pdfFile = File(work, "fig.pdf")
+            val svgFile = File(work, "fig.svg")
+            texFile.writeText(texDoc)
 
             ensureLocalTikzLibs(srcLibs, work)
 
-            fun runLocal(cmd: List<String>): Pair<Int,String> {
+            fun runLocal(cmd: List<String>, timeoutMs: Long = 120_000): Pair<Int, String> {
                 val pb = ProcessBuilder(cmd).directory(work).redirectErrorStream(true)
                 TikzRenderer.currentBaseDir?.let { base ->
-                    val sep = if (System.getProperty("os.name").contains("win", true)) ";" else ":"
-                    val path = File(base).absolutePath
-                    pb.environment()["TEXINPUTS"] = path + sep + File(path, "tex").absolutePath + sep
+                    pb.environment()["TEXINPUTS"] = buildTexInputs(base)
                 }
                 val p = pb.start()
-                val log = p.inputStream.bufferedReader().readText()
-                return p.waitFor() to log
+                val out = StringBuilder()
+                val drain = Thread {
+                    try {
+                        p.inputStream.bufferedReader().forEachLine { line -> out.appendLine(line) }
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    }
+                }
+                drain.isDaemon = true
+                drain.start()
+                val finished = p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                if (!finished) {
+                    p.destroyForcibly()
+                    drain.interrupt()
+                }
+                try {
+                    drain.join()
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                val log = out.toString()
+                if (!finished) {
+                    return -1 to "Timeout running: $cmd\n$log"
+                }
+                return p.exitValue() to log
             }
 
-            val (pcode, plog) = runLocal(listOf("pdflatex","-interaction=nonstopmode","-halt-on-error","fig.tex"))
+            val (pcode, plog) = runLocal(
+                listOf("pdflatex","-interaction=nonstopmode","-halt-on-error", texFile.absolutePath)
+            )
             File(work, "build.log").writeText(plog)
-            if (pcode != 0 || !File(work,"fig.pdf").exists()) {
+            if (pcode != 0 || !pdfFile.exists()) {
                 val msg = htmlEscapeAll(plog.takeLast(4000))
                 result.append("""<div class="tikz-error" style="color:#b91c1c;">[TikZ compile failed]<pre>$msg
 
@@ -326,17 +605,24 @@ $body
                 continue
             }
 
-            val (scode, slog) = runLocal(listOf("dvisvgm","--pdf","--no-fonts","-n","-o","fig.svg","fig.pdf"))
+            val (scode, slog) = runLocal(
+                listOf(
+                    "dvisvgm", "--pdf", "--no-fonts", "--exact", "-n",
+                    pdfFile.absolutePath, "-o", svgFile.absolutePath,
+                )
+            )
             File(work, "convert.log").writeText(slog)
-            if (scode != 0 || !File(work,"fig.svg").exists()) {
+            if (scode != 0 || !svgFile.exists()) {
                 val msg = htmlEscapeAll(slog.takeLast(4000))
                 result.append("""<div class="tikz-error" style="color:#b91c1c;">[dvisvgm failed]<pre>$msg
 
 [tip] Open: ${work.absolutePath.replace("\\","/")}/convert.log</pre></div>""")
             } else {
-                val svgText = File(work,"fig.svg").readText()
+                val svgText = svgFile.readText()
                 svg.writeText(svgText)
-                result.append("""<span class="tikz-wrap" style="display:block;margin:12px 0;">$svgText</span>""")
+                result.append(
+                    """<span class="tikz-wrap" style="display:block;margin:12px 0;"><img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;"/></span>"""
+                )
             }
             pos = bodyEnd
         }
@@ -347,21 +633,21 @@ $body
     /** When TikZ rendering is disabled: replace \SST... macro calls with a placeholder (no compilation). */
     fun replaceSstTikzMacrosWithPlaceholder(s: String): String {
         val placeholder = """<span class="tikz-placeholder" style="display:inline-block;margin:4px 0;padding:4px 8px;background:#f0f0f0;color:#666;font-size:11px;border-radius:4px;">[TikZ uit]</span>"""
-        val rx = Regex("""\\SST[A-Za-z]+(?:\[[^\]]*])?(?:\{[^{}]*}){0,3}""")
-        return rx.replace(s) { placeholder }
+        return sstStandaloneMacroRegex.replace(s) { placeholder }
     }
 
     // Detect and render macro calls like \SSTdown, \SSTHopfLink[...]{...}{...}, etc.
     fun convertSstTikzMacros(s: String, srcNoComments: String): String {
         // If user didn't \usetikzlibrary{sstknots} but uses \SST* macros, add it.
         val preSeen = collectTikzPreamble(srcNoComments)
-        val needsSst = Regex("""\\SST[A-Za-z]""").containsMatchIn(s) &&
+        val needsSst = Regex("""\\SST(?!GuidesPoints)[A-Za-z]""").containsMatchIn(s) &&
                 !Regex("""\\usetikzlibrary\{[^}]*\bsstknots\b""").containsMatchIn(preSeen)
         val preamble = if (needsSst) preSeen + "\n\\usetikzlibrary{sstknots}\n" else preSeen
 
         // Heuristic: match a \SSTName with optional [..] and up to 3 braces (your macros use ≤3)
-        val rx = Regex("""\\SST[A-Za-z]+(?:\[[^\]]*])?(?:\{[^{}]*}){0,3}""")
+        val rx = sstStandaloneMacroRegex
         return rx.replace(s) { m ->
+            bumpLiveRenderProgress("SST macro")
             val svg = renderTikzToSvg(preamble, m.value)
             if (svg != null)
                 """<img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;margin:10px auto;"/>"""
@@ -443,24 +729,38 @@ $body
         return tools
     }
 
-    private fun run(cmd: List<String>, cwd: File, timeoutMs: Long = 60_000): Pair<Boolean,String> {
+    private fun run(cmd: List<String>, cwd: File, timeoutMs: Long = 180_000): Pair<Boolean,String> {
         val pb = ProcessBuilder(cmd).directory(cwd).redirectErrorStream(true)
 
         // >>> Add TEXINPUTS so pdflatex finds local *.tex/ TikZ libs in your project
         currentBaseDir?.let { base ->
-            val sep = if (System.getProperty("os.name").contains("win", true)) ";" else ":"
-            val path = File(base).absolutePath
-            pb.environment()["TEXINPUTS"] = path + sep + File(path, "tex").absolutePath + sep
+            pb.environment()["TEXINPUTS"] = buildTexInputs(base)
         }
         // <<<
 
         val p = pb.start()
         val out = StringBuilder()
-        val t = Thread { p.inputStream.bufferedReader().forEachLine { out.appendLine(it) } }
+        val t = Thread {
+            try {
+                p.inputStream.bufferedReader().forEachLine { line -> out.appendLine(line) }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
         t.start()
         val ok = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-        if (!ok) { p.destroyForcibly(); return false to "Timeout running: $cmd\n$out" }
-        return (p.exitValue() == 0) to out.toString()
+        if (!ok) {
+            p.destroyForcibly()
+            t.interrupt()
+        }
+        try {
+            t.join()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        val log = out.toString()
+        if (!ok) return false to "Timeout running: $cmd\n$log"
+        return (p.exitValue() == 0) to log
     }
 
     // ───────────────────────── Support helpers (copied intact) ─────────────────
@@ -502,6 +802,57 @@ $body
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toSet()
+
+    /** Remove every balanced `\tikzset{...}` block (preamble cleanup; see [collectTikzPreamble]). */
+    private fun removeTikzsetBlocks(s: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        val cmd = "\\tikzset"
+        while (true) {
+            val j = s.indexOf(cmd, i)
+            if (j < 0) {
+                sb.append(s, i, s.length)
+                break
+            }
+            sb.append(s, i, j)
+            var k = j + cmd.length
+            while (k < s.length && s[k].isWhitespace()) k++
+            if (k < s.length && s[k] == '{') {
+                val close = findBalancedBrace(s, k)
+                if (close > k) {
+                    i = close + 1
+                    continue
+                }
+            }
+            sb.append(cmd)
+            i = j + cmd.length
+        }
+        return sb.toString()
+    }
+
+    // Parse \tikzset{...} occurrences from the document preamble only (before \begin{document}).
+    // Hoisting \tikzset from inside tikzpicture bodies breaks spath3 and order-dependent styles.
+    private fun collectTikzsetBlocksFromSource(src: String): String {
+        val out = mutableListOf<String>()
+        var i = 0
+        val cmd = "\\tikzset"
+        while (true) {
+            val j = src.indexOf(cmd, i)
+            if (j < 0) break
+            var k = j + cmd.length
+            while (k < src.length && src[k].isWhitespace()) k++
+            if (k < src.length && src[k] == '{') {
+                val close = findBalancedBrace(src, k)
+                if (close > k) {
+                    out += src.substring(j, close + 1).trim()
+                    i = close + 1
+                    continue
+                }
+            }
+            i = k
+        }
+        return out.joinToString("\n")
+    }
 
     // Copy local custom libraries (e.g., tikzlibrarysstknots.code.tex) to the build dir
     private fun ensureLocalTikzLibs(libs: Set<String>, workDir: File) {

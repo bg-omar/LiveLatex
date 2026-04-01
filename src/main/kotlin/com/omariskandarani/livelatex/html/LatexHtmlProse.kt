@@ -89,8 +89,43 @@ internal val MATH_ENVS = setOf(
     "equation","equation*","align","align*","aligned","gather","gather*",
     "multline","multline*","flalign","flalign*","alignat","alignat*",
     "bmatrix","pmatrix","vmatrix","Bmatrix","Vmatrix","smallmatrix",
-    "matrix","cases","split"
+    "matrix","cases","split",
+    // Preserve whole env so minipage/center wrappers and sanitize don’t break TikZ bodies.
+    "tikzpicture","knot",
 )
+
+/** After `\\begin{tikzpicture}`, skip optional `[...]` (e.g. `[use Hobby shortcut]`). */
+internal fun skipTikzpictureBracketOptions(s: String, afterNameClose: Int): Int {
+    var p = afterNameClose
+    while (p < s.length && s[p].isWhitespace()) p++
+    if (p < s.length && s[p] == '[') {
+        val rb = s.indexOf(']', p)
+        if (rb >= 0) return rb + 1
+    }
+    return afterNameClose
+}
+
+/** Match `\\end{tikzpicture}` with nested `\\begin{tikzpicture}` depth (same idea as TikzRenderer). */
+internal fun findMatchingEndTikzpictureProse(s: String, bodyStart: Int): Int {
+    val beginTok = "\\begin{tikzpicture}"
+    val endTok = "\\end{tikzpicture}"
+    var depth = 1
+    var i = bodyStart
+    while (i < s.length && depth > 0) {
+        val nextBegin = s.indexOf(beginTok, i)
+        val nextEnd = s.indexOf(endTok, i)
+        if (nextEnd < 0) return -1
+        if (nextBegin >= 0 && nextBegin < nextEnd) {
+            depth++
+            i = nextBegin + beginTok.length
+        } else {
+            depth--
+            if (depth == 0) return nextEnd + endTok.length
+            i = nextEnd + endTok.length
+        }
+    }
+    return -1
+}
 
 /**
  * Convert LaTeX prose to HTML, preserving math regions ($...$, \[...\], \(...\)).
@@ -173,8 +208,17 @@ internal fun latexProseToHtmlWithMath(s: String): String {
             val nameClose = s.indexOf('}', nameOpen)
             val env = if (nameClose > nameOpen) s.substring(nameOpen, nameClose) else ""
             if (env in MATH_ENVS) {
-                val endTok = "\\end{$env}"
-                val endAt = s.indexOf(endTok, nameClose + 1).let { if (it < 0) n else it + endTok.length }
+                val endAt = when (env) {
+                    "tikzpicture" -> {
+                        val afterOpts = skipTikzpictureBracketOptions(s, nameClose + 1)
+                        val e = findMatchingEndTikzpictureProse(s, afterOpts)
+                        if (e < 0) n else e
+                    }
+                    else -> {
+                        val endTok = "\\end{$env}"
+                        s.indexOf(endTok, nameClose + 1).let { if (it < 0) n else it + endTok.length }
+                    }
+                }
                 sb.append(s.substring(next, endAt)); i = endAt; continue
             }
             sb.append("\\begin{"); i = nameOpen

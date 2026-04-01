@@ -1,32 +1,25 @@
 # LiveLatex JetBrains Plugin
-
 <!-- Plugin description -->
+**LiveLatex** is a little JetBrains sidekick for LaTeX: you type, you peek at a live HTML preview, and you don’t have to context-switch to a PDF every two minutes.
 
-<h1 align="center">
-    <a href="">
-      <img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/META-INF/pluginIcon.png" width="81" height="99" alt="logo"/>
-    </a><br/>
-   Writing       <img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/icons/LaTeX_logo.png"  height="32" alt="LaTeX"/> easier.
-</h1>
-<h2>What is LiveLatex? 🤔 </h2>
- - LiveLatex is a JetBrains plugin that helps you write LaTeX documents faster and easier. <br>
- - It provides a real-time preview of your LaTeX code, so you can see how your document will look like as you type. <br>
- - It also includes a table creation wizard, a Tikz diagram editor, and an image insertion tool. <br>
- - LiveLatex supports most LaTeX commands and environments, including math mode, tables, figures, and more. <br>
- - It is compatible with all JetBrains IDEs that support plugins, such as IntelliJ IDEA, PyCharm, WebStorm, and more. <br>
-<h2>Features 🚀 </h2>
-<h4>
- - Preview LaTeX code in real-time <br>
- - Draw Tikz Diagrams and Knots click and drag <br>
- - Table Creation Wizard <br>
- - Insert images from browse <br>
- - Rightclick menu for quick access to features <br>
-</h4>
-<h2>Work in progress 😎 </h2> 
- - This plugin is build for my personal latex writing needs, but I hope it will be useful for you too. <br>
- - If you have any suggestions or feature requests, please open an issue on the GitHub page  <br>
- - If you like the plugin, please give it a star on GitHub and rate it on the JetBrains marketplace. <br>
+[<img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/META-INF/pluginIcon.png?raw=true" width="32px"/>]()
 
+Writing [<img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/icons/LaTeX_logo.png?raw=true" width="64px"/>]() with fewer tab hops.
+
+### What’s the idea? 🤔
+- Open the **LaTeX Preview** tool window and watch the document update as you go (math, tables, figures — most everyday stuff works).
+- **TikZ** gets extra love: there’s a click-and-drag canvas (knots and diagrams), and you can turn **LiveRender** on when you want TikZ compiled in the preview, or leave it off if you’d rather keep the IDE snappy.
+- Tables, **insert image**, **\ref / \cite** from the right-click menu, and a shortcut to yank a section into its own file — basically the shortcuts I got tired of typing by hand.
+- Runs anywhere JetBrains runs plugins (IDEA, PyCharm, WebStorm, …).
+
+### Cool bits 🚀
+- Live preview next to your editor  
+- TikZ canvas (draw, knots, export) + optional LiveRender for TikZ in the preview  
+- Table wizard + image insert  
+- Zoom, jump to section, and preview options from the tool window  
+
+### Honest disclaimer 😎
+I built this for my own LaTeX workflow first — if it helps you too, great. Issues and ideas welcome on GitHub; stars and marketplace ratings always appreciated.
 <!-- Plugin description end -->
 
 ## Build troubleshooting
@@ -48,8 +41,3 @@ In IntelliJ: **File → Settings → Build, Execution, Deployment → Build Tool
 
 **Option C – Point Gradle at a custom truststore**  
 If you use a separate truststore file, add to `gradle.properties` (with your paths):
-
-```properties
-systemProp.javax.net.ssl.trustStore=C\:\\path\\to\\your\\cacerts
-systemProp.javax.net.ssl.trustStorePassword=changeit
-```

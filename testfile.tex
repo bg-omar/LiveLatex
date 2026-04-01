@@ -30,17 +30,31 @@
     \fi
 }
 
-\usepackage{amsmath,amssymb,amsfonts}
-\usepackage{bm}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{geometry}
 \usepackage{hyperref}
+\usepackage{physics}
+\usepackage{xcolor}
+\usepackage{textcomp}
+\usepackage{amsthm}
+
+\usepackage{bm}
+
+
+
 \usepackage{multicol}
 \usepackage{calc,pict2e,picture}
-\usepackage{textgreek,textcomp,gensymb,stix}
+\usepackage{textgreek,gensymb,stix}
 \usepackage{longtable}
 
 
 % Canonical symbols
-\newcommand{\vswirl}{\mathbf{v}_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}
+\newcommand{\vswirl}{v_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}
+% Preview / test helper: line below uses this name; keep in sync with your paper's clockwise convention.
+\newcommand{\vswirlcw}{-\vswirl}
 \newcommand{\SwirlClock}{S_{(t)}^{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}
 \newcommand{\omegas}{\boldsymbol{\omega}_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}  % swirl vorticity
 \newcommand{\vscore}{\mathbf{v}_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}}                    % shorthand: |v_swirl| at r=r_c
@@ -94,14 +108,14 @@
             \vswirl = \frac{\Gamma}{2\pi r}\bigl(1-\exp(-r^2/\rc^2)\bigr)\hat{\bm{\phi}}
         \end{equation}
 
-        \[\vswirlcw = -\frac{\Gamma}{2\pi r}\bigl(1-\exp(-r^2/\rc^2)\bigr)\hat{\bm{\phi}}\]
+        \[ \vswirl = -\frac{\Gamma}{2\pi r}\bigl(1-\exp(-r^2/\rc^2)\bigr)\hat{\bm{\phi}}\]
 
 
         \begin{equation}
-            \SwirlClock = \int \rhof \vswirl \, dV
+            S_{(t)}^{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}} = \int \rhof \vswirl \, dV
         \end{equation}
 
-        Or as anti version \(\SwirlClockcw = \int \rhof \vswirlcw \, dV\).
+        Or as anti version \(S_{(t)}^{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}} = \int \rhof \vswirlcw \, dV\).
 
         $\omegas\quad \vscore\quad \vnorm\quad \rhof\quad \rhoE\quad \rhom\quad \rc\quad \FmaxEM\quad \FmaxG\quad \Lam\quad \Om$
 

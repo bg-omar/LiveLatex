@@ -1,5 +1,6 @@
 package com.omariskandarani.livelatex.html
 
+import java.util.Locale
 import kotlin.text.RegexOption
 
 import com.omariskandarani.livelatex.html.latexProseToHtmlWithMath
@@ -94,12 +95,15 @@ internal fun sanitizeForMathJaxProse(bodyText: String): String {
             }
         }
 
-        s = convertAlignWithMultipleTagsToBlocks(s)
+        // No convertAlignWithMultipleTagsToBlocks: that helper split multi-\\tag align into
+        // \\[...\\begin{aligned}...\\]; MathJax 3 rejects \\tag inside nested aligned and preview broke.
+
+        s = convertMinipagesToHtml(s)
 
         val mathEnvs =
             "(?:equation\\*?|align\\*?|aligned\\*?|aligned|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?|bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|smallmatrix|matrix|cases|split)"
         val keepEnvs =
-            "(?:$mathEnvs|tabular|table|longtable|figure|center|tikzpicture|tcolorbox|thebibliography|itemize|enumerate|description|multicols)"
+            "(?:$mathEnvs|tabular|table|longtable|figure|center|tikzpicture|knot|tcolorbox|thebibliography|itemize|enumerate|description|multicols)"
 
         s = s.replace(Regex("""\\begin\{(?!$keepEnvs)\w+\}"""), "")
         s = s.replace(Regex("""\\end\{(?!$keepEnvs)\w+\}"""), "")
@@ -132,3 +136,140 @@ internal fun convertSiunitx(s: String): String {
             .replace(Regex("""\\&"""), "&")
         return t
     }
+
+/** Width inside `\\begin{minipage}{...}` → approximate % for HTML (e.g. `0.32\\textwidth` → 32). */
+internal fun parseMinipageWidthPercent(widthTex: String): Double {
+    val t = widthTex.trim()
+    val fracText = Regex("""([\d.]+)\s*\\textwidth\b""").find(t)
+    if (fracText != null) {
+        return (fracText.groupValues[1].toDoubleOrNull() ?: 0.32) * 100.0
+    }
+    val fracLine = Regex("""([\d.]+)\s*\\linewidth\b""").find(t)
+    if (fracLine != null) {
+        return (fracLine.groupValues[1].toDoubleOrNull() ?: 0.32) * 100.0
+    }
+    val fracCol = Regex("""([\d.]+)\s*\\columnwidth\b""").find(t)
+    if (fracCol != null) {
+        return (fracCol.groupValues[1].toDoubleOrNull() ?: 0.32) * 100.0
+    }
+    return 33.0
+}
+
+private fun findMatchingEndMinipage(s: String, bodyStart: Int): Int {
+    val beginTok = "\\begin{minipage}"
+    val endTok = "\\end{minipage}"
+    var depth = 1
+    var pos = bodyStart
+    while (pos < s.length) {
+        val nb = s.indexOf(beginTok, pos)
+        val ne = s.indexOf(endTok, pos)
+        if (ne < 0) return -1
+        if (nb >= 0 && nb < ne) {
+            depth++
+            pos = nb + beginTok.length
+        } else {
+            depth--
+            if (depth == 0) return ne
+            pos = ne + endTok.length
+        }
+    }
+    return -1
+}
+
+/**
+ * Parse `\\begin{minipage}[opt]{width}...\\end{minipage}` at index [j].
+ * Returns (inner HTML via [latexProseToHtmlWithMath], width %, index after closing) or null.
+ */
+internal fun parseOneMinipageColumn(s: String, j: Int): Triple<String, Double, Int>? {
+    val beginTok = "\\begin{minipage}"
+    val endTok = "\\end{minipage}"
+    if (j < 0 || j + beginTok.length > s.length || !s.regionMatches(j, beginTok, 0, beginTok.length)) {
+        return null
+    }
+    var k = j + beginTok.length
+    if (k < s.length && s[k] == '[') {
+        val rb = s.indexOf(']', k)
+        if (rb < 0) return null
+        k = rb + 1
+    }
+    while (k < s.length && s[k].isWhitespace()) k++
+    if (k >= s.length || s[k] != '{') return null
+    val wClose = findBalancedBrace(s, k)
+    if (wClose < 0) return null
+    val widthTex = s.substring(k + 1, wClose).trim()
+    val pct = parseMinipageWidthPercent(widthTex).coerceIn(10.0, 100.0)
+    val bodyStart = wClose + 1
+    val endIdx = findMatchingEndMinipage(s, bodyStart)
+    if (endIdx < 0) return null
+    var inner = s.substring(bodyStart, endIdx).trim()
+    inner = Regex("""^\\centering\b\s*""").replace(inner, "")
+    val html = latexProseToHtmlWithMath(inner)
+    return Triple(html, pct, endIdx + endTok.length)
+}
+
+private fun fmtPct(p: Double): String = String.format(Locale.US, "%.2f", p)
+
+/**
+ * Turn `minipage` rows (often `0.32\\textwidth` + `\\hfill`) into HTML flex or inline-block
+ * so multiple TikZ figures sit side by side. Raw `minipage` is otherwise stripped by [sanitizeForMathJaxProse].
+ */
+internal fun convertMinipagesToHtml(s: String): String {
+    val beginTok = "\\begin{minipage}"
+    val out = StringBuilder(s.length + 256)
+    val row = mutableListOf<Pair<String, Double>>()
+    val betweenRowOk = Regex("""\s*(\\hfill\s*)*""")
+
+    fun flushRow() {
+        if (row.isEmpty()) return
+        if (row.size == 1) {
+            val (h, pct) = row[0]
+            out.append(
+                """<div class="ll-minipage" style="display:inline-block;vertical-align:top;width:${fmtPct(pct)}%;max-width:100%;box-sizing:border-box;text-align:center;padding:4px;">$h</div>""",
+            )
+        } else {
+            out.append(
+                """<div class="ll-minipage-row" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:flex-start;width:100%;margin:10px 0;box-sizing:border-box;">""",
+            )
+            for ((h, pct) in row) {
+                out.append(
+                    """<div style="flex:1 1 ${fmtPct(pct)}%;min-width:min(100%,140px);max-width:100%;text-align:center;box-sizing:border-box;padding:2px;">$h</div>""",
+                )
+            }
+            out.append("</div>")
+        }
+        row.clear()
+    }
+
+    var i = 0
+    while (i < s.length) {
+        val j = s.indexOf(beginTok, i)
+        if (j < 0) {
+            flushRow()
+            out.append(s, i, s.length)
+            break
+        }
+        val between = s.substring(i, j)
+        if (row.isNotEmpty()) {
+            if (!betweenRowOk.matches(between)) {
+                flushRow()
+                out.append(between)
+            }
+        } else {
+            out.append(between)
+        }
+        val parsed = parseOneMinipageColumn(s, j)
+        if (parsed == null) {
+            flushRow()
+            out.append(beginTok)
+            i = j + beginTok.length
+            continue
+        }
+        val (html, pct, nextI) = parsed
+        row.add(html to pct)
+        i = nextI
+    }
+    flushRow()
+    var t = out.toString()
+    t = Regex("""\\noindent\s*""").replace(t, "")
+    return t
+}

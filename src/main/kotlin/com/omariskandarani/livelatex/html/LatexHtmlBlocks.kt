@@ -432,24 +432,3 @@ internal fun convertTheBibliography(s: String): String {
         """<h4>References</h4><ol style="margin:12px 0 12px 24px;">$lis</ol>"""
     }
 }
-
-internal fun convertAlignWithMultipleTagsToBlocks(s: String): String {
-    val rx = Regex("""\\begin\{align(\*?)\}(.+?)\\end\{align\1\}""", RegexOption.DOT_MATCHES_ALL)
-    return rx.replace(s) { m ->
-        val starred = m.groupValues[1].isNotEmpty()
-        val body = m.groupValues[2].trim()
-        val tagCount = Regex("""\\tag\{[^}]*}""").findAll(body).count()
-        if (tagCount < 2) {
-            m.value
-        } else {
-            val parts = Regex("""(?<!\\)\\\\(?:\s*\[[^]]*])?\s*""")
-                .split(body)
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            if (parts.isEmpty()) return@replace m.value
-            parts.joinToString("\n\n") { line ->
-                """\\[\n\\begin{aligned}\n$line\n\\end{aligned}\n\\]"""
-            }
-        }
-    }
-}

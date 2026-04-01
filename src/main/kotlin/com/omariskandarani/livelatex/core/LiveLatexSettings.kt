@@ -14,9 +14,10 @@ import com.intellij.openapi.components.Storage
 class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
 
     data class State(
-        var renderTikzInPreview: Boolean = false,  // default off: lighter for IDE/Android; use per-TikZ "Render TikZ" or enable in toolbar
+        var renderTikzInPreview: Boolean = false,  // default off: lighter for IDE/Android; per-figure LiveRender button or toolbar checkbox
         var autoScrollPreview: Boolean = true,
-        var autoScrollEditor: Boolean = true
+        var autoScrollEditor: Boolean = true,
+        var showTikzDebugOverlay: Boolean = false
     )
 
     private var state = State()
@@ -38,4 +39,8 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
     var autoScrollEditor: Boolean
         get() = state.autoScrollEditor
         set(value) { state.autoScrollEditor = value }
+
+    var showTikzDebugOverlay: Boolean
+        get() = state.showTikzDebugOverlay
+        set(value) { state.showTikzDebugOverlay = value }
 }
