@@ -2,9 +2,9 @@
 <!-- Plugin description -->
 **LiveLatex** is a little JetBrains sidekick for LaTeX: you type, you peek at a live HTML preview, and you don’t have to context-switch to a PDF every two minutes.
 
-[<img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/META-INF/pluginIcon.png?raw=true" width="32px"/>]()
+[<img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/META-INF/pluginIcon-64px.png?raw=true"/>]()
 
-Writing [<img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/icons/LaTeX_logo.png?raw=true" width="64px"/>]() with fewer tab hops.
+Writing [<img src="https://raw.githubusercontent.com/bg-omar/LiveLatex/refs/heads/main/src/main/resources/icons/LaTeX_logo-64px.png?raw=true"/>]() with fewer tab hops.
 
 ### What’s the idea? 🤔
 - Open the **LaTeX Preview** tool window and watch the document update as you go (math, tables, figures — most everyday stuff works).

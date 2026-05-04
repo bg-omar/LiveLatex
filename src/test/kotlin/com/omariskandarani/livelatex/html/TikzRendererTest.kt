@@ -170,6 +170,6 @@ class TikzRendererTest {
         val expected = Regex("""\\begin\{tikzpicture\}""").findAll(bodyNc).count()
         val lazyCount = Regex("""class="tikz-lazy"""").findAll(out).count()
         assertEquals(expected, lazyCount)
-        assertEquals(10, expected)
+        assertEquals(20, expected)
     }
 }

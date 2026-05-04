@@ -447,14 +447,14 @@ object TikzRenderer {
         val (docClass, preambleBlock) = if (needsPgfplots && !hasPgfplotsInPreamble) {
             // Figure uses axis/xlabel/ylabel but preamble has no pgfplots: add it
             "\\documentclass[border=1pt]{standalone}" to """
-\\usepackage{pgfplots}
-\\pgfplotsset{compat=1.18}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
 $tikzPreamble
 """
         } else if (needsPgfplots) {
             "\\documentclass[border=1pt]{standalone}" to """
 $tikzPreamble
-\\pgfplotsset{compat=1.18}
+\pgfplotsset{compat=1.18}
 """
         } else {
             "\\documentclass[tikz,border=1pt]{standalone}" to """

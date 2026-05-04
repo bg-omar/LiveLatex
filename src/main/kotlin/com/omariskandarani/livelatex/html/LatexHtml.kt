@@ -10,11 +10,11 @@ import kotlin.text.lowercase
 import kotlin.text.replace
 
 import com.omariskandarani.livelatex.html.convertDescription
-import com.omariskandarani.livelatex.html.convertEnumerate
-import com.omariskandarani.livelatex.html.convertItemize
+import com.omariskandarani.livelatex.html.convertListEnvironmentsNested
 import com.omariskandarani.livelatex.html.convertLlmark
 import com.omariskandarani.livelatex.html.convertMulticols
 import com.omariskandarani.livelatex.html.convertParagraphsOutsideTags
+import com.omariskandarani.livelatex.html.convertTextblockStar
 
 internal const val BEGIN_DOCUMENT = "\\begin{document}"
 internal const val END_DOCUMENT = "\\end{document}"
@@ -101,7 +101,7 @@ object LatexHtml {
         // Insert anchors (no blanket escaping here; we preserve math)
         val withAnchors = injectLineAnchors(body4c, absOffset, everyN = 1)
 
-        return buildHtml(withAnchors, macrosJs)
+        return buildHtml(withAnchors, macrosJs, renderTikz)
     }
 
 
@@ -114,6 +114,7 @@ object LatexHtml {
         t = convertLlmark(t, absOffset)
         t = convertMakeTitle(t, meta)
         t = convertSiunitx(t)
+        t = convertTextblockStar(t)
         t = convertHref(t)
         t = convertSections(t, absOffset)
         t = convertFigureEnvs(t)
@@ -128,8 +129,7 @@ object LatexHtml {
             TikzRenderer.replaceTikzPicturesWithLazyPlaceholder(t, fullSourceNoComments, tikzPreamble)
 
         t = convertTableEnvs(t)
-        t = convertItemize(t)
-        t = convertEnumerate(t)
+        t = convertListEnvironmentsNested(t)
         t = convertDescription(t)
         t = convertTabulars(t)
         t = convertTheBibliography(t)
@@ -142,7 +142,7 @@ object LatexHtml {
     // formatInlineProseNonMath, convertParagraphsOutsideTags -> LatexHtmlProse.kt
 
     // convertSections, convertLlmark, unescapeLatexSpecials, latexProseToHtmlWithMath, MATH_ENVS,
-    // convertMulticols, convertItemize, convertEnumerate, convertDescription -> LatexHtmlProse.kt
+    // convertMulticols, convertListEnvironmentsNested, convertDescription -> LatexHtmlProse.kt
 
     // peelTopLevelTextWrapper, ColSpec, convertTcolorboxes, parseTcolorOptions, findBalancedBraceAllowMath,
     // xcolorToCss, convertTabulars, parseColSpecBalanced, linewidthToPercent, convertHref, stripAuxDirectives,

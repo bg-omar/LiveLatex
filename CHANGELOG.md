@@ -1,8 +1,20 @@
 # Changelog
 
-## Unreleased
+## Unreleased 0.0.9 - 2026-04-19
 
-## [0.0.8] - 2026-03-31
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## 0.0.8 - 2026-03-31
 
 ### Added
 
@@ -28,13 +40,11 @@
 - Redundant helpers in `**LatexHtmlBlocks**` (logic consolidated in the rest of the HTML stack)
 - Legacy `**knots-tester.tex**`
 
----
-
-## [0.0.7]
+## 0.0.7
 
 - Make compatible with 2026.1
 
-## [0.0.6] - 2025-09-30
+## 0.0.6 - 2025-09-30
 
 ### Added
 
@@ -57,9 +67,7 @@
 - Enhanced TikZ rendering by adding lazy loading support, deferred compilation of TikZ jobs, render buttons, and status messages
 - Enhanced mark handling in LaTeX HTML rendering by filtering out synthetic marks, improving scroll behavior, and adding synthetic mark creation for documents without marks
 
----
-
-## [0.0.5] - 2025-09-22
+## 0.0.5 - 2025-09-22
 
 ### Added
 
@@ -75,9 +83,7 @@
 - Enhanced TikZ support in LaTeX rendering by adding balanced extraction for nested environments, improving SVG generation
 - Enhanced LaTeX HTML rendering by adding support for TikZ and longtable environments, improving macro handling, and refining prose conversion
 
----
-
-## [0.0.4] - 2025-09-19
+## 0.0.4 - 2025-09-19
 
 ### Added
 
@@ -91,9 +97,7 @@
 
 - Enhanced HTML rendering with title metadata and floating toolbar
 
----
-
-## [0.0.3] - 2025-09-13
+## 0.0.3 - 2025-09-13
 
 ### Added
 
@@ -103,17 +107,13 @@
 
 - Bumped plugin version to 0.0.3
 
----
-
-## [0.0.2] - 2025-09-13
+## 0.0.2 - 2025-09-13
 
 ### Changed
 
 - Bumped plugin version to 0.0.2 in gradle.properties
 
----
-
-## [0.0.1] - 2025-09-12
+## 0.0.1 - 2025-09-12
 
 ### Added
 
@@ -141,6 +141,3 @@
 
 - Enhanced LaTeX action visibility based on file type and improved HTML rendering for lists and tables
 - Enhanced LaTeX figure handling
-
----
-

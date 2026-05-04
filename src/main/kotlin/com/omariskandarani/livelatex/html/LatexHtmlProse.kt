@@ -1,74 +1,332 @@
 package com.omariskandarani.livelatex.html
 
 import java.util.regex.Matcher
+import kotlin.collections.ArrayDeque
 import kotlin.text.RegexOption
 
 /**
  * LaTeX prose-to-HTML conversions. Part of LatexHtml multi-file object.
  */
 
-/** Collect (id, label) for all \\section, \\subsection, \\subsubsection, \\paragraph in order (for IDE dropdown without JS bridge). */
+/** Replace `\\texorpdfstring{PDF}{bookmark}` with the first argument (balanced braces, math-safe). */
+internal fun replaceTexorpdfstringBalanced(s: String): String {
+    val cmd = "\\texorpdfstring"
+    var t = s
+    var guard = 0
+    while (guard++ < 200000) {
+        val k = t.indexOf(cmd)
+        if (k < 0) break
+        var p = k + cmd.length
+        while (p < t.length && t[p].isWhitespace()) p++
+        if (p >= t.length || t[p] != '{') {
+            t = t.removeRange(k, k + cmd.length)
+            continue
+        }
+        val c1 = findBalancedBraceAllowMath(t, p)
+        if (c1 < 0) break
+        var q = c1 + 1
+        while (q < t.length && t[q].isWhitespace()) q++
+        if (q >= t.length || t[q] != '{') break
+        val c2 = findBalancedBraceAllowMath(t, q)
+        if (c2 < 0) break
+        val first = t.substring(p + 1, c1)
+        t = t.substring(0, k) + first + t.substring(c2 + 1)
+    }
+    return t
+}
+
+private fun stripTexorpdfstringForPlainTitle(raw: String): String =
+    replaceTexorpdfstringBalanced(raw).trim()
+
+private data class SectionCmdMatch(val kind: String, val cmdEnd: Int)
+
+/** Longest command name first (subsubsection before subsection). */
+private val SECTION_CMD_NAMES = listOf("subsubsection", "subsection", "section", "paragraph")
+
+private fun matchSectionCommandAt(s: String, i: Int): SectionCmdMatch? {
+    if (i >= s.length || s[i] != '\\') return null
+    for (name in SECTION_CMD_NAMES) {
+        val pref = "\\$name"
+        if (i + pref.length > s.length || !s.regionMatches(i, pref, 0, pref.length)) continue
+        var j = i + pref.length
+        if (j < s.length && s[j] == '*') j++
+        val kind = if (name == "paragraph") "paragraph" else name
+        return SectionCmdMatch(kind, j)
+    }
+    return null
+}
+
+/**
+ * After `\\section`, `\\section*`, etc.: optional `[short title]`, then `{title}` with balanced braces.
+ */
+internal fun extractSectionHeadingTitle(s: String, cmdEnd: Int): Pair<String, Int>? {
+    var j = cmdEnd
+    while (j < s.length && s[j].isWhitespace()) j++
+    if (j < s.length && s[j] == '*') {
+        j++
+        while (j < s.length && s[j].isWhitespace()) j++
+    }
+    if (j < s.length && s[j] == '[') {
+        var depth = 1
+        var q = j + 1
+        while (q < s.length && depth > 0) {
+            when (s[q]) {
+                '[' -> depth++
+                ']' -> depth--
+            }
+            q++
+        }
+        if (depth != 0) return null
+        j = q
+        while (j < s.length && s[j].isWhitespace()) j++
+    }
+    if (j >= s.length || s[j] != '{') return null
+    val close = findBalancedBraceAllowMath(s, j)
+    if (close < 0) return null
+    val raw = s.substring(j + 1, close)
+    return Pair(raw, close + 1)
+}
+
+/** Collect (id, label) for all \\section, \\subsection, \\subsubsection, \\paragraph in document order (for IDE dropdown without JS bridge). */
 internal fun collectSectionsList(s: String, _absOffset: Int): List<Pair<String, String>> {
     val out = mutableListOf<Pair<String, String>>()
-    fun collect(kind: String, input: String) {
-        val rx = Regex("\\\\$kind\\*?\\{([^}]*)\\}")
-        rx.findAll(input).forEach { m ->
-            val title = m.groupValues[1].trim()
-            val id = "$kind-${slugify(title)}"
+    var i = 0
+    while (i < s.length) {
+        val m = matchSectionCommandAt(s, i)
+        if (m == null) {
+            i++
+            continue
+        }
+        val ext = extractSectionHeadingTitle(s, m.cmdEnd)
+        if (ext == null) {
+            i++
+            continue
+        }
+        val (rawTitle, after) = ext
+        val title = stripTexorpdfstringForPlainTitle(rawTitle)
+        if (title.isNotEmpty()) {
+            val id = if (m.kind == "paragraph") "paragraph-${slugify(title)}" else "${m.kind}-${slugify(title)}"
             out.add(id to title)
         }
-    }
-    collect("section", s)
-    collect("subsection", s)
-    collect("subsubsection", s)
-    Regex("\\\\paragraph\\{([^}]*)\\}").findAll(s).forEach { m ->
-        val title = m.groupValues[1].trim()
-        out.add("paragraph-${slugify(title)}" to title)
+        i = after
     }
     return out
 }
 
 internal fun convertSections(s: String, absOffset: Int): String {
-    fun inject(kind: String, tag: String, input: String): String {
-        val rx = Regex("\\\\$kind\\*?\\{([^}]*)\\}")
-        return rx.replace(input) { m ->
-            val title = m.groupValues[1]
-            val id    = "$kind-${slugify(title)}"
-            val abs   = absOffset + input.substring(0, m.range.first).count { it == '\n' } + 1
-            val htm   = latexProseToHtmlWithMath(title)
-            """<span class="llmark" data-id="$id" data-abs="$abs"></span><$tag id="$id">$htm</$tag>"""
+    val sb = StringBuilder(s.length + 64)
+    var i = 0
+    while (i < s.length) {
+        val m = matchSectionCommandAt(s, i)
+        if (m == null) {
+            sb.append(s[i])
+            i++
+            continue
         }
+        val ext = extractSectionHeadingTitle(s, m.cmdEnd)
+        if (ext == null) {
+            sb.append(s[i])
+            i++
+            continue
+        }
+        val (rawTitle, after) = ext
+        val titlePlain = stripTexorpdfstringForPlainTitle(rawTitle)
+        if (titlePlain.isEmpty()) {
+            i = after
+            continue
+        }
+        val tag = when (m.kind) {
+            "section" -> "h2"
+            "subsection" -> "h3"
+            "subsubsection" -> "h4"
+            "paragraph" -> "h5"
+            else -> "div"
+        }
+        val id = if (m.kind == "paragraph") "paragraph-${slugify(titlePlain)}" else "${m.kind}-${slugify(titlePlain)}"
+        val abs = absOffset + s.substring(0, i).count { it == '\n' } + 1
+        val htm = latexProseToHtmlWithMath(titlePlain)
+        if (m.kind == "paragraph") {
+            sb.append("""<span class="llmark" data-id="$id" data-abs="$abs"></span><h5 id="$id" style="margin:1em 0 .3em 0;">$htm</h5>""")
+        } else {
+            sb.append("""<span class="llmark" data-id="$id" data-abs="$abs"></span><$tag id="$id">$htm</$tag>""")
+        }
+        i = after
     }
-    var t = s
-    t = inject("section", "h2", t)
-    t = inject("subsection", "h3", t)
-    t = inject("subsubsection", "h4", t)
-    t = Regex("\\\\paragraph\\{([^}]*)\\}").replace(t) { m ->
-        val title = m.groupValues[1]
-        val id    = "paragraph-${slugify(title)}"
-        val abs   = absOffset + t.substring(0, m.range.first).count { it == '\n' } + 1
-        val htm   = latexProseToHtmlWithMath(title)
-        """<span class="llmark" data-id="$id" data-abs="$abs"></span><h5 id="$id" style="margin:1em 0 .3em 0;">$htm</h5>"""
-    }
-    val texorpdfRx = Regex("\\\\texorpdfstring\\{([^}]*)\\}\\{([^}]*)\\}")
-    t = t.replace(texorpdfRx) { m -> latexProseToHtmlWithMath(m.groupValues[1]) }
+    var t = sb.toString()
+    t = replaceTexorpdfstringBalanced(t)
     val appendixHr = "<hr style=\"border:none;border-top:1px solid var(--border);margin:16px 0;\"/>"
     t = t.replace(Regex("\\\\appendix"), appendixHr)
     return t
 }
 
-internal fun convertLlmark(s: String, absOffset: Int): String {
-    val rx = Regex("""\\\\llmark(?:\[([^\]]*)\])?\{([^}]*)\}""")
-    return rx.replace(s) { m ->
-        val titleOpt = m.groupValues[1]
-        val key      = m.groupValues[2].ifBlank { "mark" }
-        val id       = "mark-${slugify(key)}"
-        val absLine  = absOffset + s.substring(0, m.range.first).count { it == '\n' } + 1
-        val capHtml  = if (titleOpt.isNotBlank())
-            """<div style="opacity:.7;margin:.2em 0;">${latexProseToHtmlWithMath(titleOpt)}</div>"""
-        else ""
-        """<span class="llmark" data-id="$id" data-abs="$absLine"></span>$capHtml"""
+/** Skip optional `[...]` after `\\begin{env}` (supports nested brackets). */
+internal fun skipBeginEnvBracketOptions(s: String, afterBeginNameClose: Int): Int {
+    var p = afterBeginNameClose
+    while (p < s.length && s[p].isWhitespace()) p++
+    if (p >= s.length || s[p] != '[') return p
+    var depth = 1
+    var j = p + 1
+    while (j < s.length && depth > 0) {
+        when (s[j]) {
+            '[' -> depth++
+            ']' -> depth--
+        }
+        j++
     }
+    return if (depth == 0) j else p
+}
+
+private const val BEGIN_ITEMIZE = "\\begin{itemize}"
+private const val BEGIN_ENUMERATE = "\\begin{enumerate}"
+private const val END_ITEMIZE = "\\end{itemize}"
+private const val END_ENUMERATE = "\\end{enumerate}"
+
+/** Next list-related token from `fromIdx`, or null if none. */
+private fun findNextListToken(s: String, fromIdx: Int): Pair<Int, String>? {
+    val candidates = listOf(
+        BEGIN_ITEMIZE to "begin_itemize",
+        BEGIN_ENUMERATE to "begin_enumerate",
+        END_ITEMIZE to "end_itemize",
+        END_ENUMERATE to "end_enumerate"
+    ).mapNotNull { (tok, id) ->
+        val p = s.indexOf(tok, fromIdx)
+        if (p < 0) null else Triple(p, tok, id)
+    }
+    if (candidates.isEmpty()) return null
+    val min = candidates.minBy { it.first }
+    return min.first to min.third
+}
+
+/**
+ * Matching `\\end{env}` for `\\begin{env}` whose body starts at [bodyStart],
+ * with correct nesting of `itemize` / `enumerate`.
+ */
+internal fun findMatchingEndListEnvironment(s: String, env: String, bodyStart: Int): Int {
+    val stack = ArrayDeque<String>()
+    stack.addLast(env)
+    var idx = bodyStart
+    while (idx < s.length && stack.isNotEmpty()) {
+        val found = findNextListToken(s, idx) ?: return -1
+        val (p, kind) = found
+        when (kind) {
+            "begin_itemize" -> {
+                stack.addLast("itemize")
+                idx = skipBeginEnvBracketOptions(s, p + BEGIN_ITEMIZE.length)
+            }
+            "begin_enumerate" -> {
+                stack.addLast("enumerate")
+                idx = skipBeginEnvBracketOptions(s, p + BEGIN_ENUMERATE.length)
+            }
+            "end_itemize" -> {
+                if (stack.last() != "itemize") return -1
+                stack.removeLast()
+                if (stack.isEmpty()) return p
+                idx = p + END_ITEMIZE.length
+            }
+            "end_enumerate" -> {
+                if (stack.last() != "enumerate") return -1
+                stack.removeLast()
+                if (stack.isEmpty()) return p
+                idx = p + END_ENUMERATE.length
+            }
+            else -> return -1
+        }
+    }
+    return -1
+}
+
+/** Convert nested itemize/enumerate: inner environments first (recursive). */
+internal fun convertListEnvironmentsNested(s: String): String {
+    fun findFirstBegin(s0: String): Pair<Int, String>? {
+        val ti = s0.indexOf("\\begin{itemize}")
+        val te = s0.indexOf("\\begin{enumerate}")
+        if (ti < 0 && te < 0) return null
+        if (ti < 0) return Pair(te, "enumerate")
+        if (te < 0) return Pair(ti, "itemize")
+        return if (ti <= te) Pair(ti, "itemize") else Pair(te, "enumerate")
+    }
+
+    var t = s
+    var iter = 0
+    while (iter++ < 50000) {
+        val first = findFirstBegin(t) ?: return t
+        val (bi, env) = first
+        val beginTok = "\\begin{$env}"
+        val bodyStart = skipBeginEnvBracketOptions(t, bi + beginTok.length)
+        val endIdx = findMatchingEndListEnvironment(t, env, bodyStart)
+        if (endIdx < 0) return t
+        val body = t.substring(bodyStart, endIdx)
+        val endTok = "\\end{$env}"
+        val afterEnd = endIdx + endTok.length
+        val innerConverted = convertListEnvironmentsNested(body)
+        val parts = Regex("""(?m)^\s*\\item\s*""").split(innerConverted).map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) {
+            t = t.substring(0, bi) + t.substring(afterEnd)
+            continue
+        }
+        val lis = parts.joinToString("") { item -> "<li>${proseNoBr(item)}</li>" }
+        val wrap = if (env == "itemize")
+            """<ul style="margin:12px 0 12px 24px;">$lis</ul>"""
+        else
+            """<ol style="margin:12px 0 12px 24px;">$lis</ol>"""
+        t = t.substring(0, bi) + wrap + t.substring(afterEnd)
+    }
+    return t
+}
+
+internal fun convertLlmark(s: String, absOffset: Int): String {
+    val needle = "\\llmark"
+    val sb = StringBuilder(s.length)
+    var i = 0
+    while (i < s.length) {
+        val k = s.indexOf(needle, i)
+        if (k < 0) {
+            sb.append(s, i, s.length)
+            break
+        }
+        sb.append(s, i, k)
+        var p = k + needle.length
+        var titleOpt = ""
+        if (p < s.length && s[p] == '[') {
+            var depth = 1
+            val startBracket = p
+            var j = p + 1
+            while (j < s.length && depth > 0) {
+                when (s[j]) {
+                    '[' -> depth++
+                    ']' -> depth--
+                }
+                j++
+            }
+            if (depth == 0) {
+                titleOpt = s.substring(startBracket + 1, j - 1)
+                p = j
+            }
+        }
+        while (p < s.length && s[p].isWhitespace()) p++
+        if (p >= s.length || s[p] != '{') {
+            sb.append(s[k])
+            i = k + 1
+            continue
+        }
+        val c = findBalancedBraceAllowMath(s, p)
+        if (c < 0) {
+            sb.append(s[k])
+            i = k + 1
+            continue
+        }
+        val keyRaw = s.substring(p + 1, c).trim()
+        val key = keyRaw.ifBlank { "mark" }
+        val id = "mark-${slugify(key)}"
+        val absLine = absOffset + s.substring(0, k).count { it == '\n' } + 1
+        val capHtml = if (titleOpt.isNotBlank())
+            """<div style="opacity:.7;margin:.2em 0;">${latexProseToHtmlWithMath(titleOpt)}</div>"""
+        else
+            ""
+        sb.append("""<span class="llmark" data-id="$id" data-abs="$absLine"></span>$capHtml""")
+        i = c + 1
+    }
+    return sb.toString()
 }
 
 internal fun unescapeLatexSpecials(t0: String): String {
@@ -128,6 +386,23 @@ internal fun findMatchingEndTikzpictureProse(s: String, bodyStart: Int): Int {
 }
 
 /**
+ * Find `\\[` starting a display-math region, but not the second backslash of a TeX line break `\\\\[dim]`.
+ * Otherwise `\\\\[0.5em]` is mis-read as `\\[` + `0.5em]` and corrupts the preview.
+ */
+internal fun indexOfDisplayMathOpenBracket(s: String, from: Int): Int {
+    var j = from
+    while (true) {
+        val k = s.indexOf("\\[", j)
+        if (k < 0) return -1
+        if (k >= 1 && s[k - 1] == '\\') {
+            j = k + 2
+            continue
+        }
+        return k
+    }
+}
+
+/**
  * Convert LaTeX prose to HTML, preserving math regions ($...$, \[...\], \(...\)).
  */
 internal fun latexProseToHtmlWithMath(s: String): String {
@@ -176,7 +451,7 @@ internal fun latexProseToHtmlWithMath(s: String): String {
             while (j >= 0 && j < n && isEscaped(s, j)) j = s.indexOf('$', j + 1)
             j
         }
-        val nextBracket = s.indexOf("\\[", i)
+        val nextBracket = indexOfDisplayMathOpenBracket(s, i)
         val nextParen   = s.indexOf("\\(", i)
         val nextBegin   = s.indexOf("\\begin{", i)
 
@@ -230,6 +505,17 @@ internal fun latexProseToHtmlWithMath(s: String): String {
 internal fun formatInlineProseNonMath(s0: String): String {
     fun applyFmt(t0: String, alreadyEscaped: Boolean): String {
         var t = t0
+        t = t.replace(Regex("""\\thispagestyle\s*\{[^}]*\}"""), "")
+        t = t.replace(Regex("""\\centering\b"""), "")
+        t = t.replace(Regex("""\\raggedright\b"""), "")
+        t = t.replace(Regex("""\\raggedleft\b"""), "")
+        t = t.replace(Regex("""\\bfseries\b"""), "")
+        t = t.replace(Regex("""\\mdseries\b"""), "")
+        t = t.replace(Regex("""\\upshape\b"""), "")
+        t = t.replace(Regex("""\\(tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)(?!\s*\{)\b"""), "")
+        t = t.replace(Regex("""\\par\b"""), "<br/>")
+        // `\\[dim]` optional spacing after a line break (must run before generic `\\` → `<br/>`)
+        t = t.replace(Regex("""(?<!\\)\\\\\s*\[[^\]]*]"""), "<br/>")
         t = t.replace(Regex("""(?<!\\)\\\\\s*"""), "<br/>")
 
         if (!alreadyEscaped) {
@@ -264,12 +550,17 @@ internal fun formatInlineProseNonMath(s0: String): String {
         t = replaceCmd1ArgBalanced(t, "emph")      { "<em>${applyFmt(it, true)}</em>" }
         t = replaceCmd1ArgBalanced(t, "textit")    { "<em>${applyFmt(it, true)}</em>" }
         t = replaceCmd1ArgBalanced(t, "itshape")   { "<em>${applyFmt(it, true)}</em>" }
+        t = replaceCmd1ArgBalanced(t, "textsuperscript") { "<sup>${applyFmt(it, true)}</sup>" }
+        t = t.replace(Regex("""\\itshape\b"""), "")
         t = replaceCmd1ArgBalanced(t, "underline") { "<u>${applyFmt(it, true)}</u>" }
         t = replaceCmd1ArgBalanced(t, "uline")     { "<u>${applyFmt(it, true)}</u>" }
         t = replaceCmd1ArgBalanced(t, "footnotesize"){ "<small>${applyFmt(it, true)}</small>" }
 
         t = replaceCmd1ArgBalanced(t, "texttt") { """<code>${applyFmt(it, true)}</code>""" }
         t = replaceCmd1ArgBalanced(t, "mbox") { """<span style="white-space:nowrap;">${applyFmt(it, true)}</span>""" }
+        t = Regex("""\\rule(?:\[[^\]]*])?\s*\{([^}]*)\}\s*\{([^}]*)\}""").replace(t) { _ ->
+            """<hr style="border:none;border-top:1px solid var(--border);margin:0.35em 0;width:100%;"/>"""
+        }
         t = replaceCmd1ArgBalanced(t, "fbox") {
             """<span style="display:inline-block;border:1px solid var(--fg);padding:0 .25em;">${applyFmt(it, true)}</span>"""
         }
@@ -300,6 +591,9 @@ internal fun formatInlineProseNonMath(s0: String): String {
         t = replaceCmd1ArgBalanced(t, "label") { id ->
             """<span id="${htmlEscapeAll(id)}" class="ll-label"></span>"""
         }
+        // letter class / scrlttr2
+        t = replaceCmd1ArgBalanced(t, "opening") { "<p>${applyFmt(it, true)}</p>" }
+        t = replaceCmd1ArgBalanced(t, "closing") { "<p style=\"margin-top:1.2em;\">${applyFmt(it, true)}</p>" }
 
         t = replaceTextSymbols(t)
         return t

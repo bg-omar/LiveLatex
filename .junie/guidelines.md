@@ -101,7 +101,7 @@ Notes/troubleshooting for tests
   - updatePluginXml() in build.gradle.kts currently just rewrites plugin.xml content unchanged; keep it idempotent if you modify it.
   - patchPluginXml extracts description from README markers; keep them intact.
   - Signing/publishing depends on files in ./secrets. Local development and CI builds do not need these unless you sign/publish.
-  - Gradle properties: pluginSinceBuild and pluginUntilBuild are defined in gradle.properties. Ensure they align with plugin.xml sinceBuild/untilBuild if you change IDE targets.
+  - Gradle properties: pluginSinceBuild is efined in gradle.properties. Ensure they align with plugin.xml sinceBuild/untilBuild if you change IDE targets.
 - Running in IDE
   - Prefer runIde for verifying UI/actions. It will build and run against the configured platform version using a sandbox (no risk to your main IDE profile).
 - Debugging & logging

@@ -49,11 +49,68 @@ internal fun convertTitlepage(s: String): String {
     }
 }
 
+/**
+ * Standard / KOMA `letter`: strip `\\begin{letter}...\\end{letter}`, optional `[...]`,
+ * first braced recipient (if any), and render recipient as HTML so it is not left as a stray `{...}` fragment.
+ * Inner body (with `\\opening`, `\\closing`, etc.) stays as LaTeX for later prose conversion.
+ */
+internal fun convertLetterEnvironment(s: String): String {
+    val beginTok = "\\begin{letter}"
+    val endTok = "\\end{letter}"
+    val sb = StringBuilder(s.length + 64)
+    var i = 0
+    var guard = 0
+    while (i < s.length && guard++ < 5000) {
+        val j = s.indexOf(beginTok, i)
+        if (j < 0) {
+            sb.append(s, i, s.length)
+            break
+        }
+        sb.append(s, i, j)
+        var p = j + beginTok.length
+        while (p < s.length && s[p].isWhitespace()) p++
+        if (p < s.length && s[p] == '[') {
+            var depth = 1
+            p++
+            while (p < s.length && depth > 0) {
+                when (s[p]) {
+                    '[' -> depth++
+                    ']' -> depth--
+                }
+                p++
+            }
+        }
+        while (p < s.length && s[p].isWhitespace()) p++
+        var recipientBlock = ""
+        if (p < s.length && s[p] == '{') {
+            val close = findBalancedBrace(s, p)
+            if (close > p) {
+                val raw = s.substring(p + 1, close).trim()
+                if (raw.isNotEmpty()) {
+                    recipientBlock =
+                        """<div class="ll-letter-to" style="margin:0 0 0.85em 0;opacity:.95;">${latexProseToHtmlWithMath(raw)}</div>"""
+                }
+                p = close + 1
+            }
+        }
+        val endIdx = s.indexOf(endTok, p)
+        if (endIdx < 0) {
+            sb.append(s, j, s.length)
+            break
+        }
+        val inner = s.substring(p, endIdx)
+        sb.append(recipientBlock).append(inner.trimStart())
+        i = endIdx + endTok.length
+    }
+    return sb.toString()
+}
+
 /** Convert abstract/center/theorem-like to HTML; drop unknown NON-math envs; keep math envs intact. */
 internal fun sanitizeForMathJaxProse(bodyText: String): String {
         var s = bodyText
 
         s = convertTitlepage(s)
+        s = convertLetterEnvironment(s)
 
         s = s.replace(
             Regex("""\\begin\{center\}(.+?)\\end\{center\}""", RegexOption.DOT_MATCHES_ALL)
@@ -110,6 +167,18 @@ internal fun sanitizeForMathJaxProse(bodyText: String): String {
 
         return s
     }
+
+/** `textpos` package: map `\\begin{textblock*}...\\end{textblock*}` to a footer-style block in HTML preview. */
+internal fun convertTextblockStar(s: String): String {
+    val rx = Regex(
+        """\\begin\{textblock\*\}\s*\{[^}]*\}\s*\([^)]*\)([\s\S]*?)\\end\{textblock\*\}""",
+        RegexOption.DOT_MATCHES_ALL,
+    )
+    return rx.replace(s) { m ->
+        val inner = m.groupValues[1].trim()
+        """<div class="ll-textblock" style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border);font-size:0.88em;line-height:1.35;opacity:0.95;">${latexProseToHtmlWithMath(inner)}</div>"""
+    }
+}
 
 internal fun convertSiunitx(s: String): String {
         var t = s

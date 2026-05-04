@@ -4,7 +4,7 @@ package com.omariskandarani.livelatex.html
  * HTML page template for LaTeX preview. Part of LatexHtml multi-file object.
  */
 
-internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
+internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikzEnabled: Boolean): String = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -51,6 +51,30 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
     html, body { height: 100%; margin: 0; }
     body { overflow-y: auto; }
     .wrap { min-height: 100vh; padding-top: 56px; }
+    /* Preview-only: Render TikZ (same setting as LiveRender in the tool window) */
+    .ll-tikz-preview-bar {
+      position: fixed;
+      bottom: 14px;
+      left: 14px;
+      z-index: 150;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+      font-size: 12px;
+      max-width: min(92vw, 280px);
+    }
+    .ll-tikz-preview-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      margin: 0;
+      color: var(--fg);
+    }
+    .ll-tikz-preview-label input { accent-color: #4F46E5; width: 15px; height: 15px; }
     /* Floating zoom toolbar: reserve top space so title is not covered when scrolled to top */
     /* Floating zoom toolbar styles */
     .floating-toolbar {
@@ -509,6 +533,28 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
 
 </head>
 <body>
+<div id="ll-tikz-preview-bar" class="ll-tikz-preview-bar" title="Compile TikZ figures in the preview (pdflatex / dvisvgm). Matches “LiveRender” in the preview toolbar.">
+  <label class="ll-tikz-preview-label">
+    <input type="checkbox" id="ll-render-tikz-in-preview" />
+    Render TikZ in preview
+  </label>
+</div>
+<script>
+(function(){
+  function wireRenderTikzToggle(){
+    var cb = document.getElementById('ll-render-tikz-in-preview');
+    if (!cb) return;
+    cb.checked = ${previewRenderTikzEnabled};
+    cb.addEventListener('change', function(){
+      if (typeof window.__llHostSetRenderTikz === 'function') {
+        try { window.__llHostSetRenderTikz(cb.checked); } catch(e) {}
+      }
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireRenderTikzToggle);
+  else wireRenderTikzToggle();
+})();
+</script>
 <div class="ll-topbar">
   <div class="menu-wrap">
     <button id="ll-hamburger" class="hamburger" title="Options">☰</button>
@@ -855,7 +901,13 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
         const label = (next && /^h[2-5]$/i.test(next.tagName) ? (next.textContent||'').trim() : id) || id;
         return { id, label, lvl };
       });
-      nav.innerHTML = items.map(i => `<a href="#" class="${'$'}{i.lvl==\\\\\\\\\\\\\\\\\\\\\\\\\=2?'lvl2':i.lvl===3?'lvl3':''}" data-id="${'$'}{i.id}">${'$'}{i.label}</a>`).join('');
+      // Kotlin triple-quoted safety: build markup with + (avoid JS backtick-template interpolation)
+      nav.innerHTML = items.map(function(i) {
+        var cls = i.lvl === 2 ? 'lvl2' : (i.lvl === 3 ? 'lvl3' : '');
+        var escLabel = String(i.label).replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        var escId = String(i.id).replace(/"/g,'&quot;');
+        return '<a href="#" class="' + cls + '" data-id="' + escId + '">' + escLabel + '</a>';
+      }).join('');
         nav.onclick = (e) => {
           const a = e.target.closest('a'); if (!a) return;
           e.preventDefault();
@@ -967,7 +1019,6 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
 })();
 </script>
 
-'\'\
 </body>
 </html>
 """.trimIndent()

@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit
 
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.openapi.wm.IdeFocusManager
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.Dimension
@@ -46,8 +47,9 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private val pendingJs = ArrayDeque<String>()
     private var boundEditor: Editor? = null
     private var jsMoveCaret: JBCefJSQuery? = null
-    private var jsRenderTikz: JBCefJSQuery? = null
     private var jsRenderTikzQuery: JBCefJSQuery? = null
+    /** Bridge: preview page checkbox → [LiveLatexSettings.renderTikzInPreview]. */
+    private var jsRenderTikzSettingQuery: JBCefJSQuery? = null
     private var jsClearCacheQuery: JBCefJSQuery? = null
     private var jsSectionsQuery: JBCefJSQuery? = null
     /** Sectielijst uit de preview-pagina (voor Secties-dropdown in titelbalk). */
@@ -226,6 +228,45 @@ class LatexPreviewService(private val project: Project) : Disposable {
         browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
     }
 
+    private fun exposeRenderTikzSettingBridge(browser: JBCefBrowserBase) {
+        jsRenderTikzSettingQuery = JBCefJSQuery.create(browser).also { q ->
+            Disposer.register(this, q)
+            q.addHandler { payload ->
+                val enabled = payload.trim().equals("true", ignoreCase = true) ||
+                    payload.contains("\"enabled\":true")
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        if (project.isDisposed) return@invokeLater
+                        val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
+                        if (settings.renderTikzInPreview != enabled) {
+                            settings.renderTikzInPreview = enabled
+                            toolbarPanel?.syncRenderTikzFromSettings()
+                            requestRefresh()
+                        } else {
+                            toolbarPanel?.syncRenderTikzFromSettings()
+                        }
+                    },
+                    Condition<Any?> { project.isDisposed }
+                )
+                JBCefJSQuery.Response("OK")
+            }
+        }
+    }
+
+    private fun installRenderTikzSettingBridgeJs(browser: JBCefBrowserBase) {
+        val q = jsRenderTikzSettingQuery ?: return
+        val js = """
+            (function(){
+              window.__llHostSetRenderTikz = function(on){
+                var s = on ? 'true' : 'false';
+                try { return ${q.inject("s")}; }
+                catch(e) { return ''; }
+              };
+            })();
+        """.trimIndent()
+        browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
+    }
+
     /** Zet auto-scroll state uit IDE-instellingen in de preview-pagina (localStorage). */
     private fun syncAutoScrollSettingsToPage() {
         val settings = ApplicationManager.getApplication().getService(com.omariskandarani.livelatex.core.LiveLatexSettings::class.java)
@@ -236,6 +277,15 @@ class LatexPreviewService(private val project: Project) : Disposable {
                 "localStorage.setItem('ll_show_tikz_debug', ${settings.showTikzDebugOverlay}); " +
                 "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug(${settings.showTikzDebugOverlay}); " +
             "} catch(e){}"
+        )
+        syncRenderTikzInPageCheckbox()
+    }
+
+    /** Align in-preview “Render TikZ” checkbox with [LiveLatexSettings.renderTikzInPreview]. */
+    private fun syncRenderTikzInPageCheckbox() {
+        val on = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview
+        eval(
+            "try { var el=document.getElementById('ll-render-tikz-in-preview'); if(el) el.checked=" + on + "; } catch(e){}"
         )
     }
 
@@ -343,7 +393,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val file = event.newFile
                     if (isLiveLatexPreviewFile(file)) {
                         toolWindow.setWidth(400)
-                        toolWindow.show()
+                        // Keep focus in the editor/project flow: do not auto-show/activate the preview tool window
+                        // when tabs change (e.g. opening/creating files from the project view).
                         rebindToSelectedEditor()
                     } else {
                         unbindEditor()
@@ -355,6 +406,11 @@ class LatexPreviewService(private val project: Project) : Disposable {
                         {
                             if (project.isDisposed) return@invokeLater
                             refresh()
+                            // Some IDE flows (e.g. New File from project view/template) can leave focus in the
+                            // project sidebar. Pull focus back to the active editor tab if one exists.
+                            FileEditorManager.getInstance(project).selectedTextEditor?.contentComponent?.let { editorComponent ->
+                                IdeFocusManager.getInstance(project).requestFocus(editorComponent, true)
+                            }
                         },
                         Condition<Any?> { project.isDisposed }
                     )
@@ -413,6 +469,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
         exposeTikzBridge(base)
         exposeClearCacheBridge(base)
         exposeSectionsBridge(base)
+        exposeRenderTikzSettingBridge(base)
 
         // 3) flush pending JS after each page load (do not re-create JBCefJSQuery here — must be created before load; re-creating after browser load triggers IllegalStateException)
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -424,6 +481,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     installTikzBridgeJs(base)
                     installClearCacheBridgeJs(base)
                     installSectionsBridgeJs(base)
+                    installRenderTikzSettingBridgeJs(base)
                     flushPending()
                 }
             }
@@ -454,9 +512,10 @@ class LatexPreviewService(private val project: Project) : Disposable {
         if (boundEditor == editor) return
         unbindEditor()
         boundEditor = editor
+        // Single-arg registration so [unbindEditor]/[dispose] removal matches (no parent-Disposable auto-hook).
         editor?.document?.addDocumentListener(docListener)
-        editor?.caretModel?.addCaretListener(caretListener, this)
-        editor?.scrollingModel?.addVisibleAreaListener(visibleListener, this)
+        editor?.caretModel?.addCaretListener(caretListener)
+        editor?.scrollingModel?.addVisibleAreaListener(visibleListener)
         if (editor != null) {
             // Initial sync: same line at center in both panels
             syncToViewportCenter(editor)
@@ -671,6 +730,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
 
     override fun dispose() {
+        unbindEditor()
         try { previewBuildExecutor.shutdownNow() } catch (_: Throwable) {}
         try { tikzExecutor.shutdownNow() } catch (_: Throwable) {}
     }

@@ -31,6 +31,23 @@ class LatexHtmlSanitizerTest {
     }
 
     @Test
+    fun sanitizeForMathJaxProse_convertsLetterRecipientAndStripsLetterEnv() {
+        val s = """
+            \begin{letter}{Editors \\ \emph{European Journal}}
+            \opening{Dear Editors,}
+            Please consider our manuscript.
+            \closing{Sincerely,}
+            \end{letter}
+        """.trimIndent()
+        val out = sanitizeForMathJaxProse(s)
+        assertTrue(out.contains("ll-letter-to"))
+        assertTrue(out.contains("European Journal") || out.contains("emph"))
+        assertFalse(out.contains("\\begin{letter}"))
+        assertFalse(out.contains("\\end{letter}"))
+        assertFalse(out.trimStart().startsWith("{"))
+    }
+
+    @Test
     fun convertSiunitx_numScientificToLatexPow() {
         val s = """\num{1e-3}"""
         val out = convertSiunitx(s)
