@@ -8,6 +8,18 @@ import java.util.LinkedHashMap
 
 internal data class Macro(val def: String, val nargs: Int)
 
+private fun normalizeZeroArgNewcommandBody(body: String, nargs: Int): String {
+    if (nargs != 0) return body
+    val trimmed = body.trim()
+    if (trimmed.isEmpty()) return trimmed
+    if (trimmed.startsWith("{") && findBalancedBrace(trimmed, 0) == trimmed.lastIndex) return trimmed
+
+    // Keep a single control-sequence body unchanged (\foo), but group richer bodies
+    // (e.g. S_{(t)}^{...}, r_c, \rho_{\!f}) so expansion behaves as one math atom.
+    val singleControlSequence = Regex("""\\[A-Za-z@]+$""")
+    return if (singleControlSequence.matches(trimmed)) trimmed else "{$trimmed}"
+}
+
 /** Parse \newcommand and \def from the WHOLE source (pre + body). */
 internal fun extractNewcommands(s: String): Map<String, Macro> {
     val out = LinkedHashMap<String, Macro>()
@@ -22,7 +34,8 @@ internal fun extractNewcommands(s: String): Map<String, Macro> {
             val bodyOpen = m.range.last
             val bodyClose = findBalancedBrace(s, bodyOpen)
             if (bodyClose < 0) { pos = bodyOpen + 1; continue }
-            val body = s.substring(bodyOpen + 1, bodyClose).trim()
+            val rawBody = s.substring(bodyOpen + 1, bodyClose).trim()
+            val body = normalizeZeroArgNewcommandBody(rawBody, nargs)
             out[name] = Macro(body, nargs)
             pos = bodyClose + 1
         }

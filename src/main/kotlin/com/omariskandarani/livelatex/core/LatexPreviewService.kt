@@ -512,8 +512,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
         if (boundEditor == editor) return
         unbindEditor()
         boundEditor = editor
-        // Single-arg registration so [unbindEditor]/[dispose] removal matches (no parent-Disposable auto-hook).
-        editor?.document?.addDocumentListener(docListener)
+        // Two-arg overload: required API (single-arg Document.addDocumentListener is deprecated).
+        editor?.document?.addDocumentListener(docListener, this)
         editor?.caretModel?.addCaretListener(caretListener)
         editor?.scrollingModel?.addVisibleAreaListener(visibleListener)
         if (editor != null) {
