@@ -17,7 +17,10 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
         var renderTikzInPreview: Boolean = false,  // default off: lighter for IDE/Android; per-figure LiveRender button or toolbar checkbox
         var autoScrollPreview: Boolean = true,
         var autoScrollEditor: Boolean = true,
-        var showTikzDebugOverlay: Boolean = false
+        var syncSelection: Boolean = true,
+        var showTikzDebugOverlay: Boolean = false,
+        var invertScrollHorizontal: Boolean = false,
+        var invertScrollVertical: Boolean = false,
     )
 
     private var state = State()
@@ -40,7 +43,19 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
         get() = state.autoScrollEditor
         set(value) { state.autoScrollEditor = value }
 
+    var syncSelection: Boolean
+        get() = state.syncSelection
+        set(value) { state.syncSelection = value }
+
     var showTikzDebugOverlay: Boolean
         get() = state.showTikzDebugOverlay
         set(value) { state.showTikzDebugOverlay = value }
+
+    var invertScrollHorizontal: Boolean
+        get() = state.invertScrollHorizontal
+        set(value) { state.invertScrollHorizontal = value }
+
+    var invertScrollVertical: Boolean
+        get() = state.invertScrollVertical
+        set(value) { state.invertScrollVertical = value }
 }

@@ -156,11 +156,15 @@ class PreviewToolbarPanel(
         val autoScrollPreview = javax.swing.JCheckBoxMenuItem("Auto scroll preview", settings.autoScrollPreview)
         val autoScrollEditor = javax.swing.JCheckBoxMenuItem("Auto scroll editor", settings.autoScrollEditor)
         val showTikzDebug = javax.swing.JCheckBoxMenuItem("Show TikZ debug", settings.showTikzDebugOverlay)
+        val invertScrollH = javax.swing.JCheckBoxMenuItem("Inverted scroll-h", settings.invertScrollHorizontal)
+        val invertScrollV = javax.swing.JCheckBoxMenuItem("Inverted scroll-v", settings.invertScrollVertical)
         val svc = project.getService(LatexPreviewService::class.java)
 
         popup.add(autoScrollPreview)
         popup.add(autoScrollEditor)
         popup.add(showTikzDebug)
+        popup.add(invertScrollH)
+        popup.add(invertScrollV)
         autoScrollPreview.addActionListener {
             settings.autoScrollPreview = autoScrollPreview.isSelected
             svc.evalJs("try { localStorage.setItem('ll_auto_scroll', " + autoScrollPreview.isSelected + "); } catch(e){}")
@@ -175,6 +179,24 @@ class PreviewToolbarPanel(
                 "try { " +
                     "localStorage.setItem('ll_show_tikz_debug', " + showTikzDebug.isSelected + "); " +
                     "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug(" + showTikzDebug.isSelected + "); " +
+                "} catch(e){}"
+            )
+        }
+        invertScrollH.addActionListener {
+            settings.invertScrollHorizontal = invertScrollH.isSelected
+            svc.evalJs(
+                "try { " +
+                    "localStorage.setItem('ll_invert_scroll_h', " + invertScrollH.isSelected + "); " +
+                    "var cbH=document.getElementById('ll-invert-scroll-h'); if(cbH) cbH.checked=" + invertScrollH.isSelected + "; " +
+                "} catch(e){}"
+            )
+        }
+        invertScrollV.addActionListener {
+            settings.invertScrollVertical = invertScrollV.isSelected
+            svc.evalJs(
+                "try { " +
+                    "localStorage.setItem('ll_invert_scroll_v', " + invertScrollV.isSelected + "); " +
+                    "var cbV=document.getElementById('ll-invert-scroll-v'); if(cbV) cbV.checked=" + invertScrollV.isSelected + "; " +
                 "} catch(e){}"
             )
         }

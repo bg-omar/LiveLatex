@@ -27,7 +27,6 @@
     <actions>
         <group id="LiveLaTeX.InsertGroup" text="LiveLateX insert" popup="true">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
             <add-to-group group-id="ToolsMenu" anchor="last"/>
             <action id="LiveLaTeX.NewTikzFigure"
                     class="com.omariskandarani.livelatex.actions.NewTikzFigureAction"
@@ -41,6 +40,32 @@
                     class="com.omariskandarani.livelatex.actions.GenerateLatexTableAction"
                     text="...Add Table..."
                     description="Create a LaTeX table from CSV/Markdown or a blank template"/>
+            <action id="LiveLaTeX.InsertSourceLatex"
+                    class="com.omariskandarani.livelatex.actions.BrowseImportTexAsTextAction"
+                    text="Insert source latex"
+                    description="Browse for a .tex file and paste its contents at the caret"/>
+            <action id="LiveLaTeX.InputSourceLatex"
+                    class="com.omariskandarani.livelatex.actions.BrowseImportTexAsInputAction"
+                    text="\input source latex"
+                    description="Browse for a .tex file and insert \input{relative/path.tex} as one line"/>
+        </group>
+
+        <action id="LiveLaTeX.ProjectInsertSourceLatex"
+                class="com.omariskandarani.livelatex.actions.ProjectImportTexAsTextAction"
+                text="Insert source latex"
+                description="Paste the selected .tex file contents into the active editor at the caret"/>
+        <action id="LiveLaTeX.ProjectInputSourceLatex"
+                class="com.omariskandarani.livelatex.actions.ProjectImportTexAsInputAction"
+                text="\input source latex"
+                description="Insert \input{relative/path.tex} for the selected .tex file into the active editor"/>
+
+        <group id="LiveLaTeX.ProjectInsertGroup"
+               class="com.omariskandarani.livelatex.actions.ProjectInsertTexActionGroup"
+               text="LiveLateX insert"
+               popup="true">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <reference ref="LiveLaTeX.ProjectInsertSourceLatex"/>
+            <reference ref="LiveLaTeX.ProjectInputSourceLatex"/>
         </group>
 
        <action id="com.omariskandarani.LiveLatex.actions.ShowPreview"

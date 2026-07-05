@@ -116,6 +116,37 @@ internal fun jsonEscape(tex: String): String =
         .replace("\n", "\\n")
         .replace("\r", "") + "\""
 
+/**
+ * SST papers use `\titlepageOpen` … `\titlepageClose` with abstract/keywords between.
+ * Assemble the span into one block (open def + middle + close def) before general macro expansion.
+ */
+internal fun assembleSplitTitlepageMacros(body: String, macros: Map<String, Macro>): String {
+    val openMacro = macros["titlepageOpen"] ?: return body
+    val closeMacro = macros["titlepageClose"] ?: return body
+    if (openMacro.nargs != 0 || closeMacro.nargs != 0) return body
+
+    val openRe = Regex("""\\titlepageOpen(?![A-Za-z@])""")
+    val closeRe = Regex("""\\titlepageClose(?![A-Za-z@])""")
+
+    val sb = StringBuilder(body.length + 512)
+    var i = 0
+    var guard = 0
+    while (i < body.length && guard++ < 5000) {
+        val m = openRe.find(body, i) ?: break
+        sb.append(body, i, m.range.first)
+        val closeMatch = closeRe.find(body, m.range.last + 1)
+        if (closeMatch == null) {
+            sb.append(body, m.range.first, body.length)
+            break
+        }
+        val middle = body.substring(m.range.last + 1, closeMatch.range.first)
+        sb.append(openMacro.def).append(middle).append(closeMacro.def)
+        i = closeMatch.range.last + 1
+    }
+    if (i < body.length) sb.append(body, i, body.length)
+    return sb.toString()
+}
+
 /** Expand 0-arg \\newcommand macros in body (e.g. \\titlepageOpen -> its definition). */
 internal fun expandZeroArgMacros(body: String, macros: Map<String, Macro>): String {
     var s = body

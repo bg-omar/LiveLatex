@@ -12,41 +12,183 @@ import com.omariskandarani.livelatex.html.renderDate
 
 /** Convert \\begin{titlepage}...\\end{titlepage} to HTML title block. */
 internal fun convertTitlepage(s: String): String {
-    val rx = Regex("""\\begin\{titlepage\}(.+?)\\end\{titlepage\}""", RegexOption.DOT_MATCHES_ALL)
-    return rx.replace(s) { m ->
-        var body = m.groupValues[1]
-        body = body.replace(Regex("""\\thispagestyle\{[^}]*\}"""), "")
-        body = body.replace(Regex("""\\centering\b"""), "")
-        body = body.replace(Regex("""\\par\b"""), "\n")
-        body = Regex("""\\vspace\*?\s*\{([^}]*)\}""").replace(body) { m ->
-            val arg = m.groupValues[1].trim().replace(',', '.')
-            val numMatch = Regex("""([\d.]+)\s*(cm|mm|pt|em|ex|in)?""").find(arg)
-            if (numMatch != null) {
-                val num = numMatch.groupValues[1]
-                val unit = numMatch.groupValues[2].ifEmpty { "em" }
-                """<div style="height:${num}$unit"></div>"""
-            } else "<br/>"
+    val beginTok = "\\begin{titlepage}"
+    val endTok = "\\end{titlepage}"
+    val sb = StringBuilder(s.length + 256)
+    var i = 0
+    var guard = 0
+    while (i < s.length && guard++ < 5000) {
+        val j = s.indexOf(beginTok, i)
+        if (j < 0) {
+            sb.append(s, i, s.length)
+            break
         }
-        body = body.replace("""\today""", renderDate("""\today""") ?: "")
-        body = body.replace(Regex("""\\(Large|normalsize|small)\b"""), "")
-        body = body.replace(Regex("""\\bfseries\b"""), "")
-        body = body.replace(Regex("""\\itshape\b"""), "")
-        val html = latexProseToHtmlWithMath(body)
-        val blocks = html.split(Regex("""\n+""")).map { it.trim() }.filter { it.isNotEmpty() }
-        val styled = blocks.mapIndexed { i, block ->
-            val style = when (i) {
-                0 -> "font-size:1.5em; font-weight:bold; margin:0 0 1em 0;"
-                1 -> "font-size:1.1em; font-style:italic; margin:0.5em 0;"
-                else -> "font-size:1em; margin:0.5em 0; opacity:0.9;"
-            }
-            "<div style=\"$style\">$block</div>"
-        }.joinToString("")
-        """
+        sb.append(s, i, j)
+        val bodyStart = j + beginTok.length
+        val endIdx = findMatchingEndTitlepage(s, bodyStart)
+        if (endIdx < 0) {
+            sb.append(s, j, s.length)
+            break
+        }
+        val body = s.substring(bodyStart, endIdx)
+        sb.append(renderTitlepageHtml(body))
+        i = endIdx + endTok.length
+    }
+    return sb.toString()
+}
+
+private fun findMatchingEndTitlepage(s: String, bodyStart: Int): Int {
+    val beginTok = "\\begin{titlepage}"
+    val endTok = "\\end{titlepage}"
+    var depth = 1
+    var pos = bodyStart
+    while (pos < s.length) {
+        val nb = s.indexOf(beginTok, pos)
+        val ne = s.indexOf(endTok, pos)
+        if (ne < 0) return -1
+        if (nb >= 0 && nb < ne) {
+            depth++
+            pos = nb + beginTok.length
+        } else {
+            depth--
+            if (depth == 0) return ne
+            pos = ne + endTok.length
+        }
+    }
+    return -1
+}
+
+/** Remove a single outer `{...}` wrapper used for TeX grouping/scoping. */
+internal fun stripOuterLatexGroupBraces(s: String): String {
+    var t = s.trim()
+    while (t.isNotEmpty() && t[0] == '{') {
+        val close = findBalancedBrace(t, 0)
+        if (close == t.length - 1) t = t.substring(1, close).trim()
+        else break
+    }
+    return t
+}
+
+/** `picture` + `\\put(...){...}` blocks (common on custom title pages) → footer HTML. */
+internal fun convertPicturePutBlocks(s: String): String {
+    val beginTok = "\\begin{picture}"
+    val endTok = "\\end{picture}"
+    val sb = StringBuilder(s.length + 64)
+    var i = 0
+    var guard = 0
+    while (i < s.length && guard++ < 5000) {
+        val j = s.indexOf(beginTok, i)
+        if (j < 0) {
+            sb.append(s, i, s.length)
+            break
+        }
+        sb.append(s, i, j)
+        var p = j + beginTok.length
+        while (p < s.length && s[p].isWhitespace()) p++
+        if (p < s.length && s[p] == '(') {
+            val rp = s.indexOf(')', p)
+            if (rp >= 0) p = rp + 1
+        }
+        val endIdx = s.indexOf(endTok, p)
+        if (endIdx < 0) {
+            sb.append(s, j, s.length)
+            break
+        }
+        val inner = s.substring(p, endIdx)
+        sb.append(extractPicturePutFooterHtml(inner))
+        i = endIdx + endTok.length
+    }
+    return sb.toString()
+}
+
+private fun extractPicturePutFooterHtml(inner: String): String {
+    var footer = inner.trim()
+    val putIdx = footer.indexOf("""\put""")
+    if (putIdx >= 0) {
+        var p = putIdx + 4
+        while (p < footer.length && footer[p].isWhitespace()) p++
+        if (p < footer.length && footer[p] == '(') {
+            val rp = footer.indexOf(')', p)
+            if (rp >= 0) p = rp + 1
+        }
+        while (p < footer.length && footer[p].isWhitespace()) p++
+        if (p < footer.length && footer[p] == '{') {
+            val close = findBalancedBrace(footer, p)
+            if (close >= 0) footer = footer.substring(p + 1, close).trim()
+        }
+    }
+    footer = footer.replace(Regex("""\\renewcommand\s*\{[^}]*\}\s*\{[^}]*\}"""), "")
+    footer = convertMinipagesToHtml(footer)
+    footer = convertHref(footer)
+    val html = latexProseToHtmlWithMath(footer.trim())
+    return """<div class="ll-titlepage-footer" style="margin-top:2em;padding-top:0.75em;border-top:1px solid var(--border);font-size:0.88em;line-height:1.4;text-align:left;">$html</div>"""
+}
+
+private fun applyTitlepageVspace(body: String): String =
+    Regex("""\\vspace\*?\s*\{([^}]*)\}""").replace(body) { m ->
+        val arg = m.groupValues[1].trim().replace(',', '.')
+        val numMatch = Regex("""([\d.]+)\s*(cm|mm|pt|em|ex|in)?""").find(arg)
+        if (numMatch != null) {
+            val num = numMatch.groupValues[1]
+            val unit = numMatch.groupValues[2].ifEmpty { "em" }
+            """<div style="height:${num}$unit"></div>"""
+        } else "\n"
+    }
+
+private fun preprocessTitlepageBody(body: String): String {
+    var t = body
+    t = t.replace(Regex("""\\thispagestyle\{[^}]*\}"""), "")
+    t = t.replace(Regex("""\\centering\b"""), "")
+    t = t.replace(Regex("""\\raggedright\b"""), "")
+    t = t.replace(Regex("""\\null\b"""), "")
+    t = t.replace(Regex("""\\vfill\b"""), "\n")
+    t = t.replace(Regex("""\\par\b"""), " ")
+    t = applyTitlepageVspace(t)
+    t = t.replace("""\today""", renderDate("""\today""") ?: "")
+    t = t.replace(Regex("""\\(tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)\b"""), "")
+    t = t.replace(Regex("""\\bfseries\b"""), "")
+    t = t.replace(Regex("""\\itshape\b"""), "")
+    t = convertPicturePutBlocks(t)
+    t = t.replace(
+        Regex("""\\begin\{abstract\}(.+?)\\end\{abstract\}""", RegexOption.DOT_MATCHES_ALL),
+    ) { m ->
+        val raw = m.groupValues[1].trim()
+        val collapsedSingles = raw.replace(Regex("""(?<!\n)\n(?!\n)"""), " ")
+        val html = proseNoBr(collapsedSingles)
+        """<div class="abstract-block" style="padding:12px;border-left:3px solid var(--border); background:#6b728022; margin:12px 0;"><strong>Abstract.</strong>&nbsp;$html</div>"""
+    }
+    t = Regex("""\\paragraph\s*\{keyword\}\s*(.+)""", RegexOption.MULTILINE).replace(t) { m ->
+        val kw = latexProseToHtmlWithMath(m.groupValues[1].trim())
+        """<div class="ll-keywords" style="margin:0.75em 0;font-size:0.95em;opacity:0.9;text-align:left;"><strong>Keywords:</strong> $kw</div>"""
+    }
+    t = replaceCmd1ArgBalanced(t, "paragraph") { label ->
+        val htmlLabel = latexProseToHtmlWithMath(label)
+        "<p style=\"margin:0.75em 0;text-align:left;\"><strong>$htmlLabel</strong> "
+    }
+    return t
+}
+
+private fun renderTitlepageHtml(rawBody: String): String {
+    val body = preprocessTitlepageBody(rawBody)
+    val parts = body.split(Regex("""\n+""")).map { it.trim() }.filter { it.isNotEmpty() }
+    val styled = parts.mapIndexed { i, block ->
+        if (block.startsWith("<div") || block.startsWith("<p")) return@mapIndexed block
+        val stripped = stripOuterLatexGroupBraces(block)
+        val html = latexProseToHtmlWithMath(stripped)
+        if (html.isBlank()) return@mapIndexed ""
+        val style = when (i) {
+            0 -> "font-size:1.5em; font-weight:bold; margin:0 0 1em 0;"
+            1 -> "font-size:1.1em; font-style:italic; margin:0.5em 0;"
+            2 -> "font-size:1em; margin:0.5em 0; opacity:0.9;"
+            else -> "font-size:1em; margin:0.5em 0; opacity:0.9; text-align:left;"
+        }
+        "<div style=\"$style\">$html</div>"
+    }.filter { it.isNotEmpty() }.joinToString("")
+    return """
         <div class="ll-titlepage" style="text-align:center; padding:2em 1em; margin:0 0 1.5em 0; border-bottom:1px solid var(--border);">
           $styled
         </div>
         """.trimIndent()
-    }
 }
 
 /**
@@ -110,6 +252,7 @@ internal fun sanitizeForMathJaxProse(bodyText: String): String {
         var s = bodyText
 
         s = convertTitlepage(s)
+        s = convertPicturePutBlocks(s)
         s = convertLetterEnvironment(s)
 
         s = s.replace(

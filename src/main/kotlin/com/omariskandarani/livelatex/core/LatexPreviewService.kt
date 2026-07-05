@@ -52,6 +52,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private var jsRenderTikzSettingQuery: JBCefJSQuery? = null
     private var jsClearCacheQuery: JBCefJSQuery? = null
     private var jsSectionsQuery: JBCefJSQuery? = null
+    private var jsSyncSelection: JBCefJSQuery? = null
     /** Sectielijst uit de preview-pagina (voor Secties-dropdown in titelbalk). */
     @Volatile
     var lastSections: List<Pair<String, String>> = emptyList()
@@ -71,6 +72,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     /** Aparte alarm: `scheduleRefresh` mag niet `cancelAllRequests` op de sectie-alarm uitvoeren. */
     private val refreshDebounceAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+    private val selectionSyncAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private val debounceMs = 150
 
     private fun isLiveLatexPreviewFile(file: VirtualFile?): Boolean {
@@ -96,8 +98,16 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private val visibleListener = VisibleAreaListener { e: VisibleAreaEvent ->
-        val editor = e.editor ?: return@VisibleAreaListener
-        syncToViewportCenter(editor)
+        syncToViewportCenter(e.editor)
+    }
+
+    private val selectionListener = object : SelectionListener {
+        override fun selectionChanged(event: SelectionEvent) {
+            if (syncingFromPreview) return
+            if (!ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).syncSelection) return
+            selectionSyncAlarm.cancelAllRequests()
+            selectionSyncAlarm.addRequest({ syncEditorSelectionToPreview(event.editor) }, 50)
+        }
     }
 
     // ToolWindow width helper
@@ -126,7 +136,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     }
 
                     // Post the result back into the page on the EDT for safety
-                    val cef = browser?.cefBrowser ?: return@executeOnPooledThread
+                    val cef = browser.cefBrowser
                     val json = result.toJsonForJs()
                     ApplicationManager.getApplication().invokeLater({
                         // double-check browser still alive
@@ -267,15 +277,20 @@ class LatexPreviewService(private val project: Project) : Disposable {
         browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
     }
 
-    /** Zet auto-scroll state uit IDE-instellingen in de preview-pagina (localStorage). */
+    /** Zet preview UI-instellingen uit IDE-instellingen in de preview-pagina (localStorage). */
     private fun syncAutoScrollSettingsToPage() {
         val settings = ApplicationManager.getApplication().getService(com.omariskandarani.livelatex.core.LiveLatexSettings::class.java)
         eval(
             "try { " +
                 "localStorage.setItem('ll_auto_scroll', ${settings.autoScrollPreview}); " +
                 "localStorage.setItem('ll_auto_scroll_editor', ${settings.autoScrollEditor}); " +
+                "localStorage.setItem('ll_sync_selection', ${settings.syncSelection}); " +
                 "localStorage.setItem('ll_show_tikz_debug', ${settings.showTikzDebugOverlay}); " +
+                "localStorage.setItem('ll_invert_scroll_h', ${settings.invertScrollHorizontal}); " +
+                "localStorage.setItem('ll_invert_scroll_v', ${settings.invertScrollVertical}); " +
                 "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug(${settings.showTikzDebugOverlay}); " +
+                "var cbH=document.getElementById('ll-invert-scroll-h'); if(cbH) cbH.checked=${settings.invertScrollHorizontal}; " +
+                "var cbV=document.getElementById('ll-invert-scroll-v'); if(cbV) cbV.checked=${settings.invertScrollVertical}; " +
             "} catch(e){}"
         )
         syncRenderTikzInPageCheckbox()
@@ -465,6 +480,46 @@ class LatexPreviewService(private val project: Project) : Disposable {
             }
         }
 
+        // 1b) selection bridge (preview → select text in editor)
+        jsSyncSelection = JBCefJSQuery.create(base).also { query ->
+            Disposer.register(this, query)
+            query.addHandler { payload ->
+                try {
+                    val mergedStart = Regex("""\"mergedStart\"\s*:\s*(\d+)""")
+                        .find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    val mergedEnd = Regex("""\"mergedEnd\"\s*:\s*(\d+)""")
+                        .find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    if (mergedStart != null && mergedEnd != null && mergedEnd > mergedStart) {
+                        syncingFromPreview = true
+                        ApplicationManager.getApplication().invokeLater {
+                            try {
+                                val settings = ApplicationManager.getApplication()
+                                    .getService(LiveLatexSettings::class.java)
+                                if (!settings.syncSelection) return@invokeLater
+                                val ed = FileEditorManager.getInstance(project).selectedTextEditor
+                                    ?: return@invokeLater
+                                val docLen = ed.document.textLength
+                                val origStart = LatexHtml.charMergedToOrig(mergedStart)
+                                    .coerceIn(0, docLen)
+                                val origEnd = LatexHtml.charMergedToOrig(mergedEnd)
+                                    .coerceIn(0, docLen)
+                                if (origEnd > origStart) {
+                                    ed.selectionModel.setSelection(origStart, origEnd)
+                                    ed.scrollingModel.scrollTo(
+                                        ed.offsetToLogicalPosition(origStart),
+                                        com.intellij.openapi.editor.ScrollType.MAKE_VISIBLE
+                                    )
+                                }
+                            } finally {
+                                alarm.addRequest({ syncingFromPreview = false }, 80)
+                            }
+                        }
+                    }
+                } catch (_: Throwable) {}
+                JBCefJSQuery.Response("OK")
+            }
+        }
+
         // 2) TikZ bridge (JSQuery + pooling + page glue) — single source of truth
         exposeTikzBridge(base)
         exposeClearCacheBridge(base)
@@ -515,6 +570,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
         // Two-arg overload: required API (single-arg Document.addDocumentListener is deprecated).
         editor?.document?.addDocumentListener(docListener, this)
         editor?.caretModel?.addCaretListener(caretListener)
+        editor?.selectionModel?.addSelectionListener(selectionListener)
         editor?.scrollingModel?.addVisibleAreaListener(visibleListener)
         if (editor != null) {
             // Initial sync: same line at center in both panels
@@ -526,6 +582,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
         boundEditor?.let { ed ->
             ed.document.removeDocumentListener(docListener)
             ed.caretModel.removeCaretListener(caretListener)
+            ed.selectionModel.removeSelectionListener(selectionListener)
             ed.scrollingModel.removeVisibleAreaListener(visibleListener)
         }
         boundEditor = null
@@ -545,6 +602,21 @@ class LatexPreviewService(private val project: Project) : Disposable {
     private fun postSync(abs: Int, source: String) {
         if (syncingFromPreview) return
         eval("""window.postMessage({type:'sync-line', abs:$abs, source:'$source', mode:'center'}, '*');""")
+    }
+
+    private fun syncEditorSelectionToPreview(editor: Editor) {
+        if (syncingFromPreview) return
+        val sm = editor.selectionModel
+        if (!sm.hasSelection()) {
+            eval("""window.postMessage({type:'sync-selection', clear:true}, '*');""")
+            return
+        }
+        val start = sm.selectionStart
+        val end = sm.selectionEnd
+        if (end <= start) return
+        eval(
+            """window.postMessage({type:'sync-selection', srcStart:$start, srcEnd:$end, source:'editor'}, '*');"""
+        )
     }
 
     private fun eval(js: String) {
@@ -693,6 +765,20 @@ class LatexPreviewService(private val project: Project) : Disposable {
             ).trimIndent()
             eval(def)
         }
+        jsSyncSelection?.let { q ->
+            val def = (
+                """
+                window.__jbcefSyncSelection = function(obj){
+                  try {
+                    var s = (typeof obj === 'string') ? obj : JSON.stringify(obj);
+                    ${q.inject("s")}
+                  } catch(e) {}
+                };
+                """
+            ).trimIndent()
+            eval(def)
+        }
+        syncAutoScrollSettingsToPage()
         postSync(caretLine, source = "initial")
     }
 

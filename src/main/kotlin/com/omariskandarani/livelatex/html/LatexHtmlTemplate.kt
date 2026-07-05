@@ -20,13 +20,18 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikz
     // Line maps injected from Kotlin (orig->merged, merged->orig)
     window.__llO2M = ${lineMapOrigToMergedJson ?: "[]"};
     window.__llM2O = ${lineMapMergedToOrigJson ?: "[]"};
+    window.__llCharO2M = ${charMapOrigToMergedJson ?: "[]"};
+    window.__llCharM2O = ${charMapMergedToOrigJson ?: "[]"};
+    window.__llSrcMap = ${srcMapJson ?: "[]"};
   </script>
   <script>
     // Re-entrancy / echo guards
     window.__llGuards = {
-      suppressEmitUntil: 0, // while > now: preview won't emit preview-mark
-      echoId: null,         // last id we sent to editor
-      echoUntil: 0          // ignore editor echoes for this id until this time
+      suppressEmitUntil: 0,
+      echoId: null,
+      echoUntil: 0,
+      suppressSelectionEmitUntil: 0,
+      suppressSelectionEchoUntil: 0
     };
   </script>
   <style>
@@ -121,6 +126,9 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikz
     .caret-mark { display:inline-block; border-left: 1.5px solid #4F46E5; height: 1em; margin-left:-0.75px; animation: llblink 1s step-end infinite; }
     @keyframes llblink { 50% { border-color: transparent; } }
     .sync-target { outline: 2px dashed #10b981; outline-offset: 2px; }
+    /* Source-map selection mirror (editor ↔ preview) */
+    .llsrc.ll-mirror-sel { background: rgba(79,70,229,.28); border-radius: 2px; }
+    .llsrc::selection, .llsrc *::selection { background: rgba(79,70,229,.35); }
     #ll-debug { position: fixed; right: 10px; bottom: 10px; background: rgba(0,0,0,0.6); color: #fff; font: 12px/1.35 monospace; padding: 8px 10px; border-radius: 6px; z-index: 9999; max-width: 46vw; max-height: 40vh; overflow: auto; white-space: pre-wrap; display: none; }
     #ll-debug.visible { display: block; }
     
@@ -450,6 +458,136 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikz
   })();
 </script>
 
+<script>
+(function(){
+  function llSyncSelectionEnabled() {
+    try { return localStorage.getItem('ll_sync_selection') !== 'false'; } catch(_) { return true; }
+  }
+  window.__llSyncSelectionEnabled = llSyncSelectionEnabled;
+
+  function origToMerged(off) {
+    const m = window.__llCharO2M;
+    if (!Array.isArray(m) || !m.length) return off;
+    if (off < 0) return 0;
+    if (off >= m.length) return m[m.length - 1];
+    return m[off];
+  }
+
+  function clearMirrorHighlight() {
+    document.querySelectorAll('.llsrc.ll-mirror-sel').forEach(el => el.classList.remove('ll-mirror-sel'));
+  }
+
+  function nodeAtOffset(container, charOffset) {
+    const tw = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+    let n = tw.nextNode(), pos = 0;
+    while (n) {
+      const len = (n.textContent || '').length;
+      if (pos + len >= charOffset) return { node: n, offset: charOffset - pos };
+      pos += len;
+      n = tw.nextNode();
+    }
+    return null;
+  }
+
+  function applyEditorSelection(mergedStart, mergedEnd) {
+    clearMirrorHighlight();
+    if (!Number.isFinite(mergedStart) || !Number.isFinite(mergedEnd) || mergedEnd <= mergedStart) return;
+
+    const spans = Array.from(document.querySelectorAll('.llsrc[data-s][data-e]'))
+      .filter(el => {
+        const s = +el.dataset.s, e = +el.dataset.e;
+        return e > mergedStart && s < mergedEnd;
+      });
+    if (!spans.length) return;
+
+    spans.forEach(el => el.classList.add('ll-mirror-sel'));
+
+    const root = document.querySelector('.mj') || document.body;
+    const first = spans[0], last = spans[spans.length - 1];
+    const range = document.createRange();
+    try {
+      const fs = +first.dataset.s, fe = +first.dataset.e;
+      const ls = +last.dataset.s, le = +last.dataset.e;
+      const startOff = Math.max(0, mergedStart - fs);
+      const endOff = Math.max(0, Math.min(last.textContent.length, mergedEnd - ls));
+      const startNode = nodeAtOffset(first, startOff) || { node: first.firstChild || first, offset: 0 };
+      const endNode = nodeAtOffset(last, endOff) || { node: last.lastChild || last, offset: (last.textContent || '').length };
+      range.setStart(startNode.node, startNode.offset);
+      range.setEnd(endNode.node, endNode.offset);
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch(_) {}
+  }
+  window.applyEditorSelection = applyEditorSelection;
+  window.clearMirrorHighlight = clearMirrorHighlight;
+
+  window.addEventListener('message', (ev) => {
+    const d = ev.data || {};
+    if (d.type !== 'sync-selection') return;
+    if (!llSyncSelectionEnabled()) return;
+    const g = window.__llGuards || {};
+    if (Date.now() < (g.suppressSelectionEchoUntil || 0)) return;
+
+    if (d.clear) {
+      clearMirrorHighlight();
+      try { window.getSelection()?.removeAllRanges(); } catch(_) {}
+      return;
+    }
+    if (!Number.isFinite(d.srcStart) || !Number.isFinite(d.srcEnd)) return;
+    g.suppressSelectionEchoUntil = Date.now() + 120;
+    const m0 = origToMerged(d.srcStart);
+    const m1 = origToMerged(d.srcEnd);
+    applyEditorSelection(m0, m1);
+  }, false);
+
+  let _selRaf = 0;
+  function mergedFromNode(node) {
+    let el = node && node.nodeType === 3 ? node.parentElement : node;
+    while (el) {
+      if (el.classList && el.classList.contains('llsrc') && el.dataset.s != null) {
+        return { start: +el.dataset.s, end: +el.dataset.e, el };
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function onPreviewSelectionChange() {
+    if (!llSyncSelectionEnabled()) return;
+    const g = window.__llGuards || {};
+    if (Date.now() < (g.suppressSelectionEmitUntil || 0)) return;
+    if (Date.now() < (g.suppressSelectionEchoUntil || 0)) return;
+
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    const a = mergedFromNode(range.startContainer);
+    const b = mergedFromNode(range.endContainer);
+    if (!a || !b) return;
+
+    const mStart = Math.min(a.start, b.start);
+    const mEnd = Math.max(a.end, b.end);
+    const text = sel.toString();
+    if (!text || text.length < 1) return;
+
+    g.suppressSelectionEmitUntil = Date.now() + 120;
+    try {
+      if (typeof window.__jbcefSyncSelection === 'function') {
+        window.__jbcefSyncSelection({ mergedStart: mStart, mergedEnd: mEnd, text: text });
+      }
+    } catch(_) {}
+  }
+
+  document.addEventListener('selectionchange', () => {
+    if (_selRaf) cancelAnimationFrame(_selRaf);
+    _selRaf = requestAnimationFrame(() => { _selRaf = 0; onPreviewSelectionChange(); });
+  });
+})();
+</script>
+
   <script>
   (function () {
     const STEP = 1.15, MIN = 0.5, MAX = 3.0;
@@ -489,6 +627,58 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikz
   </script>
 
   <script>
+  (function () {
+    function llInvertScrollH() {
+      try { return localStorage.getItem('ll_invert_scroll_h') === 'true'; } catch(_) { return false; }
+    }
+    function llInvertScrollV() {
+      try { return localStorage.getItem('ll_invert_scroll_v') === 'true'; } catch(_) { return false; }
+    }
+    window.__llInvertScrollH = llInvertScrollH;
+    window.__llInvertScrollV = llInvertScrollV;
+
+    function isNestedHorizontalScroller(node) {
+      var scrollRoot = document.scrollingElement || document.documentElement;
+      var el = node;
+      while (el && el !== document.documentElement) {
+        // Skip only inner scrollers (tables, code); not the page body/root.
+        if (el !== scrollRoot && el !== document.body && el.scrollWidth > el.clientWidth + 1) {
+          var ox = window.getComputedStyle(el).overflowX;
+          if (ox === 'auto' || ox === 'scroll' || ox === 'overlay') return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    }
+
+    window.addEventListener('wheel', function (e) {
+      var invertH = llInvertScrollH();
+      var invertV = llInvertScrollV();
+      if (!invertH && !invertV) return;
+
+      var dx = e.deltaX || 0;
+      var dy = e.deltaY || 0;
+      var shiftHoriz = false;
+      if (!dx && e.shiftKey && dy) {
+        dx = dy;
+        dy = 0;
+        shiftHoriz = true;
+      }
+
+      var doH = invertH && dx !== 0;
+      var doV = invertV && dy !== 0 && !shiftHoriz;
+      if (doH && isNestedHorizontalScroller(e.target)) doH = false;
+      if (!doH && !doV) return;
+
+      e.preventDefault();
+      var root = document.scrollingElement || document.documentElement;
+      if (doH) root.scrollLeft += -dx;
+      if (doV) root.scrollTop += -dy;
+    }, { passive: false, capture: true });
+  })();
+  </script>
+
+  <script>
   (function(){
     function llAutoScroll() {
       try { return localStorage.getItem('ll_auto_scroll') !== 'false'; } catch(_) { return true; }
@@ -504,10 +694,14 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikz
       const panel = document.getElementById('ll-menu-panel');
       const cbScroll = document.getElementById('ll-auto-scroll');
       const cbScrollEditor = document.getElementById('ll-auto-scroll-editor');
+      const cbInvertH = document.getElementById('ll-invert-scroll-h');
+      const cbInvertV = document.getElementById('ll-invert-scroll-v');
 
       try {
         cbScroll.checked = localStorage.getItem('ll_auto_scroll') !== 'false';
         cbScrollEditor.checked = localStorage.getItem('ll_auto_scroll_editor') !== 'false';
+        if (cbInvertH) cbInvertH.checked = localStorage.getItem('ll_invert_scroll_h') === 'true';
+        if (cbInvertV) cbInvertV.checked = localStorage.getItem('ll_invert_scroll_v') === 'true';
       } catch(_) {}
 
       hamburger?.addEventListener('click', (e) => {
@@ -522,6 +716,12 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikz
       });
       cbScrollEditor?.addEventListener('change', () => {
         try { localStorage.setItem('ll_auto_scroll_editor', cbScrollEditor.checked ? 'true' : 'false'); } catch(_) {}
+      });
+      cbInvertH?.addEventListener('change', () => {
+        try { localStorage.setItem('ll_invert_scroll_h', cbInvertH.checked ? 'true' : 'false'); } catch(_) {}
+      });
+      cbInvertV?.addEventListener('change', () => {
+        try { localStorage.setItem('ll_invert_scroll_v', cbInvertV.checked ? 'true' : 'false'); } catch(_) {}
       });
       document.getElementById('ll-clear-cache')?.addEventListener('click', () => {
         panel?.classList.remove('open');
@@ -561,6 +761,8 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String, previewRenderTikz
     <div id="ll-menu-panel" class="menu-panel">
       <label class="menu-item"><input type="checkbox" id="ll-auto-scroll" checked> Auto scroll preview</label>
       <label class="menu-item"><input type="checkbox" id="ll-auto-scroll-editor" checked> Auto scroll editor</label>
+      <label class="menu-item"><input type="checkbox" id="ll-invert-scroll-h"> Inverted scroll-h</label>
+      <label class="menu-item"><input type="checkbox" id="ll-invert-scroll-v"> Inverted scroll-v</label>
       <div id="ll-clear-cache" class="menu-item" style="cursor:pointer;" title="Clear TikZ/LaTeX cache for this paper">Clear cache for paper</div>
     </div>
   </div>

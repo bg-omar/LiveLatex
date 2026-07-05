@@ -83,6 +83,13 @@ class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opti
                     svc.evalJs("try { localStorage.setItem('ll_auto_scroll_editor', $state); } catch(e){}")
                 }
             })
+            add(object : ToggleAction("Sync selection", "Selectie editor ↔ preview synchroniseren", null) {
+                override fun isSelected(e2: AnActionEvent) = settings.syncSelection
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.syncSelection = state
+                    svc.evalJs("try { localStorage.setItem('ll_sync_selection', $state); } catch(e){}")
+                }
+            })
             add(object : ToggleAction("Show TikZ debug", "Toon/verberg TikZ debug badges", null) {
                 override fun isSelected(e2: AnActionEvent) = settings.showTikzDebugOverlay
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {
@@ -91,6 +98,30 @@ class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opti
                         "try { " +
                             "localStorage.setItem('ll_show_tikz_debug', $state); " +
                             "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug($state); " +
+                        "} catch(e){}"
+                    )
+                }
+            })
+            add(object : ToggleAction("Inverted scroll-h", "Horizontaal scrollen omkeren (JCEF/Chromium)", null) {
+                override fun isSelected(e2: AnActionEvent) = settings.invertScrollHorizontal
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.invertScrollHorizontal = state
+                    svc.evalJs(
+                        "try { " +
+                            "localStorage.setItem('ll_invert_scroll_h', $state); " +
+                            "var cbH=document.getElementById('ll-invert-scroll-h'); if(cbH) cbH.checked=$state; " +
+                        "} catch(e){}"
+                    )
+                }
+            })
+            add(object : ToggleAction("Inverted scroll-v", "Verticaal scrollen omkeren", null) {
+                override fun isSelected(e2: AnActionEvent) = settings.invertScrollVertical
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.invertScrollVertical = state
+                    svc.evalJs(
+                        "try { " +
+                            "localStorage.setItem('ll_invert_scroll_v', $state); " +
+                            "var cbV=document.getElementById('ll-invert-scroll-v'); if(cbV) cbV.checked=$state; " +
                         "} catch(e){}"
                     )
                 }

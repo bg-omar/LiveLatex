@@ -35,6 +35,12 @@ internal fun isEscaped(s: String, i: Int): Boolean {
 internal var currentBaseDir: String? = null
 internal var lineMapOrigToMergedJson: String? = null
 internal var lineMapMergedToOrigJson: String? = null
+internal var charMapOrigToMergedJson: String? = null
+internal var charMapMergedToOrigJson: String? = null
+internal var srcMapJson: String? = null
+/** Parsed char maps from the last [wrapWithInputs] call (for selection bridge). */
+internal var lastCharOrigToMerged: IntArray = intArrayOf()
+internal var lastCharMergedToOrig: IntArray = intArrayOf()
 
 /**
  * Minimal LaTeX → HTML previewer for prose + MathJax math.
@@ -48,10 +54,40 @@ object LatexHtml {
     var lastCollectedSections: List<Pair<String, String>> = emptyList()
         private set
 
+    /** Map editor (orig) char offset → merged source offset. */
+    fun charOrigToMerged(offset: Int): Int {
+        val map = lastCharOrigToMerged
+        if (map.isEmpty()) return offset
+        if (offset < 0) return 0
+        if (offset >= map.size) return map.last()
+        return map[offset]
+    }
+
+    /** Map merged source char offset → editor (orig) offset. */
+    fun charMergedToOrig(offset: Int): Int {
+        val map = lastCharMergedToOrig
+        if (map.isEmpty()) return offset
+        if (offset < 0) return 0
+        if (offset >= map.size) return map.last()
+        return map[offset]
+    }
+
     // ─────────────────────────── PUBLIC ENTRY ───────────────────────────
 
     fun wrap(texSource: String): String {
+        return wrapInternal(texSource, usePreparedInputMaps = false)
+    }
+
+    private fun wrapInternal(texSource: String, usePreparedInputMaps: Boolean): String {
         LatexTikzJobStore.clear()
+        val renderTikz = renderTikzInPreviewEnabled()
+
+        if (isHtmlOnlyPreviewInput(texSource)) {
+            clearPreviewSourceMaps()
+            lastCollectedSections = emptyList()
+            return buildHtml(texSource, macrosJs = "", previewRenderTikzEnabled = renderTikz)
+        }
+
         val srcNoComments = stripLineComments(texSource)
         val userMacros    = extractNewcommands(srcNoComments)
         val macrosJs      = buildMathJaxMacros(userMacros)
@@ -68,11 +104,11 @@ object LatexHtml {
 
         val body0 = stripPreamble(texSource)
         val body1 = stripLineComments(body0)
-        val body1b = expandZeroArgMacros(body1, userMacros)
+        val body1a = assembleSplitTitlepageMacros(body1, userMacros)
+        val body1b = expandZeroArgMacros(body1a, userMacros)
         val body2 = sanitizeForMathJaxProse(body1b)
         val body2b = convertIncludeGraphics(body2)
 
-        val renderTikz = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview
         val body2c: String
         val body2d: String
         try {
@@ -100,8 +136,52 @@ object LatexHtml {
         val body4c = fixInlineBoundarySpaces(body4)
         // Insert anchors (no blanket escaping here; we preserve math)
         val withAnchors = injectLineAnchors(body4c, absOffset, everyN = 1)
+        val sourceMap = SourceMapBuilder.applySourceMap(withAnchors, texSource)
+        srcMapJson = sourceMap.json
 
-        return buildHtml(withAnchors, macrosJs, renderTikz)
+        if (!usePreparedInputMaps) {
+            installIdentityPreviewMaps(texSource)
+        }
+
+        return buildHtml(sourceMap.html, macrosJs, renderTikz)
+    }
+
+    private fun isHtmlOnlyPreviewInput(source: String): Boolean {
+        if (source.contains(BEGIN_DOCUMENT)) return false
+        val trimmed = source.trimStart()
+        if (!trimmed.startsWith("<")) return false
+        return Regex(
+            """^<(?:!doctype\s+html\b|html\b|head\b|body\b|main\b|article\b|section\b|div\b|p\b|span\b|h[1-6]\b|ul\b|ol\b|li\b|pre\b|code\b|blockquote\b|table\b|figure\b|figcaption\b|strong\b|em\b|small\b|a\b|br\b|hr\b)""",
+            RegexOption.IGNORE_CASE,
+        ).containsMatchIn(trimmed)
+    }
+
+    private fun clearPreviewSourceMaps() {
+        lineMapOrigToMergedJson = "[]"
+        lineMapMergedToOrigJson = "[]"
+        charMapOrigToMergedJson = "[]"
+        charMapMergedToOrigJson = "[]"
+        srcMapJson = "[]"
+        lastCharOrigToMerged = intArrayOf()
+        lastCharMergedToOrig = intArrayOf()
+    }
+
+    private fun installIdentityPreviewMaps(source: String) {
+        val lineCount = source.count { it == '\n' } + 1
+        val lineMap = IntArray(lineCount) { it + 1 }
+        lineMapOrigToMergedJson = lineMap.joinToString(prefix = "[", postfix = "]") { it.toString() }
+        lineMapMergedToOrigJson = lineMapOrigToMergedJson
+
+        val charMap = IntArray(source.length + 1) { it }
+        lastCharOrigToMerged = charMap
+        lastCharMergedToOrig = charMap.copyOf()
+        charMapOrigToMergedJson = SourceMapBuilder.charMapToJson(lastCharOrigToMerged)
+        charMapMergedToOrigJson = charMapOrigToMergedJson
+    }
+
+    private fun renderTikzInPreviewEnabled(): Boolean {
+        val app = ApplicationManager.getApplication() ?: return false
+        return app.getService(LiveLatexSettings::class.java)?.renderTikzInPreview ?: false
     }
 
 
@@ -123,7 +203,7 @@ object LatexHtml {
 
         t = convertLongtablesToTables(t)                 // longtable → table/tabular
         t = convertTcolorboxes(t)                        // ← NEW: render tcolorbox
-        t = if (ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview)
+        t = if (renderTikzInPreviewEnabled())
             TikzRenderer.convertTikzPictures(t, fullSourceNoComments, tikzPreamble)
         else
             TikzRenderer.replaceTikzPicturesWithLazyPlaceholder(t, fullSourceNoComments, tikzPreamble)
@@ -242,7 +322,15 @@ object LatexHtml {
         lineMapOrigToMergedJson = o2m.joinToString(prefix = "[", postfix = "]") { it.toString() }
         lineMapMergedToOrigJson = m2o.joinToString(prefix = "[", postfix = "]") { it.toString() }
 
-        val html = wrap(fullSource)
+        val o2mChar = SourceMapBuilder.buildOrigToMergedCharMap(texSource, inlinedMarked, markerPrefix)
+        val mergedLen = fullSource.length
+        val m2oChar = SourceMapBuilder.buildMergedToOrigCharMap(o2mChar, mergedLen)
+        charMapOrigToMergedJson = SourceMapBuilder.charMapToJson(o2mChar)
+        charMapMergedToOrigJson = SourceMapBuilder.charMapToJson(m2oChar)
+        lastCharOrigToMerged = o2mChar
+        lastCharMergedToOrig = m2oChar
+
+        val html = wrapInternal(fullSource, usePreparedInputMaps = true)
         // keep baseDir for subsequent renders; do not clear to allow incremental refreshes
         return html
     }
