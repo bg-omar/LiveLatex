@@ -64,4 +64,58 @@ class LatexHtmlWrapTest {
             charMapMergedToOrigJson,
         )
     }
+
+    @Test
+    fun wrapWithInputs_preambleMacroAndChildBodyEndToEnd() {
+        val tempDir = Files.createTempDirectory("livelatex-e2e")
+        Files.writeString(tempDir.resolve("prelude.tex"), """\providecommand{\rhoM}{\rho_{\!m}}""")
+        Files.writeString(tempDir.resolve("body.tex"), "\\section{Included}\nDensity is \$\\rhoM\$ here.")
+        val mainPath = tempDir.resolve("main.tex")
+        val src = "\\documentclass{article}\n\\input{prelude}\n\\begin{document}\n\\input{body}\n\\end{document}"
+        Files.writeString(mainPath, src)
+
+        val html = LatexHtml.wrapWithInputs(src, mainPath.toString())
+
+        // Preamble macro from included file reaches MathJax config.
+        assertTrue(html.contains("rhoM"))
+        // Child body is inlined, converted, and section becomes a heading.
+        assertTrue(html.contains("<h2"))
+        assertTrue(html.contains("Included"))
+        assertTrue(html.contains("Density is"))
+    }
+
+  @Test
+  fun wrap_subsectionWithTightChainComparisonInMath() {
+    val tex = """
+      \begin{document}
+      \subsection{Range}
+      Valid when ${'$'}2<x<3${'$'} holds.
+      \subsection{Next}
+      Next section body.
+      \end{document}
+    """.trimIndent()
+    val html = LatexHtml.wrap(tex)
+    assertTrue(html.contains("&lt;"))
+    assertFalse(html.contains("<x<"))
+    assertTrue(html.contains("holds"))
+    assertTrue(html.contains("Next section body"))
+  }
+
+  @Test
+  fun wrap_subsectionWithGreaterThanInMathPreservesLineBreaks() {
+        val tex = """
+            \begin{document}
+            \subsection{First}
+            Value ${'$'}x > 0${'$'} \\
+            More in first.
+            \subsection{Second}
+            Second body.
+            \end{document}
+        """.trimIndent()
+        val html = LatexHtml.wrap(tex)
+        assertTrue(html.contains("&gt;"))
+        assertTrue(html.contains("<br"))
+        assertTrue(html.contains("Second body"))
+        assertTrue(html.contains("More in first"))
+    }
 }

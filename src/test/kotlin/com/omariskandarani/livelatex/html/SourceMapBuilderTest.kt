@@ -43,6 +43,16 @@ class SourceMapBuilderTest {
     }
 
     @Test
+    fun extractHtmlVisibleText_decodesEscapedMathEntities() {
+        val d = "$"
+        val html = "<p>Range ${d}2&lt;x&lt;3${d} and ${d}x &gt; 0${d}</p>"
+        val segs = SourceMapBuilder.extractHtmlVisibleText(html)
+        val plain = segs.joinToString("") { it.plain }
+        assertTrue(plain.contains("2" + "<x<" + "3") || plain.contains("2 < x < 3"))
+        assertTrue(plain.contains("x > 0") || plain.contains("x>0"))
+    }
+
+    @Test
     fun alignSegments_matchesSequentialTokens() {
         val src = listOf(
             SourceMapBuilder.TextSegment(0, 5, "Hello"),
@@ -97,5 +107,11 @@ class SourceMapBuilderTest {
         val m2o = SourceMapBuilder.buildMergedToOrigCharMap(o2m, mergedLength = 12)
         assertEquals(0, m2o[0])
         assertEquals(3, m2o[10])
+    }
+
+    @Test
+    fun charMapToJson_formatsIntArrayAsJsonArray() {
+        assertEquals("[0, 1, 2, 10]", SourceMapBuilder.charMapToJson(intArrayOf(0, 1, 2, 10)))
+        assertEquals("[]", SourceMapBuilder.charMapToJson(intArrayOf()))
     }
 }

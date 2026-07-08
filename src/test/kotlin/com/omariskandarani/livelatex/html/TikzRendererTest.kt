@@ -76,6 +76,25 @@ class TikzRendererTest {
     }
 
     @Test
+    fun isStandaloneFigureDocument_detectsStandaloneClass() {
+        val src = """\documentclass[tikz]{standalone}\begin{document}\begin{tikzpicture}\end{tikzpicture}\end{document}"""
+        assertTrue(TikzRenderer.isStandaloneFigureDocument(src))
+    }
+
+    @Test
+    fun collectTikzPreamble_keepsNewifAndNewcommandFromStandalone() {
+        val src = """
+            \documentclass[tikz]{standalone}
+            \newif\ifsstguides
+            \newcommand{\doubletwist}[7]{#1}
+            \begin{document}
+        """.trimIndent()
+        val pre = TikzRenderer.collectTikzPreamble(src)
+        assertTrue(pre.contains("\\newif\\ifsstguides"))
+        assertTrue(pre.contains("\\newcommand{\\doubletwist}"))
+    }
+
+    @Test
     fun replaceTikzPicturesWithPlaceholder_handlesNestedTikzpicture() {
         val html = """
             outer

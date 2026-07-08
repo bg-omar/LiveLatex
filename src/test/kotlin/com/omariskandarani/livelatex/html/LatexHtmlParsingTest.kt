@@ -56,6 +56,15 @@ class LatexHtmlParsingTest {
     }
 
     @Test
+    fun slugify_stripsInlineMathForStableSectionIds() {
+        assertEquals("new-section", slugify("""New Section $\omegas\quad$"""))
+        assertEquals(
+            "new-section",
+            slugify("""New Section $\boldsymbol{\omega}_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}\quad$"""),
+        )
+    }
+
+    @Test
     fun isEscaped_detectsOddBackslashes() {
         val s = """\%x"""
         val i = s.indexOf('%')

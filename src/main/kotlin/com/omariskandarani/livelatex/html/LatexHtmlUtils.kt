@@ -132,6 +132,172 @@ internal fun buildMakTitleHtml(meta: TitleMeta): String {
 internal fun convertMakeTitle(body: String, meta: TitleMeta): String =
         body.replace(Regex("""\\maketitle\b""")) { buildMakTitleHtml(meta) }
 
+/** Text chunk or HTML tag from [splitHtmlTagsRespectingMath]. */
+internal sealed class HtmlMathSplitPiece {
+    data class Text(val value: String) : HtmlMathSplitPiece()
+    data class Tag(val value: String) : HtmlMathSplitPiece()
+}
+
+/**
+ * Split HTML into alternating text and tag segments, ignoring `<`/`>` inside math
+ * (`$…$`, `$$…$$`, `\[…\]`, `\(…\)`, and [MATH_ENVS] blocks).
+ */
+internal fun splitHtmlTagsRespectingMath(html: String): List<HtmlMathSplitPiece> {
+    val out = mutableListOf<HtmlMathSplitPiece>()
+    val textSb = StringBuilder()
+    val tagSb = StringBuilder()
+
+    var inHtmlTag = false
+    var attrQuote: Char? = null
+
+    var inDollar = false
+    var inDoubleDollar = false
+    var inBracket = false
+    var inParen = false
+    var envDepth = 0
+
+    fun startsAt(idx: Int, tok: String): Boolean =
+        idx + tok.length <= html.length && html.regionMatches(idx, tok, 0, tok.length)
+
+    fun inAnyMath(): Boolean =
+        inDollar || inDoubleDollar || inBracket || inParen || envDepth > 0
+
+    fun flushText() {
+        if (textSb.isNotEmpty()) {
+            out.add(HtmlMathSplitPiece.Text(textSb.toString()))
+            textSb.clear()
+        }
+    }
+
+    fun flushTag() {
+        if (tagSb.isNotEmpty()) {
+            out.add(HtmlMathSplitPiece.Tag(tagSb.toString()))
+            tagSb.clear()
+        }
+    }
+
+    var i = 0
+    while (i < html.length) {
+        if (!inAnyMath() && !inHtmlTag && startsAt(i, "<!--")) {
+            flushText()
+            val end = html.indexOf("-->", i + 4)
+            val commentEnd = if (end >= 0) end + 3 else html.length
+            out.add(HtmlMathSplitPiece.Tag(html.substring(i, commentEnd)))
+            i = commentEnd
+            continue
+        }
+
+        if (!inAnyMath() && !inHtmlTag && html[i] == '<') {
+            flushText()
+            inHtmlTag = true
+            attrQuote = null
+            tagSb.append('<')
+            i++
+            continue
+        }
+
+        if (inHtmlTag) {
+            val c = html[i]
+            tagSb.append(c)
+            i++
+            if (attrQuote == null) {
+                if (c == '"' || c == '\'') attrQuote = c
+                else if (c == '>') {
+                    inHtmlTag = false
+                    flushTag()
+                }
+            } else if (c == attrQuote) {
+                attrQuote = null
+            }
+            continue
+        }
+
+        if (!inBracket && !inParen) {
+            if (startsAt(i, "$$")) {
+                inDoubleDollar = !inDoubleDollar
+                textSb.append("$$")
+                i += 2
+                continue
+            }
+            if (!inDoubleDollar && html[i] == '$' && !isEscaped(html, i)) {
+                inDollar = !inDollar
+                textSb.append('$')
+                i++
+                continue
+            }
+        }
+        if (!inDollar && !inDoubleDollar) {
+            if (startsAt(i, "\\[")) {
+                inBracket = true
+                textSb.append("\\[")
+                i += 2
+                continue
+            }
+            if (startsAt(i, "\\]") && inBracket) {
+                inBracket = false
+                textSb.append("\\]")
+                i += 2
+                continue
+            }
+            if (startsAt(i, "\\(")) {
+                inParen = true
+                textSb.append("\\(")
+                i += 2
+                continue
+            }
+            if (startsAt(i, "\\)") && inParen) {
+                inParen = false
+                textSb.append("\\)")
+                i += 2
+                continue
+            }
+            if (startsAt(i, "\\begin{")) {
+                val nameClose = html.indexOf('}', i + 7)
+                val name = if (nameClose > i + 7) html.substring(i + 7, nameClose) else ""
+                if (name in MATH_ENVS) {
+                    envDepth++
+                    textSb.append(html, i, nameClose + 1)
+                    i = nameClose + 1
+                    continue
+                }
+            }
+            if (startsAt(i, "\\end{") && envDepth > 0) {
+                val nameClose = html.indexOf('}', i + 5)
+                val name = if (nameClose > i + 5) html.substring(i + 5, nameClose) else ""
+                if (name in MATH_ENVS) {
+                    envDepth--
+                    textSb.append(html, i, nameClose + 1)
+                    i = nameClose + 1
+                    continue
+                }
+            }
+        }
+
+        textSb.append(html[i])
+        i++
+    }
+
+    if (inHtmlTag) flushTag() else flushText()
+    return out
+}
+
+/** Escape raw `<`/`>` inside a preserved math fragment for safe HTML embedding. */
+internal fun escapeAngleBracketsInMathFragment(fragment: String): String {
+    val sb = StringBuilder(fragment.length + 8)
+    var i = 0
+    while (i < fragment.length) {
+        when {
+            fragment.startsWith("&lt;", i) -> { sb.append("&lt;"); i += 4 }
+            fragment.startsWith("&gt;", i) -> { sb.append("&gt;"); i += 4 }
+            fragment.startsWith("&amp;", i) -> { sb.append("&amp;"); i += 5 }
+            fragment[i] == '<' -> { sb.append("&lt;"); i++ }
+            fragment[i] == '>' -> { sb.append("&gt;"); i++ }
+            else -> { sb.append(fragment[i]); i++ }
+        }
+    }
+    return sb.toString()
+}
+
 internal fun applyInlineFormattingOutsideTags(html: String): String {
         val tableRx = Regex("(?is)(<table\\b.*?</table>)")
         val segments = tableRx.split(html)
@@ -146,16 +312,12 @@ internal fun applyInlineFormattingOutsideTags(html: String): String {
     }
 
 internal fun applyInlineFormattingOutsideTags_NoTables(html: String): String {
-        val rx = Regex("(<[^>]+>)")
-        val parts = rx.split(html)
-        val tags  = rx.findAll(html).map { it.value }.toList()
         val out = StringBuilder(html.length + 256)
-        for (i in parts.indices) {
-            val chunk = parts[i]
-            if (!chunk.contains('<') && !chunk.contains('>')) {
-                out.append(latexProseToHtmlWithMath(chunk))
-            } else out.append(chunk)
-            if (i < tags.size) out.append(tags[i])
+        for (piece in splitHtmlTagsRespectingMath(html)) {
+            when (piece) {
+                is HtmlMathSplitPiece.Text -> out.append(latexProseToHtmlWithMath(piece.value))
+                is HtmlMathSplitPiece.Tag -> out.append(piece.value)
+            }
         }
         return out.toString()
     }
@@ -370,75 +532,151 @@ private fun mimeForImagePath(path: String): String = when {
     else -> "image/png"
 }
 
-/** Resolve to file URL or data URL so preview can show the image (CEF may block file: from http origin). */
-internal fun resolveImagePath(path: String, baseDirFallback: String = "figures"): String {
-        val p = path.trim().replace('\\', '/')
-        if (p.isEmpty()) return ""
-        if (p.startsWith("http://") || p.startsWith("https://") || p.startsWith("data:")) return p
+/** Result of resolving an image path for HTML preview (never a raw PDF/EPS URL). */
+internal sealed class PreviewImageResult {
+    data class Ready(val url: String) : PreviewImageResult()
+    data class Unavailable(val html: String) : PreviewImageResult()
+}
 
-        var baseDir = currentBaseDir?.let { File(it) } ?: File("")
-        val abs = File(p)
-        if (abs.isAbsolute && abs.exists()) return imageUrlForFile(abs)
+/** Consistent placeholder when a figure/TikZ/PDF cannot be shown in the browser preview. */
+internal fun figureUnavailablePlaceholder(
+    label: String,
+    reason: String,
+    sourcePath: String,
+    logPath: String? = null,
+): String {
+    val logLine = if (!logPath.isNullOrBlank()) {
+        """<div style="opacity:.85;margin-top:4px;font-size:11px;">Log: ${htmlEscapeAll(logPath.replace("\\", "/"))}</div>"""
+    } else ""
+    return """
+<span class="ll-figure-unavailable" style="display:block;margin:8px 0;padding:8px 12px;background:#fef2f2;color:#991b1b;font-size:12px;border-radius:4px;border:1px solid #fecaca;">
+  <strong>${htmlEscapeAll(label)}</strong> ${htmlEscapeAll(reason)}
+  <div style="opacity:.85;margin-top:4px;font-size:11px;">Source: ${htmlEscapeAll(sourcePath.replace("\\", "/"))}</div>
+  $logLine
+</span>""".trimIndent()
+}
 
-        val hasExt = p.contains('.')
-        val exts = listOf(".png", ".jpg", ".jpeg", ".svg", ".pdf")
+internal fun webImageResultToUrl(result: LatexHtmlTikz.WebImageResult): String =
+    imageUrlForRasterOrVectorFile(result.file)
 
-        fun existingWithExt(f: File): File? {
-            if (!f.exists()) {
-                if (hasExt) return null
-                for (e in exts) {
-                    val c = File(f.parentFile ?: baseDir, f.name + e)
-                    if (c.exists()) return c
-                }
-                return null
-            }
-            return f
-        }
-
-        // 1) baseDir, 2) baseDir/figures/p, 3) walk up (ancestors) for p and figures/p
-        var found: File? = existingWithExt(File(baseDir, p))
-            ?: existingWithExt(File(baseDir, "figures${File.separator}$p"))
-        if (found == null) {
-            var ancestor = baseDir.parentFile
-            var depth = 0
-            while (ancestor != null && depth < 15) {
-                found = existingWithExt(File(ancestor, p))
-                    ?: existingWithExt(File(ancestor, "figures${File.separator}$p"))
-                if (found != null) break
-                ancestor = ancestor.parentFile
-                depth++
-            }
-        }
-
-        if (found != null) return imageUrlForFile(found)
-
-        val fallback = if (hasExt) File(baseDir, p) else File(baseDir, p + exts.first())
-        return toFileUrl(fallback)
+/** Resolve LaTeX figure path to a preview-safe URL or placeholder HTML. */
+internal fun resolveImageForPreview(path: String, baseDirFallback: String = "figures"): PreviewImageResult {
+    val p = path.trim().replace('\\', '/')
+    if (p.isEmpty()) {
+        return PreviewImageResult.Unavailable(
+            figureUnavailablePlaceholder("[Figure unavailable]", "Empty image path.", path),
+        )
+    }
+    if (p.startsWith("http://") || p.startsWith("https://") || p.startsWith("data:")) {
+        return PreviewImageResult.Ready(p)
     }
 
-/** Prefer data: URL for small local files so CEF preview shows them (file: often blocked). */
-private fun imageUrlForFile(f: File): String {
-        if (!f.exists() || !f.isFile) return toFileUrl(f)
-        if (f.length() > MAX_DATA_URL_IMAGE_BYTES) return toFileUrl(f)
-        return try {
-            val bytes = f.readBytes()
-            val mime = mimeForImagePath(f.name)
-            "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
-        } catch (_: Exception) {
-            toFileUrl(f)
+    val baseDir = currentBaseDir?.let { File(it) } ?: File("")
+    val abs = File(p)
+    if (abs.isAbsolute && abs.exists()) return resolveExistingImageFile(abs, p)
+
+    val hasExt = p.contains('.')
+    val rasterExts = listOf(".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp")
+    val vectorExts = listOf(".pdf", ".eps")
+
+    fun existingWithExt(f: File): File? {
+        if (f.exists()) return f
+        if (hasExt) return null
+        for (e in rasterExts + vectorExts) {
+            val c = File(f.parentFile ?: baseDir, f.name + e)
+            if (c.exists()) return c
+        }
+        return null
+    }
+
+    var found: File? = existingWithExt(File(baseDir, p))
+        ?: existingWithExt(File(baseDir, "figures${File.separator}$p"))
+    if (found == null) {
+        var ancestor = baseDir.parentFile
+        var depth = 0
+        while (ancestor != null && depth < 15) {
+            found = existingWithExt(File(ancestor, p))
+                ?: existingWithExt(File(ancestor, "figures${File.separator}$p"))
+            if (found != null) break
+            ancestor = ancestor.parentFile
+            depth++
         }
     }
+
+    if (found != null) return resolveExistingImageFile(found, path)
+
+    val fallback = if (hasExt) File(baseDir, p) else File(baseDir, p + rasterExts.first())
+    return PreviewImageResult.Unavailable(
+        figureUnavailablePlaceholder(
+            "[Figure not found]",
+            "Could not locate image on disk.",
+            fallback.absolutePath,
+        ),
+    )
+}
+
+private fun resolveExistingImageFile(file: File, originalPath: String): PreviewImageResult {
+    val ext = file.extension.lowercase()
+    if (ext in setOf("pdf", "eps")) {
+        val converted = LatexHtmlTikz.convertPdfToWebImage(file)
+        if (converted != null) {
+            return PreviewImageResult.Ready(webImageResultToUrl(converted))
+        }
+        return PreviewImageResult.Unavailable(
+            figureUnavailablePlaceholder(
+                "[PDF figure unavailable]",
+                "PDF found but could not be converted to SVG/PNG (need dvisvgm/pdf2svg or pdftoppm/magick).",
+                file.absolutePath,
+                LatexHtmlTikz.tikzCacheDir().absolutePath,
+            ),
+        )
+    }
+    return PreviewImageResult.Ready(imageUrlForRasterOrVectorFile(file))
+}
+
+/** Prefer data: URL for small local raster/SVG files so CEF preview shows them (file: often blocked). */
+private fun imageUrlForRasterOrVectorFile(f: File): String {
+    if (!f.exists() || !f.isFile) return toFileUrl(f)
+    if (f.length() > MAX_DATA_URL_IMAGE_BYTES) return toFileUrl(f)
+    val ext = f.extension.lowercase()
+    if (ext !in setOf("png", "jpg", "jpeg", "svg", "gif", "webp")) return toFileUrl(f)
+    return try {
+        val bytes = f.readBytes()
+        val mime = mimeForImagePath(f.name)
+        "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
+    } catch (_: Exception) {
+        toFileUrl(f)
+    }
+}
+
+/** @deprecated Prefer [resolveImageForPreview]; kept for callers that only need a URL string. */
+internal fun resolveImagePath(path: String, baseDirFallback: String = "figures"): String =
+    when (val r = resolveImageForPreview(path, baseDirFallback)) {
+        is PreviewImageResult.Ready -> r.url
+        is PreviewImageResult.Unavailable -> ""
+    }
+
+/** Legacy name used internally — delegates to [imageUrlForRasterOrVectorFile]. */
+private fun imageUrlForFile(f: File): String = imageUrlForRasterOrVectorFile(f)
 
 internal fun convertIncludeGraphics(latex: String): String {
         val rx = Regex("""\\includegraphics(\[.*?\])?\{([^}]+)\}""")
         return rx.replace(latex) { match ->
             val opts = match.groups[1]?.value ?: ""
             val path = match.groups[2]?.value ?: ""
-            val resolvedPath = resolveImagePath(path)
-            val widthMatch = Regex("width=([0-9.]+)\\\\?\\w*").find(opts)
-            val width = widthMatch?.groups?.get(1)?.value ?: ""
-            val style = if (width.isNotEmpty()) " style=\"max-width:${(width.toFloatOrNull()?.let { it * 100 } ?: 70).toInt()}%\"" else " style=\"max-width:70%\""
-            "<img src=\"$resolvedPath\" alt=\"figure\"$style>"
+            when (val resolved = resolveImageForPreview(path)) {
+                is PreviewImageResult.Ready -> {
+                    val widthMatch = Regex("width=([0-9.]+)\\\\?\\w*").find(opts)
+                    val width = widthMatch?.groups?.get(1)?.value ?: ""
+                    val style = if (width.isNotEmpty()) {
+                        " style=\"max-width:${(width.toFloatOrNull()?.let { it * 100 } ?: 70).toInt()}%\""
+                    } else {
+                        " style=\"max-width:70%\""
+                    }
+                    """<img src="${resolved.url}" alt="figure"$style>"""
+                }
+                is PreviewImageResult.Unavailable -> resolved.html
+            }
         }
     }
 

@@ -466,17 +466,17 @@ internal fun latexProseToHtmlWithMath(s: String): String {
             val isDouble = startsAt(next, "$$")
             val closeIdx = if (isDouble) s.indexOf("$$", next + 2) else s.indexOf('$', next + 1)
             val end = if (closeIdx >= 0) closeIdx + (if (isDouble) 2 else 1) else n
-            sb.append(s.substring(next, end)); i = end; continue
+            sb.append(escapeAngleBracketsInMathFragment(s.substring(next, end))); i = end; continue
         }
         if (next == nextBracket) {
             val closeIdx = s.indexOf("\\]", next + 2)
             val end = if (closeIdx >= 0) closeIdx + 2 else n
-            sb.append(s.substring(next, end)); i = end; continue
+            sb.append(escapeAngleBracketsInMathFragment(s.substring(next, end))); i = end; continue
         }
         if (next == nextParen) {
             val closeIdx = s.indexOf("\\)", next + 2)
             val end = if (closeIdx >= 0) closeIdx + 2 else n
-            sb.append(s.substring(next, end)); i = end; continue
+            sb.append(escapeAngleBracketsInMathFragment(s.substring(next, end))); i = end; continue
         }
         if (next == nextBegin) {
             val nameOpen = next + "\\begin{".length
@@ -494,7 +494,7 @@ internal fun latexProseToHtmlWithMath(s: String): String {
                         s.indexOf(endTok, nameClose + 1).let { if (it < 0) n else it + endTok.length }
                     }
                 }
-                sb.append(s.substring(next, endAt)); i = endAt; continue
+                sb.append(escapeAngleBracketsInMathFragment(s.substring(next, endAt))); i = endAt; continue
             }
             sb.append("\\begin{"); i = nameOpen
         }
@@ -602,16 +602,13 @@ internal fun formatInlineProseNonMath(s0: String): String {
 }
 
 internal fun convertParagraphsOutsideTags(html: String): String {
-    val rxTag = Regex("(<[^>]+>)")
-    val parts = rxTag.split(html)
-    val tags  = rxTag.findAll(html).map { it.value }.toList()
-
     val out = StringBuilder(html.length + 256)
-    for (i in parts.indices) {
-        val chunkRaw = parts[i]
-        if (!chunkRaw.contains('<') && !chunkRaw.contains('>')) {
-            val chunk = chunkRaw.trim()
-            if (chunk.isNotEmpty()) {
+    for (piece in splitHtmlTagsRespectingMath(html)) {
+        when (piece) {
+            is HtmlMathSplitPiece.Tag -> out.append(piece.value)
+            is HtmlMathSplitPiece.Text -> {
+                val chunk = piece.value.trim()
+                if (chunk.isEmpty()) continue
                 if (Regex("""\n{2,}""").containsMatchIn(chunk)) {
                     val paras = chunk.split(Regex("""\n{2,}"""))
                         .map { it.trim() }.filter { it.isNotEmpty() }
@@ -621,10 +618,7 @@ internal fun convertParagraphsOutsideTags(html: String): String {
                     out.append(latexProseToHtmlWithMath(chunk))
                 }
             }
-        } else {
-            out.append(chunkRaw)
         }
-        if (i < tags.size) out.append(tags[i])
     }
 
     val step1 = out.toString()

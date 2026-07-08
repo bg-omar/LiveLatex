@@ -19,11 +19,21 @@ import com.omariskandarani.livelatex.html.convertTextblockStar
 internal const val BEGIN_DOCUMENT = "\\begin{document}"
 internal const val END_DOCUMENT = "\\end{document}"
 
-internal fun slugify(s: String): String =
-    s.lowercase()
-        .replace(Regex("""\\[A-Za-z@]+"""), "")
-        .replace(Regex("""[^a-z0-9]+"""), "-")
-        .trim('-')
+internal fun slugify(s: String): String {
+    var t = s.trim().lowercase()
+    // Drop inline/display math (section titles often include `$...$` or `\(...\)`).
+    t = Regex("""(?<!\\)\$[^$]*\$""").replace(t, "")
+    t = Regex("""\\\(.*?\\\)""").replace(t, "")
+    t = Regex("""\\\[.*?\\\]""").replace(t, "")
+    // Unwrap simple braced command arguments (preserve inner words for slugs).
+    t = t.replace(Regex("""\\[A-Za-z@]+\*?(?:\{([^{}]*)})?""")) { m ->
+        m.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() } ?: ""
+    }
+    t = t.replace(Regex("""\\[A-Za-z@]+"""), "")
+    t = t.replace(Regex("""[{}_^$\\]"""), "")
+    t = t.replace(Regex("""[^a-z0-9]+"""), "-")
+    return t.trim('-').ifBlank { "section" }
+}
 
 internal fun isEscaped(s: String, i: Int): Boolean {
     var k = i - 1
@@ -79,6 +89,19 @@ object LatexHtml {
     }
 
     private fun wrapInternal(texSource: String, usePreparedInputMaps: Boolean): String {
+        /*
+         * PIPELINE_ORDER — do not reorder without updating tests.
+         * Prep: stripPreamble → stripLineComments → assembleSplitTitlepageMacros → expandZeroArgMacros
+         *       → sanitizeForMathJaxProse → convertIncludeGraphics → TikZ convert/placeholder
+         * Prose (applyProseConversions): convertLlmark → convertMakeTitle → convertSiunitx
+         *       → convertTextblockStar → convertHref → convertSections → convertFigureEnvs
+         *       → convertIncludeGraphics → convertMulticols → convertLongtablesToTables
+         *       → convertTcolorboxes → TikZ → convertTableEnvs → convertListEnvironmentsNested
+         *       → convertDescription → convertTabulars → convertTheBibliography → stripAuxDirectives
+         * Inline: convertParagraphsOutsideTags → applyInlineFormattingOutsideTags
+         *       → fixInlineBoundarySpaces → injectLineAnchors → SourceMapBuilder.applySourceMap
+         * formatInlineProseNonMath: \\[dim] before generic \\; replaceCmd1ArgBalanced after unescape.
+         */
         LatexTikzJobStore.clear()
         val renderTikz = renderTikzInPreviewEnabled()
 

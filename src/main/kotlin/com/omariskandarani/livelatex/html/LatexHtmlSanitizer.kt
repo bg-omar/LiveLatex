@@ -69,8 +69,33 @@ internal fun stripOuterLatexGroupBraces(s: String): String {
     return t
 }
 
-/** `picture` + `\\put(...){...}` blocks (common on custom title pages) → footer HTML. */
-internal fun convertPicturePutBlocks(s: String): String {
+/** True when a `picture` block is the SST title-page footer pattern (`\\put` + `minipage`), not a drawing. */
+private fun isTitlepagePictureFooter(inner: String): Boolean {
+    if (!inner.contains("""\begin{minipage}""")) return false
+    val putIdx = inner.indexOf("""\put""")
+    if (putIdx < 0) return false
+    var p = putIdx + 4
+    while (p < inner.length && inner[p].isWhitespace()) p++
+    if (p < inner.length && inner[p] == '(') {
+        val rp = inner.indexOf(')', p)
+        if (rp >= 0) p = rp + 1
+    }
+    while (p < inner.length && inner[p].isWhitespace()) p++
+    if (p >= inner.length || inner[p] != '{') return false
+    val close = findBalancedBrace(inner, p)
+    if (close < 0) return false
+    return inner.substring(p + 1, close).contains("""\begin{minipage}""")
+}
+
+private const val PICTURE_OMITTED_PLACEHOLDER =
+    """<div class="ll-picture-omitted" style="font-style:italic;opacity:0.7;margin:8px 0;">[picture omitted in preview]</div>"""
+
+/**
+ * `picture` + `\\put(...){...}` blocks (common on custom title pages) → footer HTML.
+ * When [titlepageContext] is false, only footer-pattern pictures are converted; drawing pictures
+ * become a neutral placeholder.
+ */
+internal fun convertPicturePutBlocks(s: String, titlepageContext: Boolean = false): String {
     val beginTok = "\\begin{picture}"
     val endTok = "\\end{picture}"
     val sb = StringBuilder(s.length + 64)
@@ -95,10 +120,28 @@ internal fun convertPicturePutBlocks(s: String): String {
             break
         }
         val inner = s.substring(p, endIdx)
-        sb.append(extractPicturePutFooterHtml(inner))
+        val html = when {
+            titlepageContext || isTitlepagePictureFooter(inner) ->
+                extractPicturePutFooterHtml(inner)
+            else -> PICTURE_OMITTED_PLACEHOLDER
+        }
+        sb.append(html)
         i = endIdx + endTok.length
     }
     return sb.toString()
+}
+
+/** Body-level `picture` drawings → placeholder; title-page footer pattern still → footer HTML. */
+internal fun convertBodyPictureEnvironments(s: String): String =
+    convertPicturePutBlocks(s, titlepageContext = false)
+
+/** Strip legacy `picture` setup/drawing commands that leak when the env is omitted. */
+internal fun stripLegacyPictureCommands(s: String): String {
+    var t = s
+    t = t.replace(Regex("""\\setlength\s*\{\\unitlength\}\s*\{[^}]*\}"""), "")
+    t = t.replace(Regex("""\\thicklines\b"""), "")
+    t = t.replace(Regex("""\\thinlines\b"""), "")
+    return t
 }
 
 private fun extractPicturePutFooterHtml(inner: String): String {
@@ -148,7 +191,7 @@ private fun preprocessTitlepageBody(body: String): String {
     t = t.replace(Regex("""\\(tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)\b"""), "")
     t = t.replace(Regex("""\\bfseries\b"""), "")
     t = t.replace(Regex("""\\itshape\b"""), "")
-    t = convertPicturePutBlocks(t)
+    t = convertPicturePutBlocks(t, titlepageContext = true)
     t = t.replace(
         Regex("""\\begin\{abstract\}(.+?)\\end\{abstract\}""", RegexOption.DOT_MATCHES_ALL),
     ) { m ->
@@ -252,7 +295,8 @@ internal fun sanitizeForMathJaxProse(bodyText: String): String {
         var s = bodyText
 
         s = convertTitlepage(s)
-        s = convertPicturePutBlocks(s)
+        s = convertBodyPictureEnvironments(s)
+        s = stripLegacyPictureCommands(s)
         s = convertLetterEnvironment(s)
 
         s = s.replace(

@@ -439,6 +439,8 @@ object TikzRenderer {
             if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(hay)) add("positioning")
             if (Regex("""use\s+Hobby\s+shortcut|invert\s+soft\s+blanks|\[blank=""").containsMatchIn(hay)) addAll(listOf("hobby","topaths"))
             if (Regex("""\\begin\{knot}|\bflip crossing/""").containsMatchIn(hay)) addAll(listOf("knots","hobby","intersections","decorations.pathreplacing","shapes.geometric","spath3","topaths"))
+            if (Regex("""tikzlings|\\(?:bat|bear|bird|cat|coati|cow|cricket|dog|duck|elephant|frog|hippo|mole|mouse|octopus|owl|panda|penguin|pig|rabbit|rhino|sloth|snowman|squirrel|wolf)\b""").containsMatchIn(hay)) add("tikzlings")
+            if (Regex("""decorations\.(markings|pathmorphing|pathreplacing)""").containsMatchIn(hay)) add("decorations.markings")
         }
         val allLibs = (srcLibs + autoLibs).toSortedSet()
         val libsLine = if (allLibs.isNotEmpty()) "\\usetikzlibrary{${allLibs.joinToString(",")}}\n" else ""
@@ -502,7 +504,48 @@ $scrubbedBody
         return sha1(texDoc) to texDoc
     }
 
+    /** True when the source is a standalone figure document (compile whole file when possible). */
+    fun isStandaloneFigureDocument(src: String): Boolean =
+        Regex("""\\documentclass\s*(?:\[[^\]]*])?\{standalone\}""").containsMatchIn(src)
+
+    private fun wrapWebImageHtml(result: LatexHtmlTikz.WebImageResult): String {
+        val url = webImageResultToUrl(result)
+        return """<span class="tikz-wrap" style="display:block;margin:12px 0;"><img src="$url" alt="tikz" style="max-width:100%;height:auto;display:block;"/></span>"""
+    }
+
+    private fun tikzCompileFailureHtml(workHint: String, logPath: String?, detail: String): String =
+        figureUnavailablePlaceholder("[TikZ compile failed]", detail, workHint, logPath)
+
+    /**
+     * When the entire source is a standalone `.tex` figure (one tikzpicture), compile it as-is
+     * so preamble macros (`\newcommand`, `\newif`, libraries) are preserved verbatim.
+     */
+    private fun tryRenderStandaloneFigureDocument(
+        fullSourceNoComments: String,
+        htmlLike: String,
+    ): String? {
+        if (!isStandaloneFigureDocument(fullSourceNoComments)) return null
+        if (countTikzPictureStarts(htmlLike) != 1) return null
+        val key = "standalone-${sha1(fullSourceNoComments)}"
+        val workDir = File(tikzCacheDir(), sha1(fullSourceNoComments))
+        ensureLocalTikzLibs(collectUsetikzlibsFromSource(fullSourceNoComments), workDir)
+        val rendered = LatexHtmlTikz.renderTexDocumentToWebImage(fullSourceNoComments, key) ?: return null
+        val beginTok = "\\begin{tikzpicture}"
+        val start = htmlLike.indexOf(beginTok)
+        if (start < 0) return null
+        var bodyStart = start + beginTok.length
+        if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
+            val closeBracket = htmlLike.indexOf(']', bodyStart)
+            if (closeBracket >= 0) bodyStart = closeBracket + 1
+        }
+        val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
+        if (bodyEnd < 0) return null
+        return htmlLike.substring(0, start) + wrapWebImageHtml(rendered) + htmlLike.substring(bodyEnd)
+    }
+
     fun convertTikzPictures(htmlLike: String, fullSourceNoComments: String, tikzPreamble: String): String {
+        tryRenderStandaloneFigureDocument(fullSourceNoComments, htmlLike)?.let { return it }
+
         val userMacros = extractNewcommands(fullSourceNoComments)
         val texMacroDefs = buildTexNewcommands(userMacros)
         val preambleOnly = fullSourceNoComments.substringBefore("\\begin{document}")
@@ -543,85 +586,31 @@ $scrubbedBody
             val (key, texDoc) = blockDoc
             val cache = tikzCacheDir()
             val svg = File(cache, "$key.svg")
+            val png = File(cache, "$key.png")
             if (svg.exists()) {
-                result.append(
-                    """<span class="tikz-wrap" style="display:block;margin:12px 0;"><img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;"/></span>"""
-                )
+                result.append(wrapWebImageHtml(LatexHtmlTikz.WebImageResult(svg, "image/svg+xml")))
+                pos = bodyEnd
+                continue
+            }
+            if (png.exists()) {
+                result.append(wrapWebImageHtml(LatexHtmlTikz.WebImageResult(png, "image/png")))
                 pos = bodyEnd
                 continue
             }
 
-            val work = File(cache, key).apply { mkdirs() }
-            val texFile = File(work, "fig.tex")
-            val pdfFile = File(work, "fig.pdf")
-            val svgFile = File(work, "fig.svg")
-            texFile.writeText(texDoc)
+            ensureLocalTikzLibs(srcLibs, File(cache, key))
 
-            ensureLocalTikzLibs(srcLibs, work)
-
-            fun runLocal(cmd: List<String>, timeoutMs: Long = 120_000): Pair<Int, String> {
-                val pb = ProcessBuilder(cmd).directory(work).redirectErrorStream(true)
-                TikzRenderer.currentBaseDir?.let { base ->
-                    pb.environment()["TEXINPUTS"] = buildTexInputs(base)
-                }
-                val p = pb.start()
-                val out = StringBuilder()
-                val drain = Thread {
-                    try {
-                        p.inputStream.bufferedReader().forEachLine { line -> out.appendLine(line) }
-                    } catch (_: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                    }
-                }
-                drain.isDaemon = true
-                drain.start()
-                val finished = p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
-                if (!finished) {
-                    p.destroyForcibly()
-                    drain.interrupt()
-                }
-                try {
-                    drain.join()
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-                val log = out.toString()
-                if (!finished) {
-                    return -1 to "Timeout running: $cmd\n$log"
-                }
-                return p.exitValue() to log
-            }
-
-            val (pcode, plog) = runLocal(
-                listOf("pdflatex","-interaction=nonstopmode","-halt-on-error", texFile.absolutePath)
-            )
-            File(work, "build.log").writeText(plog)
-            if (pcode != 0 || !pdfFile.exists()) {
-                val msg = htmlEscapeAll(plog.takeLast(4000))
-                result.append("""<div class="tikz-error" style="color:#b91c1c;">[TikZ compile failed]<pre>$msg
-
-[tip] Open: ${work.absolutePath.replace("\\","/")}/build.log</pre></div>""")
-                pos = bodyEnd
-                continue
-            }
-
-            val (scode, slog) = runLocal(
-                listOf(
-                    "dvisvgm", "--pdf", "--no-fonts", "--exact", "-n",
-                    pdfFile.absolutePath, "-o", svgFile.absolutePath,
-                )
-            )
-            File(work, "convert.log").writeText(slog)
-            if (scode != 0 || !svgFile.exists()) {
-                val msg = htmlEscapeAll(slog.takeLast(4000))
-                result.append("""<div class="tikz-error" style="color:#b91c1c;">[dvisvgm failed]<pre>$msg
-
-[tip] Open: ${work.absolutePath.replace("\\","/")}/convert.log</pre></div>""")
+            val rendered = LatexHtmlTikz.renderTexDocumentToWebImage(texDoc, key)
+            if (rendered != null) {
+                result.append(wrapWebImageHtml(rendered))
             } else {
-                val svgText = svgFile.readText()
-                svg.writeText(svgText)
+                val work = File(cache, key)
                 result.append(
-                    """<span class="tikz-wrap" style="display:block;margin:12px 0;"><img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;"/></span>"""
+                    tikzCompileFailureHtml(
+                        workHint = work.absolutePath,
+                        logPath = LatexHtmlTikz.latestLogPath(work),
+                        detail = "pdflatex or PDF→SVG/PNG conversion failed.",
+                    ),
                 )
             }
             pos = bodyEnd
@@ -650,9 +639,13 @@ $scrubbedBody
             bumpLiveRenderProgress("SST macro")
             val svg = renderTikzToSvg(preamble, m.value)
             if (svg != null)
-                """<img src="${fileUrl(svg)}" alt="tikz" style="max-width:100%;height:auto;display:block;margin:10px auto;"/>"""
+                """<img src="${webImageResultToUrl(LatexHtmlTikz.WebImageResult(svg, if (svg.extension.equals("png", true)) "image/png" else "image/svg+xml"))}" alt="tikz" style="max-width:100%;height:auto;display:block;margin:10px auto;"/>"""
             else
-                """<pre style="background:#0001;border:1px solid var(--border);padding:8px;overflow:auto;">[TikZ render failed; see cache logs]\n${escapeHtmlKeepBackslashes(m.value)}</pre>"""
+                figureUnavailablePlaceholder(
+                    "[TikZ macro render failed]",
+                    "Could not compile SST macro figure.",
+                    m.value.take(120),
+                )
         }
     }
 
@@ -668,44 +661,7 @@ $scrubbedBody
     """.trimIndent()
 
         val h = sha256Hex(texDoc)
-        val work = File(tikzCacheDirHome, h).apply { mkdirs() }
-        val tex = File(work, "$h.tex")
-        val pdf = File(work, "$h.pdf")
-        val svg = File(work, "$h.svg")
-
-        // Cache hit
-        if (svg.exists()) return svg
-
-        tex.writeText(texDoc)
-
-        // Compile → PDF
-        val (ok1, log1) = run(
-            listOf("pdflatex", "-interaction=nonstopmode", "-halt-on-error",
-                "-output-directory", work.absolutePath, tex.absolutePath),
-            work
-        )
-        if (!ok1 || !pdf.exists()) {
-            File(work, "build.log").writeText(log1)
-            if (log1.contains("tikzlibrarysstknots.code.tex") && log1.contains("not found", true)) {
-                return null
-            }
-            return null
-        }
-
-        // PDF → SVG
-        val tools = findTikzTools()
-        val (ok2, log2) =
-            if (tools.dvisvgm != null)
-                run(listOf(tools.dvisvgm, "--pdf", "--no-fonts", "--exact", "-n", pdf.absolutePath, "-o", svg.absolutePath), work)
-            else if (tools.pdf2svg != null)
-                run(listOf(tools.pdf2svg, pdf.absolutePath, svg.absolutePath), work)
-            else false to "Neither dvisvgm nor pdf2svg is available."
-
-        if (!ok2 || !svg.exists()) {
-            File(work, "convert.log").writeText(log2)
-            return null
-        }
-        return svg
+        return LatexHtmlTikz.renderTexDocumentToWebImage(texDoc, "sst-$h")?.file
     }
 
     // Try to find tools once and cache the result

@@ -1,0 +1,31 @@
+% canon-derived mini document: combines the most common SST_CANON constructs in one file
+% so the end-to-end pipeline can be exercised quickly (preamble macros, sections, math, list, table).
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\providecommand{\rhoM}{\rho_{\!m}}
+\newcommand{\SwirlClock}{\Omega_{\mathrm{swirl}}}
+\title{Mini Canon}
+\author{SST}
+\begin{document}
+\maketitle
+\section{Introduction}
+The swirl clock $\SwirlClock$ couples to the mass density $\rhoM$. Note that $2 < x < 3$ holds.
+\subsection{Balance}
+\begin{align}
+E &= mc^2 \tag{A1} \\
+p &= mv \tag{A2}
+\end{align}
+\begin{itemize}
+\item First observation
+\item Second observation
+\end{itemize}
+\begin{tabular}{lr}
+\toprule
+Symbol & Value \\
+\midrule
+$\rhoM$ & 1 \\
+$\SwirlClock$ & 2 \\
+\bottomrule
+\end{tabular}
+\end{document}

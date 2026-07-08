@@ -379,8 +379,11 @@ internal fun convertFigureEnvs(s: String): String {
             val opts = Regex("""\\includegraphics(?:\[([^\]]*)])?\{([^}]*)\}""").find(inc.value)
             val (optStr, path) = if (opts != null) opts.groupValues[1] to opts.groupValues[2] else "" to inc.groupValues[1]
             val style = includeGraphicsStyle(optStr)
-            val resolved = resolveImagePath(path)
-            imgHtml = """<img src="$resolved" alt="" style="$style">"""
+            when (val resolved = resolveImageForPreview(path)) {
+                is PreviewImageResult.Ready ->
+                    imgHtml = """<img src="${resolved.url}" alt="" style="$style">"""
+                is PreviewImageResult.Unavailable -> imgHtml = resolved.html
+            }
             body = body.replace(inc.value, "")
         }
 
