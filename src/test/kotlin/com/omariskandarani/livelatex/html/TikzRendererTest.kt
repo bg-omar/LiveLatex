@@ -191,4 +191,31 @@ class TikzRendererTest {
         assertEquals(expected, lazyCount)
         assertEquals(20, expected)
     }
+
+    @Test
+    fun compositeTubeFixture_compilesWhenPdflatexAvailable() {
+        val fixture = File("src/test/resources/probe-fixtures/composite_tube.tex")
+        org.junit.Assume.assumeTrue(fixture.isFile)
+        org.junit.Assume.assumeTrue(pdflatexAvailable())
+        val body = fixture.readText(Charsets.UTF_8)
+        val src = """
+            \documentclass{article}
+            \usepackage{tikz}
+            \usetikzlibrary{hobby,topaths}
+            \usepackage{xcolor}
+            \begin{document}
+            $body
+            \end{document}
+        """.trimIndent()
+        val out = LatexHtmlTikz.renderTexToSvg(src, "composite-tube-probe")
+        assertNotNull("composite tube TikZ should compile to SVG when pdflatex is available", out)
+        assertTrue(out!!.exists())
+    }
+
+    private fun pdflatexAvailable(): Boolean = try {
+        val p = ProcessBuilder("pdflatex", "--version").redirectErrorStream(true).start()
+        p.waitFor() == 0
+    } catch (_: Exception) {
+        false
+    }
 }

@@ -271,12 +271,18 @@ internal fun linewidthToPercent(expr: String): Int? {
     return null
 }
 
-internal fun convertHref(s: String): String =
-    s.replace(Regex("""\\href\{([^}]*)\}\{([^}]*)\}""")) { m ->
+internal fun convertHref(s: String): String {
+    var t = s.replace(Regex("""\\href\{([^}]*)\}\{([^}]*)\}""")) { m ->
         val url = m.groupValues[1]
         val txt = m.groupValues[2]
         """<a href="${TikzRenderer.escapeHtmlKeepBackslashes(url)}" target="_blank" rel="noopener">${TikzRenderer.escapeHtmlKeepBackslashes(txt)}</a>"""
     }
+    t = t.replace(Regex("""\\url\{([^}]*)\}""")) { m ->
+        val url = TikzRenderer.escapeHtmlKeepBackslashes(m.groupValues[1].trim())
+        """<a href="$url" target="_blank" rel="noopener">$url</a>"""
+    }
+    return t
+}
 
 internal fun stripAuxDirectives(s: String): String {
     var t = s

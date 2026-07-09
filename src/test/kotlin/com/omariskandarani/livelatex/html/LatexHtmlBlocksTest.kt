@@ -196,6 +196,13 @@ class LatexHtmlBlocksTest {
     // ── convertHref ───────────────────────────────────────────────────────────
 
     @Test
+    fun convertHref_urlBecomesAnchor() {
+        val out = convertHref("""See \url{https://example.com/path} here""")
+        assertFalse(out.contains("""\url{"""))
+        assertTrue(out.contains("""href="https://example.com/path""""))
+    }
+
+    @Test
     fun convertHref_anchorWithTargetBlank() {
         val out = convertHref("""See \href{https://example.com}{the link} now""")
         assertTrue(out.contains("""href="https://example.com""""))
