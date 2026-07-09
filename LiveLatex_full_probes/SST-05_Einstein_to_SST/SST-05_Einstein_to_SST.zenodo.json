@@ -1,0 +1,29 @@
+{
+  "title": "Revisiting Structured Space: From Einstein to a Swirl–String Framework",
+  "creators": [
+    {
+      "name": "Iskandarani, Omar",
+      "affiliation": "Independent Researcher",
+      "orcid": "0009-0006-1686-3961"
+    }
+  ],
+  "description": "<p>This record revisits Einstein&rsquo;s remarks on &ldquo;structured space&rdquo; (Leiden, 1920) and develops a modern realization in a swirl&ndash;string (SST) framework: an incompressible, inviscid medium supporting quantized circulation on closed filaments (&ldquo;swirl strings&rdquo;) with a preferred foliation \\(\\mathcal{N}\\). Long-range attraction and inertial response arise from swirl&ndash;pressure structure and conserved circulation/helicity, while local time scaling is governed by the tangential swirl speed \\(v_t\\) through the swirl-clock factor \\(\\frac{d\\tau}{dt}=\\sqrt{1-\\frac{v_t^{2}}{c^{2}}}\\), with \\(v_t\\equiv\\lVert\\mathbf{v}_{\\!\\boldsymbol{\\circlearrowleft}}\\rVert\\) or \\(v_t=|\\boldsymbol{\\omega}|\\,R\\) (dimensionally \\( |\\boldsymbol{\\omega}|R \\) in m&middot;s\\(^{-1}\\)). The gravitational response follows the radial balance \\(\\frac{dP}{dr}=\\rho_{\\!f}\\,\\frac{v_t^{2}(r)}{r}\\) and its coarse-grained Newtonian limit \\(\\nabla^{2}\\Phi=4\\pi G\\,\\rho_{\\!m}\\) with \\(\\rho_{\\!m}=\\rho_{\\!E}/c^{2}\\), linking \\(\\Phi\\) to the swirl energy density \\(\\rho_{\\!E}\\). A layered temporal ontology is articulated as \\(\\mathcal{N}\\rightarrow\\nu_{0}\\rightarrow\\tau\\rightarrow S^{\\circlearrowleft}_{(t)}=\\int\\Omega\\,dt\\rightarrow T_v=\\oint dl/v_t\\rightarrow\\mathbb{K}\\), where \\(\\nu_{0}\\) sets simultaneity slices, \\(\\tau\\) is proper time, \\(S^{\\circlearrowleft}_{(t)}\\) encodes internal phase memory, \\(T_v\\) is circulation-based duration, and \\(\\mathbb{K}\\) marks discrete topological updates (reconnection/bifurcation). Topology&ndash;matter mapping is organized by knot topology, chirality, and curvature tension, selecting leptons (e.g., \\(T(2,3)\\)), quarks (e.g., \\(5_2,6_1,8_{19}\\)), bosons (unknot/Hopf link), and vacuum-sector candidates (e.g., \\(4_1,8_{17}\\)), with selection enforced by circulation quantization, helicity conservation, thermodynamic bounds, and reconnection thresholds. Canonical constants used for numerical checks include \\(\\mathbf{v}_{\\!\\boldsymbol{\\circlearrowleft}}=1.09384563\\times10^{6}\\ \\mathrm{m\\,s^{-1}}\\), \\(r_c=1.40897017\\times10^{-15}\\ \\mathrm{m}\\), \\(\\rho_{\\!f}=7.0\\times10^{-7}\\ \\mathrm{kg\\,m^{-3}}\\), and \\(F_{\\text{swirl}}^{\\max}=29.053507\\ \\mathrm{N}\\). The work outlines falsifiable signatures&mdash;swirl-induced time scaling of embedded clocks, quantized phase slips at \\(\\mathbb{K}\\), non-GR redshift/lensing in high-vorticity structure&mdash;and points to analogue platforms (superfluids/BECs, photonic vortex lattices) and hydrogenic proxies as near-term testbeds.</p>",
+  "keywords": [],
+  "publication_date": "2025-11-14",
+  "doi": "10.5281/zenodo.17593016",
+  "tex_file": "SST-05_Einstein_to_SST\\SST-05_Einstein_to_SST.tex",
+  "upload_type": "publication",
+  "publication_type": "preprint",
+  "access_right": "open",
+  "license": "cc-by-4.0",
+  "deposit_id": "17593016",
+  "language": "eng",
+  "communities": [
+    {
+      "id": "sst"
+    },
+    {
+      "id": "vam"
+    }
+  ]
+}

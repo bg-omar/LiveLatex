@@ -1,0 +1,129 @@
+\documentclass[tikz, border=10pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{knots, hobby, calc, intersections, decorations.pathreplacing, decorations.markings, shapes.geometric, spath3}
+
+% ==============================================================================
+%  SST RENDER ENGINE: Twisted Dual-Strand Logic
+% ==============================================================================
+
+% -- Configuration --
+\def\Wth{2.5pt}          % Strand width
+\def\AMP{0.1}
+\def\TWISTS{4}        % amount twist per full length
+\def\Samples{140}        % Resolution
+\def\Core{black}         % Gap color (background color)
+\def\Mask{5.0pt}         % Mask width for overlap
+\def\ClrA{black!60!black}      % Strand A Color (Shadow)
+\def\ClrB{red!70!black}  % Strand B Color (Main)
+
+
+% -- Strand Style --
+\tikzset{
+    fat strand/.style={
+        draw=#1, line width=\Wth,
+        double=\Core, double distance=1.2*\Wth,
+        line cap=round, line join=round
+    }
+}
+
+% -- Coordinate Generator --
+% #1: Path Definition, #2: Samples, #3: Amp, #4: Turns, #5: StrandName(A/B)
+\newcommand{\MakeStrandCoords}[5]{%
+    \pgfmathtruncatemacro{\Ns}{#2}
+    \def\Phase{0}\ifx#5B\def\Phase{0.5}\fi
+    \foreach \i in {0,...,\Ns}{%
+        \pgfmathsetmacro{\s}{\i/\Ns}%
+        \pgfmathsetmacro{\y}{#3*sin(360*(#4*\s + \Phase))}%
+        \path[postaction={decorate, decoration={markings,
+        mark=at position \s with {\coordinate (#5\i) at (0,\y);}}}] #1;%
+    }%
+}
+
+% -- Segment Drawer --
+\newcommand{\drawSeg}[4]{% #1:Name, #2:Index, #3:Color, #4:Over(0/1)
+    \ifnum#4=1
+    \draw[preaction={draw=\Core, line width=\Mask}, fat strand=#3]
+    (#1#2) .. (#1\the\numexpr#2+1\relax);
+    \else
+        \draw[fat strand=#3]
+        (#1#2) .. (#1\the\numexpr#2+1\relax);
+    \fi
+}
+
+% -- Main Render Command --
+% #1: Path Macro (e.g., \KPATH), #2: Turns, #3: Amplitude
+\newcommand{\RenderTwist}[3]{
+    \MakeStrandCoords{#1}{\Samples}{#3}{#2}{A}
+    \MakeStrandCoords{#1}{\Samples}{#3}{#2}{B}
+    \pgfmathtruncatemacro{\Last}{\Samples-1}
+    \foreach \k in {0,...,\Last}{
+        \pgfmathsetmacro{\s}{\k/\Samples}
+        % Twist logic: swaps A/B depth based on sine phase
+        \pgfmathtruncatemacro{\blk}{floor(2*#2*\s + 0.5)}
+        \ifodd\blk
+        \drawSeg{A}{\k}{\ClrA}{0}
+        \drawSeg{B}{\k}{\ClrB}{1}
+        \else
+            \drawSeg{B}{\k}{\ClrB}{0}
+            \drawSeg{A}{\k}{\ClrA}{1}
+        \fi
+    }
+}
+
+% -- Debug/Guide Points (Optional) --
+\newcommand{\SSTGuidesPoints}[2]{
+    \foreach \i in {1,...,#2}{
+        \fill[blue] (P\i) circle (1.5pt);
+        \node[blue,font=\tiny,above right] at (P\i) {\i};
+    }
+}
+
+\begin{document}
+    \begin{tikzpicture}[use Hobby shortcut, line cap=round, line join=round, scale=1.05]
+
+% ---- controls ----
+
+
+
+
+        \tikzset{
+            fat strand/.style={
+                draw=#1, line width=\Wth,
+                double=\Core, double distance=1.2*\Wth
+            }
+        }
+
+% ---- coordinates ----
+        \coordinate (P1) at (-2.0,-2.0);
+        \coordinate (P2) at (-2.0, 2.0);
+        \coordinate (P3) at ( 1.0,-0.5);
+        \coordinate (P4) at (-1.0,-0.5);
+        \coordinate (P5) at ( 2.0, 2.0);
+        \coordinate (P6) at ( 2.0,-2.0);
+        \coordinate (P7) at (-1.0, 0.5);
+        \coordinate (P8) at ( 1.0, 0.5);
+        \coordinate (P9) at (-2.0,-2.0); % = P1
+        \def\KPATH{([closed] P1)..(P2)..(P3)..(P4)..(P5)..(P6)..(P7)..(P8)..(P9)}
+
+
+
+        \begin{knot}[
+            consider self intersections,
+        %draft mode=crossings,              % show crossing indices while tuning
+            ignore endpoint intersections=true,
+%    clip width=5pt, clip radius=3pt,
+            flip crossing/.list={2,4,6,8,10,12,14,16,18,20}        % same over/under pattern as your snippet
+        ]
+
+            \def\KPATH{
+                ([closed] P1)..(P2)..(P3)..(P4)..(P5)..(P6)..(P7)..(P8)
+                ..(P9)..(P10)..(P11)..(P12)..(P13)..(P14)..(P15)
+            }
+
+            \RenderTwist{\KPATH}{\TWISTS}{\AMP}
+            \node[font=\bfseries\sffamily] at (0,-2.7) {Figure 8 ($4_1$)};
+
+
+        \end{knot}
+    \end{tikzpicture}
+\end{document}

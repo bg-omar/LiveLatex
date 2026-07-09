@@ -1,0 +1,114 @@
+\documentclass[tikz, border=10pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{knots, hobby, calc, intersections, decorations.pathreplacing, decorations.markings, shapes.geometric, spath3}
+
+% ==============================================================================
+%  SST RENDER ENGINE: Twisted Dual-Strand Logic
+% ==============================================================================
+
+% -- Configuration --
+\def\Wth{2.5pt}          % Strand width
+\def\AMP{.1}
+\def\TWISTS{2}        % amount twist per full length
+\def\Samples{120}        % Resolution
+\def\Core{black}         % Gap color (background color)
+\def\Mask{5.0pt}         % Mask width for overlap
+\def\ClrA{black!60!black}      % Strand A Color (Shadow)
+\def\ClrB{red!70!black}  % Strand B Color (Main)
+
+
+% -- Strand Style --
+\tikzset{
+    fat strand/.style={
+        draw=#1, line width=\Wth,
+        double=\Core, double distance=1.2*\Wth,
+        line cap=round, line join=round
+    }
+}
+
+% -- Coordinate Generator --
+% #1: Path Definition, #2: Samples, #3: Amp, #4: Turns, #5: StrandName(A/B)
+\newcommand{\MakeStrandCoords}[5]{%
+    \pgfmathtruncatemacro{\Ns}{#2}
+    \def\Phase{0}\ifx#5B\def\Phase{0.5}\fi
+    \foreach \i in {0,...,\Ns}{%
+        \pgfmathsetmacro{\s}{\i/\Ns}%
+        \pgfmathsetmacro{\y}{#3*sin(360*(#4*\s + \Phase))}%
+        \path[postaction={decorate, decoration={markings,
+        mark=at position \s with {\coordinate (#5\i) at (0,\y);}}}] #1;%
+    }%
+}
+
+% -- Segment Drawer --
+\newcommand{\drawSeg}[4]{% #1:Name, #2:Index, #3:Color, #4:Over(0/1)
+    \ifnum#4=1
+    \draw[preaction={draw=\Core, line width=\Mask}, fat strand=#3]
+    (#1#2) .. (#1\the\numexpr#2+1\relax);
+    \else
+        \draw[fat strand=#3]
+        (#1#2) .. (#1\the\numexpr#2+1\relax);
+    \fi
+}
+
+% -- Main Render Command --
+% #1: Path Macro (e.g., \KPATH), #2: Turns, #3: Amplitude
+\newcommand{\RenderTwist}[3]{
+    \MakeStrandCoords{#1}{\Samples}{#3}{#2}{A}
+    \MakeStrandCoords{#1}{\Samples}{#3}{#2}{B}
+    \pgfmathtruncatemacro{\Last}{\Samples-1}
+    \foreach \k in {0,...,\Last}{
+        \pgfmathsetmacro{\s}{\k/\Samples}
+        % Twist logic: swaps A/B depth based on sine phase
+        \pgfmathtruncatemacro{\blk}{floor(2*#2*\s + 0.5)}
+        \ifodd\blk
+        \drawSeg{A}{\k}{\ClrA}{0}
+        \drawSeg{B}{\k}{\ClrB}{1}
+        \else
+            \drawSeg{B}{\k}{\ClrB}{0}
+            \drawSeg{A}{\k}{\ClrA}{1}
+        \fi
+    }
+}
+
+% -- Debug/Guide Points (Optional) --
+\newcommand{\SSTGuidesPoints}[2]{
+    \foreach \i in {1,...,#2}{
+        \fill[blue] (P\i) circle (1.5pt);
+        \node[blue,font=\tiny,above right] at (P\i) {\i};
+    }
+}
+
+\begin{document}
+
+
+% ==============================================================================
+%  2. TREFOIL (3_1)
+%     "Fundamental Fermion Generation"
+% ==============================================================================
+    \begin{tikzpicture}[use Hobby shortcut]
+        % Explicit Coordinates derived from parametric: R_outer=2.0, R_inner=-0.5
+        \coordinate (P1) at (0, 2);             % Start/Top Lobe
+        \coordinate (P2) at (0.433, -0.25);     % Inner Crossing 1
+        \coordinate (P3) at (-1.732, -1);       % Left Lobe
+        \coordinate (P4) at (0, 0.5);           % Top Inner Crossing
+        \coordinate (P5) at (1.732, -1);        % Right Lobe
+        \coordinate (P6) at (-0.433, -0.25);    % Inner Crossing 2
+        \coordinate (P7) at (0, 2);             % Close = P1
+        \begin{knot}[
+            consider self intersections,
+        draft mode=crossings,              % show crossing indices while tuning
+            ignore endpoint intersections=false,
+%    clip width=5pt, clip radius=3pt,
+            flip crossing/.list={1,3,5}        % same over/under pattern as your snippet
+        ]
+
+        \def\KPATH{
+            ([closed] P1)..(P2)..(P3)..(P4)..(P5)..(P6)..(P7)
+        }
+
+        \RenderTwist{\KPATH}{\TWISTS}{\AMP}
+        \node[font=\bfseries\sffamily] at (0,-2.5) {Trefoil ($3_1$)};
+        \end{knot}
+    \end{tikzpicture}
+%
+\end{document}

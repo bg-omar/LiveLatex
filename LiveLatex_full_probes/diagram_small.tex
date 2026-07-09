@@ -1,0 +1,78 @@
+
+
+\begin{tikzpicture}[
+    node distance=0.5 and 0.5,
+    every node/.style={draw, rounded corners, align=center, minimum height=2, font=\small},
+    arrow/.style={-{Latex[length=2]}, thick},
+    garrow/.style={-{Latex[length=2]}, thick, dashed}
+]
+% ---------------- center curl (Faraday) ----------------
+\node(Faraday)
+{$\nabla \times \mathbf{E} = -\partial_t \mathbf{B} - \mathbf{b}_{\swirlarrow}$};
+
+% ---------------- left: field E ----------------
+\node[left=of Faraday]  (E)
+{$\mathbf{E}$};
+
+\node[right=of Faraday] (b)
+{\scriptsize $\mathbf b_{\swirlarrow}=\mathcal G_{\swirlarrow}\,\partial_t\bm{\varrho}_{\swirlarrow}$};
+% ---------------- right: swirl density rho ----------------
+\node[right=of b] (rho)
+{\scriptsize swirl density $\bm{\varrho}_{\swirlarrow}$};
+
+% ---------------- right middle: susceptibility ----------------
+\node[below=of rho] (C)
+{$\chi_H\,\mathbf{H} = \bm{\varrho}_{\swirlarrow}$};
+
+% ---------------- left middle: conduction accumulation ----------------
+\node[below=of E] (Eta)
+{$\bm{\eta} = (\mathcal K_E * \mathbf E)$};
+
+% ---------------- constitutive B,D ----------------
+\node[below=of Faraday] (D)
+{$\varepsilon\,\mathbf{E} = \mathbf{D}$};
+
+\node[below=of b] (B)
+{$\mathbf{B}=\mu\,\mathbf{H}$};
+
+% --- bottom-left areal density (now the visible card) ---
+\node[below=of Eta] (EtaBottom)
+{$\bm{\eta}$};
+
+% --- flying source card below (derivative step) ---
+\node[below=of D] (Jsrc)
+{$\mathcal G_{\textrm el}\, \partial_t \bm{\eta} = \mathbf{j}$};
+
+% ---------------- Ampère curl ----------------
+\node[below=of B] (Ampere)
+{$\mathbf{j} + \partial_t \mathbf{D} = \nabla \times \mathbf{H}$};
+
+% ---------------- right bottom: H ----------------
+\node[below=of C] (H)
+{$\mathbf{H}$};
+
+
+% ---------------- arrows (same geometry as your framework) ----------------
+\draw[arrow] (E) -- (D);
+\draw[arrow] (C) -- (rho);
+%\draw[arrow] (rho) -- (Faraday);
+%\draw[arrow] (EtaBottom) -- (Ampere);
+\draw[arrow] (H) -- (Ampere);
+\draw[arrow] (E) -- (Faraday);
+\draw[arrow] (Faraday) -- (B);
+\draw[arrow] (Ampere) -- (D);
+\draw[arrow] (B) -- (H);
+\draw[arrow] (H) -- (C);
+
+% --- replaced Ohm path by the mirrored left ladder ---
+\draw[arrow] (E) -- (Eta);          % kernel stage
+\draw[arrow] (Eta) -- (EtaBottom);  % field -> areal density (visible bottom card)
+\draw[arrow] (EtaBottom) -- (Jsrc); % derivative to source (flying)
+\draw[arrow] (Jsrc) -- (Ampere);    % feeds Ampère
+
+% --- long-range mediation on the right stays ---
+\draw[arrow] (rho) --  (b);
+\draw[arrow] (b) -- (Faraday);
+
+
+\end{tikzpicture}
