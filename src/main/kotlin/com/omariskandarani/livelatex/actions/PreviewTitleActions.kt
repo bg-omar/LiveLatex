@@ -15,6 +15,30 @@ import com.omariskandarani.livelatex.core.LiveLatexSettings
 import com.intellij.openapi.application.ApplicationManager
 import javax.swing.JComponent
 
+/** Manual refresh when auto-preview is off. */
+class PreviewRefreshAction(private val project: Project) : AnAction("Refresh", "Refresh LaTeX preview", AllIcons.Actions.Refresh) {
+    override fun actionPerformed(e: AnActionEvent) {
+        project.getService(LatexPreviewService::class.java).requestRefresh()
+    }
+
+    override fun getActionUpdateThread() = ActionUpdateThread.BGT
+}
+
+/** Cancel an in-flight preview build. */
+class PreviewCancelRenderAction(private val project: Project) : AnAction("Cancel", "Cancel preview render", AllIcons.Actions.Suspend) {
+    override fun actionPerformed(e: AnActionEvent) {
+        project.getService(LatexPreviewService::class.java).cancelPreviewBuild()
+    }
+
+    override fun update(e: AnActionEvent) {
+        val building = project.getService(LatexPreviewService::class.java).isPreviewBuilding
+        e.presentation.isEnabled = building
+        e.presentation.isVisible = building
+    }
+
+    override fun getActionUpdateThread() = ActionUpdateThread.BGT
+}
+
 /** Secties-dropdown in de tool window-titelbalk: toont sectielijst uit de preview, springt bij selectie. */
 class PreviewSectionsAction(private val project: Project) : AnAction("Secties", "Ga naar sectie", AllIcons.Toolwindows.ToolWindowStructure) {
     override fun actionPerformed(e: AnActionEvent) {
@@ -69,6 +93,12 @@ class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opti
         val svc = project.getService(LatexPreviewService::class.java)
         val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
         val group = DefaultActionGroup().apply {
+            add(object : ToggleAction("Auto preview", "Refresh preview on edit and tab switch", null) {
+                override fun isSelected(e2: AnActionEvent) = settings.autoPreview
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.autoPreview = state
+                }
+            })
             add(object : ToggleAction("Auto scroll preview", "Scroll preview mee met cursor", null) {
                 override fun isSelected(e2: AnActionEvent) = settings.autoScrollPreview
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {

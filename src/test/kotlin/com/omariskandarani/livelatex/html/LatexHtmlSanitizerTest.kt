@@ -62,6 +62,15 @@ class LatexHtmlSanitizerTest {
     }
 
     @Test
+    fun convertSiunitx_qtyToSI() {
+        val s = """r_c=\qty{1.40897017e-15}{m}"""
+        val out = convertSiunitx(s)
+        assertFalse(out.contains("""\qty{"""))
+        assertTrue(out.contains("""\si{m}""") || out.contains("""\mathrm{m}"""))
+        assertTrue(out.contains("10^{-15}") || out.contains("1.40897017"))
+    }
+
+    @Test
     fun convertSiunitx_textAsciitilde() {
         val s = """\textasciitilde{}"""
         val out = convertSiunitx(s)

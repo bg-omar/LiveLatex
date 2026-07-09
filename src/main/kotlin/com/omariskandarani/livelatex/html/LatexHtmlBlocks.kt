@@ -365,10 +365,133 @@ $body
     }
 }
 
+/** Strip `\\resizebox{w}{h}{body}` wrappers; keep inner body for TikZ/img rendering. */
+internal fun unwrapResizebox(s: String): String {
+    val token = "\\resizebox"
+    val sb = StringBuilder(s.length)
+    var i = 0
+    var guard = 0
+    while (i < s.length && guard++ < 5000) {
+        val j = s.indexOf(token, i)
+        if (j < 0) {
+            sb.append(s, i, s.length)
+            break
+        }
+        sb.append(s, i, j)
+        var p = j + token.length
+        repeat(2) {
+            while (p < s.length && s[p].isWhitespace()) p++
+            if (p >= s.length || s[p] != '{') {
+                sb.append(s, j, s.length)
+                return sb.toString()
+            }
+            val close = findBalancedBrace(s, p)
+            if (close < 0) {
+                sb.append(s, j, s.length)
+                return sb.toString()
+            }
+            p = close + 1
+        }
+        while (p < s.length && s[p].isWhitespace()) p++
+        if (p >= s.length || s[p] != '{') {
+            sb.append(s, j, s.length)
+            return sb.toString()
+        }
+        val bodyClose = findBalancedBrace(s, p)
+        if (bodyClose < 0) {
+            sb.append(s, j, s.length)
+            return sb.toString()
+        }
+        sb.append(s, p + 1, bodyClose)
+        i = bodyClose + 1
+    }
+    if (i < s.length) sb.append(s, i, s.length)
+    return sb.toString()
+}
+
+internal fun convertSubfloats(s: String): String {
+    val token = "\\subfloat"
+    val sb = StringBuilder(s.length + 64)
+    var i = 0
+    var guard = 0
+    val row = mutableListOf<String>()
+    fun flushRow() {
+        if (row.isEmpty()) return
+        if (row.size == 1) {
+            sb.append(row.single())
+        } else {
+            sb.append("""<div class="subfloat-row" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:flex-start;">""")
+            row.forEach { sb.append(it) }
+            sb.append("</div>")
+        }
+        row.clear()
+    }
+    while (i < s.length && guard++ < 5000) {
+        val j = s.indexOf(token, i)
+        if (j < 0) {
+            flushRow()
+            sb.append(s, i, s.length)
+            break
+        }
+        if (j > i) {
+            val between = s.substring(i, j).trim()
+            if (between.isNotEmpty() && !Regex("""^(\\hfill\s*)+$""").matches(between)) {
+                flushRow()
+                sb.append(s, i, j)
+            }
+        }
+        var p = j + token.length
+        var caption = ""
+        if (p < s.length && s[p] == '[') {
+            val rb = s.indexOf(']', p)
+            if (rb < 0) {
+                sb.append(s, j, s.length)
+                return sb.toString()
+            }
+            caption = s.substring(p + 1, rb).trim()
+            p = rb + 1
+        }
+        while (p < s.length && s[p].isWhitespace()) p++
+        if (p >= s.length || s[p] != '{') {
+            sb.append(s, j, s.length)
+            return sb.toString()
+        }
+        val bodyClose = findBalancedBrace(s, p)
+        if (bodyClose < 0) {
+            sb.append(s, j, s.length)
+            return sb.toString()
+        }
+        var body = s.substring(p + 1, bodyClose).trim()
+        body = body.replace(Regex("""\\includegraphics(?:\[[^\]]*])?\{([^}]*)\}""")) { m ->
+            val opts = Regex("""\\includegraphics(?:\[([^\]]*)])?\{([^}]*)\}""").find(m.value)
+            val (optStr, path) = if (opts != null) opts.groupValues[1] to opts.groupValues[2] else "" to m.groupValues[1]
+            val style = includeGraphicsStyle(optStr)
+            when (val resolved = resolveImageForPreview(path)) {
+                is PreviewImageResult.Ready -> """<img src="${resolved.url}" alt="" style="$style">"""
+                is PreviewImageResult.Unavailable -> resolved.html
+            }
+        }
+        if (body.contains("\\begin{tikzpicture}")) {
+            // leave TikZ for later pass
+        } else if (!body.contains("<img")) {
+            body = latexProseToHtmlWithMath(body)
+        }
+        val capHtml = if (caption.isNotEmpty()) {
+            """<figcaption style="font-size:0.85em;opacity:0.85;margin-top:4px;">${latexProseToHtmlWithMath(caption)}</figcaption>"""
+        } else ""
+        row.add("""<figure class="subfloat" style="flex:1;min-width:120px;text-align:center;margin:0;">$body$capHtml</figure>""")
+        i = bodyClose + 1
+    }
+    flushRow()
+    return sb.toString()
+}
+
 internal fun convertFigureEnvs(s: String): String {
     val rx = Regex("""\\begin\{figure\}(?:\[[^\]]*])?(.+?)\\end\{figure\}""", RegexOption.DOT_MATCHES_ALL)
     return rx.replace(s) { m ->
         var body = m.groupValues[1]
+
+        body = convertSubfloats(body)
 
         body = body.replace(Regex("""(?m)^\s*\\setlength\{\\tabcolsep\}\{[^}]*}.*$"""), "")
             .replace(Regex("""(?m)^\s*\\renewcommand\{\\arraystretch\}\{[^}]*}.*$"""), "")
@@ -427,7 +550,7 @@ internal fun convertTheBibliography(s: String): String {
         val bibitemRx = Regex("""\\bibitem(?:\[[^\]]*\])?\{([^}]*)\}\s*(.*?)(?=\\bibitem(?:\[[^\]]*\])?\{|\z)""", RegexOption.DOT_MATCHES_ALL)
         val entries = bibitemRx.findAll(body).map { bm ->
             val key = htmlEscapeAll(bm.groupValues[1].trim())
-            val content = bm.groupValues[2].trim()
+            val content = convertUrlsInBibliography(bm.groupValues[2].trim())
             """<li id="$key">${TikzRenderer.escapeHtmlKeepBackslashes(content)}</li>"""
         }.toList()
         if (entries.isEmpty()) return@replace ""
@@ -435,3 +558,9 @@ internal fun convertTheBibliography(s: String): String {
         """<h4>References</h4><ol style="margin:12px 0 12px 24px;">$lis</ol>"""
     }
 }
+
+private fun convertUrlsInBibliography(s: String): String =
+    Regex("""\\url\{([^}]*)\}""").replace(s) { m ->
+        val url = htmlEscapeAll(m.groupValues[1].trim())
+        """<a href="$url">$url</a>"""
+    }

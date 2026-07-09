@@ -102,6 +102,27 @@ class TitlepageConversionTest {
     }
 
     @Test
+    fun assembleSplitTitlepageMacros_stopsBeforeSectionWhenCloseIsMisplaced() {
+        val noComments = stripLineComments(sst05TitlepageSource)
+        val macros = extractNewcommands(noComments)
+        val body = """
+            \titlepageOpen
+            \begin{abstract}Short abstract.\end{abstract}
+            \section{Body Section}
+            Mid-body text.
+            \titlepageClose
+        """.trimIndent()
+
+        val assembled = assembleSplitTitlepageMacros(body, macros)
+
+        assertTrue(assembled.contains("""\begin{titlepage}"""))
+        assertTrue(assembled.contains("Short abstract"))
+        assertTrue(assembled.contains("""\section{Body Section}"""))
+        assertFalse("misplaced close token should be stripped from body", assembled.contains("""\titlepageClose"""))
+        assertFalse("section should not be inside titlepage env before close", assembled.contains("titlepage}\n            \\section"))
+    }
+
+    @Test
     fun convertTitlepage_onAssembledSst05Body_producesFooterAndTitle() {
         val noComments = stripLineComments(sst05TitlepageSource)
         val macros = extractNewcommands(noComments)

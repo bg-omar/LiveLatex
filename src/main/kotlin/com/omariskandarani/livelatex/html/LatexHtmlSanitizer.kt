@@ -163,6 +163,7 @@ private fun extractPicturePutFooterHtml(inner: String): String {
     footer = footer.replace(Regex("""\\renewcommand\s*\{[^}]*\}\s*\{[^}]*\}"""), "")
     footer = convertMinipagesToHtml(footer)
     footer = convertHref(footer)
+    footer = convertTitlepageInlineMacros(footer)
     val html = latexProseToHtmlWithMath(footer.trim())
     return """<div class="ll-titlepage-footer" style="margin-top:2em;padding-top:0.75em;border-top:1px solid var(--border);font-size:0.88em;line-height:1.4;text-align:left;">$html</div>"""
 }
@@ -178,8 +179,16 @@ private fun applyTitlepageVspace(body: String): String =
         } else "\n"
     }
 
+private fun convertTitlepageInlineMacros(t: String): String {
+    var s = t
+    s = replaceCmd1ArgBalanced(s, "textsuperscript") { arg ->
+        "<sup>${latexProseToHtmlWithMath(arg)}</sup>"
+    }
+    return s
+}
+
 private fun preprocessTitlepageBody(body: String): String {
-    var t = body
+    var t = convertTitlepageInlineMacros(body)
     t = t.replace(Regex("""\\thispagestyle\{[^}]*\}"""), "")
     t = t.replace(Regex("""\\centering\b"""), "")
     t = t.replace(Regex("""\\raggedright\b"""), "")
@@ -213,11 +222,34 @@ private fun preprocessTitlepageBody(body: String): String {
 
 private fun renderTitlepageHtml(rawBody: String): String {
     val body = preprocessTitlepageBody(rawBody)
+    val extMatch = Regex("""\\(section|subsection|begin\{figure\}|begin\{tikzpicture\})""").find(body)
+    val splitAt = extMatch?.range?.first ?: body.length
+    val headerPart = body.substring(0, splitAt).trim()
+    val extPart = body.substring(splitAt).trim()
+
+    val headerHtml = renderTitlepageHeaderLines(headerPart)
+    val extHtml = if (extPart.isNotEmpty()) {
+        var t = extPart
+        t = convertSections(t, 1)
+        t = convertFigureEnvs(t)
+        t = convertIncludeGraphics(t)
+        t
+    } else ""
+
+    return """
+        <div class="ll-titlepage" style="text-align:center; padding:2em 1em; margin:0 0 1.5em 0; border-bottom:1px solid var(--border);">
+          $headerHtml$extHtml
+        </div>
+        """.trimIndent()
+}
+
+private fun renderTitlepageHeaderLines(body: String): String {
     val parts = body.split(Regex("""\n+""")).map { it.trim() }.filter { it.isNotEmpty() }
-    val styled = parts.mapIndexed { i, block ->
-        if (block.startsWith("<div") || block.startsWith("<p")) return@mapIndexed block
+    return parts.mapIndexed { i, block ->
+        if (block.startsWith("<div") || block.startsWith("<p") || block.startsWith("<sup")) return@mapIndexed block
         val stripped = stripOuterLatexGroupBraces(block)
-        val html = latexProseToHtmlWithMath(stripped)
+        val preInline = convertTitlepageInlineMacros(stripped)
+        val html = latexProseToHtmlWithMath(preInline)
         if (html.isBlank()) return@mapIndexed ""
         val style = when (i) {
             0 -> "font-size:1.5em; font-weight:bold; margin:0 0 1em 0;"
@@ -227,11 +259,6 @@ private fun renderTitlepageHtml(rawBody: String): String {
         }
         "<div style=\"$style\">$html</div>"
     }.filter { it.isNotEmpty() }.joinToString("")
-    return """
-        <div class="ll-titlepage" style="text-align:center; padding:2em 1em; margin:0 0 1.5em 0; border-bottom:1px solid var(--border);">
-          $styled
-        </div>
-        """.trimIndent()
 }
 
 /**
@@ -369,6 +396,9 @@ internal fun convertTextblockStar(s: String): String {
 
 internal fun convertSiunitx(s: String): String {
         var t = s
+        t = t.replace(Regex("""\\qty\{([^}]*)\}\{([^}]*)\}""")) { m ->
+            "\\SI{${m.groupValues[1]}}{${m.groupValues[2]}}"
+        }
         t = t.replace(Regex("""\\num\{([^}]*)\}""")) { m ->
             val raw = m.groupValues[1].trim()
             val sci = Regex("""^\s*([+-]?\d+(?:\.\d+)?)[eE]([+-]?\d+)\s*$""").matchEntire(raw)

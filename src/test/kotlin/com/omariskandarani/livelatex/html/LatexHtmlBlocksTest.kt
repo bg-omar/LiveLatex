@@ -175,6 +175,24 @@ class LatexHtmlBlocksTest {
         assertTrue(out.contains("ll-figure-unavailable") || out.contains("<img"))
     }
 
+    @Test
+    fun unwrapResizebox_stripsWrapperKeepsBody() {
+        val src = """\resizebox{\textwidth}{!}{\begin{tikzpicture}\draw (0,0)--(1,1);\end{tikzpicture}}"""
+        val out = unwrapResizebox(src)
+        assertFalse(out.contains("""\resizebox{"""))
+        assertTrue(out.contains("tikzpicture"))
+    }
+
+    @Test
+    fun convertSubfloats_rendersPanels() {
+        val out = convertSubfloats(
+            """\subfloat[Cap A]{text A}\hfill\subfloat[Cap B]{text B}"""
+        )
+        assertFalse(out.contains("""\subfloat["""))
+        assertTrue(out.contains("subfloat-row"))
+        assertTrue(out.contains("Cap A"))
+    }
+
     // ── convertHref ───────────────────────────────────────────────────────────
 
     @Test

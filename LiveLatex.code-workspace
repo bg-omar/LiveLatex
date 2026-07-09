@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../LiveLatexApp"
+		},
+		{
+			"path": "../LiveLatexChrome"
+		}
+	],
+	"settings": {}
+}

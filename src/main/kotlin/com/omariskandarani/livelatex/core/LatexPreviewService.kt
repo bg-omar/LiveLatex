@@ -21,7 +21,13 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.Alarm
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationAction
+import com.intellij.notification.NotificationType
+import com.intellij.notification.Notifications
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 import com.intellij.openapi.wm.ToolWindow
@@ -32,7 +38,7 @@ import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.Dimension
 import java.awt.Point
 import com.intellij.ui.jcef.JBCefBrowserBase
-import com.omariskandarani.livelatex.ui.PreviewToolbarPanel
+import com.omariskandarani.livelatex.ui.PreviewStatusLine
 import java.io.File
 import java.security.MessageDigest
 
@@ -57,9 +63,19 @@ class LatexPreviewService(private val project: Project) : Disposable {
     @Volatile
     var lastSections: List<Pair<String, String>> = emptyList()
         private set
-    /** Toolbar panel met sectie-combo; gezet door LatexPreviewToolWindowFactory. */
-    var toolbarPanel: PreviewToolbarPanel? = null
-        set(value) { field = value }
+    private var statusLine: PreviewStatusLine? = null
+    private data class CachedPreview(
+        val html: String,
+        val sections: List<Pair<String, String>>,
+        val token: Int,
+    )
+    private val previewCache = ConcurrentHashMap<String, CachedPreview>()
+    @Volatile
+    private var previewBuildFuture: Future<*>? = null
+    @Volatile
+    var isPreviewBuilding: Boolean = false
+        private set
+    private var statusShowAlarm: Runnable? = null
     private val tikzExecutor = AppExecutorUtil.createBoundedApplicationPoolExecutor("TikzPool", 1)
     /** Single-thread pool so only one `wrapWithInputs` runs at a time (mutates LatexHtml / TikzRenderer globals). */
     private val previewBuildExecutor: ExecutorService =
@@ -86,6 +102,8 @@ class LatexPreviewService(private val project: Project) : Disposable {
 
     private val docListener = object : DocumentListener {
         override fun documentChanged(event: DocumentEvent) {
+            val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
+            if (!settings.autoPreview) return
             scheduleRefresh()
         }
     }
@@ -208,9 +226,6 @@ class LatexPreviewService(private val project: Project) : Disposable {
             Disposer.register(this, q)
             q.addHandler { json ->
                 lastSections = parseSectionsJson(json)
-                ApplicationManager.getApplication().invokeLater {
-                    toolbarPanel?.setSections(lastSections)
-                }
                 JBCefJSQuery.Response("OK")
             }
         }
@@ -250,10 +265,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
                         val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
                         if (settings.renderTikzInPreview != enabled) {
                             settings.renderTikzInPreview = enabled
-                            toolbarPanel?.syncRenderTikzFromSettings()
                             requestRefresh()
-                        } else {
-                            toolbarPanel?.syncRenderTikzFromSettings()
                         }
                     },
                     Condition<Any?> { project.isDisposed }
@@ -408,21 +420,26 @@ class LatexPreviewService(private val project: Project) : Disposable {
                     val file = event.newFile
                     if (isLiveLatexPreviewFile(file)) {
                         toolWindow.setWidth(400)
-                        // Keep focus in the editor/project flow: do not auto-show/activate the preview tool window
-                        // when tabs change (e.g. opening/creating files from the project view).
                         rebindToSelectedEditor()
+                        if (isPreviewBuilding) {
+                            val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
+                            settings.autoPreview = false
+                            notifyAutoPreviewDisabledWhileRendering()
+                        }
                     } else {
                         unbindEditor()
                         toolWindow.setWidth(10)
-                        // do not hide — keep strip visible so it re-expands when back on .tex
                     }
-                    // Next EDT tick so FileEditorManager / document match the newly selected tab (avoids stale snapshot).
                     ApplicationManager.getApplication().invokeLater(
                         {
                             if (project.isDisposed) return@invokeLater
-                            refresh()
-                            // Some IDE flows (e.g. New File from project view/template) can leave focus in the
-                            // project sidebar. Pull focus back to the active editor tab if one exists.
+                            val newPath = file?.path
+                            if (isLiveLatexPreviewFile(file) && newPath != null) {
+                                showCachedPreviewIfAvailable(newPath)
+                            }
+                            if (ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).autoPreview) {
+                                refresh()
+                            }
                             FileEditorManager.getInstance(project).selectedTextEditor?.contentComponent?.let { editorComponent ->
                                 IdeFocusManager.getInstance(project).requestFocus(editorComponent, true)
                             }
@@ -434,8 +451,9 @@ class LatexPreviewService(private val project: Project) : Disposable {
         )
     }
 
-    fun attachBrowser(b: JBCefBrowser) {
+    fun attachBrowser(b: JBCefBrowser, status: PreviewStatusLine) {
         browser = b
+        statusLine = status
         pageReady = false
 
         val base = b as JBCefBrowserBase
@@ -645,6 +663,78 @@ class LatexPreviewService(private val project: Project) : Disposable {
         scheduleRefresh()
     }
 
+    fun cancelPreviewBuild() {
+        ++previewBuildGeneration
+        previewBuildFuture?.cancel(true)
+        previewBuildFuture = null
+        LatexHtmlTikz.killRunningProcesses()
+        isPreviewBuilding = false
+        ApplicationManager.getApplication().invokeLater(
+            {
+                if (!project.isDisposed) statusLine?.setStatus("Cancelled")
+            },
+            Condition<Any?> { project.isDisposed }
+        )
+        refreshDebounceAlarm.addRequest({ statusLine?.clear() }, 2000)
+    }
+
+    private fun showCachedPreviewIfAvailable(path: String) {
+        val cached = previewCache[path] ?: return
+        val ed = FileEditorManager.getInstance(project).selectedTextEditor ?: return
+        val vfNow = FileDocumentManager.getInstance().getFile(ed.document) ?: return
+        if (!FileUtil.pathsEqual(FileUtil.toSystemIndependentName(path), FileUtil.toSystemIndependentName(vfNow.path))) {
+            return
+        }
+        val caretLine = ed.caretModel.logicalPosition.line + 1
+        lastSections = cached.sections
+        renderHtml(cached.html, caretLine)
+    }
+
+    private fun notifyBackgroundPreviewComplete(fileName: String) {
+        notifyAutoPreviewDisabledWhileRendering(
+            title = "Preview finished",
+            message = "Preview for $fileName finished while you were elsewhere. Auto preview was turned off.",
+        )
+    }
+
+    private fun notifyAutoPreviewDisabledWhileRendering(
+        title: String = "Auto preview disabled",
+        message: String = "You left while rendering. Auto preview is disabled.",
+    ) {
+        val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
+        val notification = Notification(
+            "LiveLatex",
+            title,
+            message,
+            NotificationType.INFORMATION,
+        ).addAction(
+            NotificationAction.createSimple("Re-enable auto preview") {
+                settings.autoPreview = true
+            },
+        )
+        Notifications.Bus.notify(notification, project)
+    }
+
+    private fun setBuildStatus(text: String, token: Int) {
+        ApplicationManager.getApplication().invokeLater(
+            {
+                if (project.isDisposed || token != previewBuildGeneration) return@invokeLater
+                statusLine?.setStatus(text)
+            },
+            Condition<Any?> { project.isDisposed },
+        )
+    }
+
+    private fun clearBuildStatus(token: Int) {
+        ApplicationManager.getApplication().invokeLater(
+            {
+                if (project.isDisposed || token != previewBuildGeneration) return@invokeLater
+                statusLine?.clear()
+            },
+            Condition<Any?> { project.isDisposed },
+        )
+    }
+
     /** Run JS in the preview page (for zoom, localStorage, etc.). */
     fun evalJs(js: String) {
         eval(js)
@@ -681,70 +771,106 @@ class LatexPreviewService(private val project: Project) : Disposable {
         val isTexLike = ext in listOf("tex", "ltx", "latex", "tikz")
         val snapshotText = if (isTexLike && doc != null && vf != null) doc.text else null
         val snapshotPath = vf?.path
+        val snapshotName = vf?.name ?: "document"
         val cacheRootForSnapshot = if (snapshotPath != null) {
             File(globalCacheDir(), sha1(snapshotPath)).absolutePath
         } else {
             globalCacheDir().absolutePath
         }
         val token = ++previewBuildGeneration
+        previewBuildFuture?.cancel(true)
+        isPreviewBuilding = true
 
-        previewBuildExecutor.execute {
-            val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
-            val wantsLiveRenderProgress =
-                settings.renderTikzInPreview && isTexLike && snapshotText != null
-            if (wantsLiveRenderProgress) {
-                TikzRenderer.setLiveRenderProgressHandler { cur, tot, detail ->
-                    ApplicationManager.getApplication().invokeLater(
-                        {
-                            if (project.isDisposed || token != previewBuildGeneration) return@invokeLater
-                            toolbarPanel?.setLiveRenderProgress(cur, tot, detail)
-                        },
-                        Condition<Any?> { project.isDisposed }
-                    )
-                }
+        val buildStartedAt = System.currentTimeMillis()
+        statusShowAlarm?.let { refreshDebounceAlarm.cancelRequest(it) }
+        val showStatusRunnable = Runnable {
+            if (token == previewBuildGeneration && isPreviewBuilding) {
+                setBuildStatus("Building preview…", token)
             }
-            val html = try {
-                TikzRenderer.pluginCacheRoot = cacheRootForSnapshot
-                when {
-                    isTexLike && snapshotText != null && snapshotPath != null ->
-                        LatexHtml.wrapWithInputs(snapshotText, snapshotPath)
-                    else ->
-                        LatexHtml.wrap("<p style='opacity:.66'>Open a <code>.tex</code> file to preview.</p>")
+        }
+        statusShowAlarm = showStatusRunnable
+        refreshDebounceAlarm.addRequest(showStatusRunnable, 300)
+
+        previewBuildFuture = previewBuildExecutor.submit {
+            try {
+                val progressHandler: (String) -> Unit = progress@{ detail ->
+                    if (token != previewBuildGeneration) return@progress
+                    val elapsed = System.currentTimeMillis() - buildStartedAt
+                    if (elapsed >= 300 || detail.startsWith("TikZ")) {
+                        setBuildStatus(detail, token)
+                    }
                 }
-            } catch (t: Throwable) {
-                val msg = (t.message ?: t.toString()).replace("<", "&lt;")
-                LatexHtml.wrap("<p style='opacity:.66;color:#b91c1c'>Preview build failed: $msg</p>")
-            } finally {
-                TikzRenderer.setLiveRenderProgressHandler(null)
+                LatexHtml.buildProgressHandler = progressHandler
+                TikzRenderer.setLiveRenderProgressHandler { cur, tot, detail ->
+                    if (token != previewBuildGeneration) return@setLiveRenderProgressHandler
+                    val msg = if (tot > 0) "TikZ $cur / $tot: $detail" else detail
+                    progressHandler(msg)
+                }
+
+                val html = try {
+                    TikzRenderer.pluginCacheRoot = cacheRootForSnapshot
+                    when {
+                        isTexLike && snapshotText != null && snapshotPath != null ->
+                            LatexHtml.wrapWithInputs(snapshotText, snapshotPath)
+                        else ->
+                            LatexHtml.wrap("<p style='opacity:.66'>Open a <code>.tex</code> file to preview.</p>")
+                    }
+                } catch (t: Throwable) {
+                    if (t is InterruptedException || Thread.currentThread().isInterrupted) {
+                        return@submit
+                    }
+                    val msg = (t.message ?: t.toString()).replace("<", "&lt;")
+                    LatexHtml.wrap("<p style='opacity:.66;color:#b91c1c'>Preview build failed: $msg</p>")
+                } finally {
+                    LatexHtml.buildProgressHandler = null
+                    TikzRenderer.setLiveRenderProgressHandler(null)
+                }
+
+                if (token != previewBuildGeneration || Thread.currentThread().isInterrupted) return@submit
+
+                val sections = if (isTexLike) LatexHtml.lastCollectedSections else emptyList()
+                if (isTexLike && snapshotPath != null) {
+                    previewCache[snapshotPath] = CachedPreview(html, sections, token)
+                }
+
                 ApplicationManager.getApplication().invokeLater(
                     {
-                        if (project.isDisposed || token != previewBuildGeneration) return@invokeLater
-                        toolbarPanel?.clearLiveRenderProgress()
+                        if (project.isDisposed) return@invokeLater
+                        isPreviewBuilding = false
+                        previewBuildFuture = null
+                        if (token != previewBuildGeneration) return@invokeLater
+                        clearBuildStatus(token)
+
+                        val activePath = FileEditorManager.getInstance(project).selectedTextEditor?.let { ed ->
+                            FileDocumentManager.getInstance().getFile(ed.document)?.path
+                        }
+                        val sameFile = snapshotPath != null && activePath != null &&
+                            FileUtil.pathsEqual(
+                                FileUtil.toSystemIndependentName(snapshotPath),
+                                FileUtil.toSystemIndependentName(activePath),
+                            )
+
+                        if (sameFile) {
+                            lastSections = sections
+                            renderHtml(html, caretLine)
+                        } else if (isTexLike && snapshotPath != null) {
+                            notifyBackgroundPreviewComplete(snapshotName)
+                        }
                     },
-                    Condition<Any?> { project.isDisposed }
+                    Condition<Any?> { project.isDisposed },
+                )
+            } catch (_: InterruptedException) {
+                ApplicationManager.getApplication().invokeLater(
+                    {
+                        if (!project.isDisposed && token == previewBuildGeneration) {
+                            isPreviewBuilding = false
+                            previewBuildFuture = null
+                            clearBuildStatus(token)
+                        }
+                    },
+                    Condition<Any?> { project.isDisposed },
                 )
             }
-
-            ApplicationManager.getApplication().invokeLater(
-                {
-                    if (project.isDisposed) return@invokeLater
-                    if (token != previewBuildGeneration) return@invokeLater
-                    if (isTexLike && snapshotPath != null) {
-                        val ed = FileEditorManager.getInstance(project).selectedTextEditor ?: return@invokeLater
-                        val vfNow = FileDocumentManager.getInstance().getFile(ed.document) ?: return@invokeLater
-                        val a = FileUtil.toSystemIndependentName(snapshotPath)
-                        val b = FileUtil.toSystemIndependentName(vfNow.path)
-                        if (!FileUtil.pathsEqual(a, b)) return@invokeLater
-                    }
-                    if (isTexLike) {
-                        lastSections = LatexHtml.lastCollectedSections
-                    } else {
-                        lastSections = emptyList()
-                    }
-                    renderHtml(html, caretLine)
-                },
-                Condition<Any?> { project.isDisposed }
-            )
         }
     }
 

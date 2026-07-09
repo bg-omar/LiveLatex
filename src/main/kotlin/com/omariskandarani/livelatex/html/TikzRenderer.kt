@@ -437,7 +437,7 @@ object TikzRenderer {
         val autoLibs = buildSet {
             if (Regex("""-\{?Latex""").containsMatchIn(hay) || Regex(""">=\s*Latex""").containsMatchIn(hay)) add("arrows.meta")
             if (Regex("""\b(left|right|above|below)\s*=\s*|[^=]\bof\b""").containsMatchIn(hay)) add("positioning")
-            if (Regex("""use\s+Hobby\s+shortcut|invert\s+soft\s+blanks|\[blank=""").containsMatchIn(hay)) addAll(listOf("hobby","topaths"))
+            if (Regex("""use\s+Hobby\s+shortcut|invert\s+soft\s+blanks|\[blank="|controls\s+\+""").containsMatchIn(hay)) addAll(listOf("hobby","topaths"))
             if (Regex("""\\begin\{knot}|\bflip crossing/""").containsMatchIn(hay)) addAll(listOf("knots","hobby","intersections","decorations.pathreplacing","shapes.geometric","spath3","topaths"))
             if (Regex("""tikzlings|\\(?:bat|bear|bird|cat|coati|cow|cricket|dog|duck|elephant|frog|hippo|mole|mouse|octopus|owl|panda|penguin|pig|rabbit|rhino|sloth|snowman|squirrel|wolf)\b""").containsMatchIn(hay)) add("tikzlings")
             if (Regex("""decorations\.(markings|pathmorphing|pathreplacing)""").containsMatchIn(hay)) add("decorations.markings")
@@ -556,6 +556,7 @@ $scrubbedBody
         var pos = 0
 
         while (true) {
+            if (Thread.currentThread().isInterrupted) throw InterruptedException("Preview build cancelled")
             val start = htmlLike.indexOf(beginTok, pos)
             if (start < 0) break
             result.append(htmlLike, pos, start)

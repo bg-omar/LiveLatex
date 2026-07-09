@@ -3,11 +3,14 @@ package com.omariskandarani.livelatex.html
 import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 
+import java.util.Collections
+
 /**
  * TikZ compilation, PDF/EPS → web-showable image conversion (SVG preferred, PNG fallback), and caching.
  */
 object LatexHtmlTikz {
     private val LOG = Logger.getInstance(LatexHtmlTikz::class.java)
+    private val runningProcesses = Collections.synchronizedSet(mutableSetOf<Process>())
     private const val LOG_TAIL = 1200
     /** Dense TikZ (e.g. hundreds of decorated segments) often exceeds 60s on first MiKTeX run. */
     private const val PDFLATEX_TIMEOUT_MS = 180_000L
@@ -56,7 +59,24 @@ object LatexHtmlTikz {
         return tools
     }
 
+    fun killRunningProcesses() {
+        synchronized(runningProcesses) {
+            runningProcesses.forEach { proc ->
+                try {
+                    proc.destroyForcibly()
+                } catch (_: Throwable) {
+                }
+            }
+            runningProcesses.clear()
+        }
+    }
+
+    private fun checkInterrupted() {
+        if (Thread.currentThread().isInterrupted) throw InterruptedException("Preview build cancelled")
+    }
+
     internal fun run(cmd: List<String>, cwd: File, timeoutMs: Long = PDFLATEX_TIMEOUT_MS): Pair<Boolean, String> {
+        checkInterrupted()
         val pb = ProcessBuilder(cmd).directory(cwd).redirectErrorStream(true)
         TikzRenderer.currentBaseDir?.let { base ->
             val sep = if (System.getProperty("os.name").contains("win", true)) ";" else ":"
@@ -64,12 +84,26 @@ object LatexHtmlTikz {
             pb.environment()["TEXINPUTS"] = path + sep + File(path, "tex").absolutePath + sep
         }
         val p = pb.start()
-        val out = StringBuilder()
-        val t = Thread { p.inputStream.bufferedReader().forEachLine { out.appendLine(it) } }
-        t.start()
-        val ok = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-        if (!ok) { p.destroyForcibly(); return false to "Timeout running: $cmd\n$out" }
-        return (p.exitValue() == 0) to out.toString()
+        runningProcesses.add(p)
+        try {
+            val out = StringBuilder()
+            val t = Thread {
+                p.inputStream.bufferedReader().forEachLine { line ->
+                    checkInterrupted()
+                    out.appendLine(line)
+                }
+            }
+            t.start()
+            val ok = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            if (!ok) {
+                p.destroyForcibly()
+                return false to "Timeout running: $cmd\n$out"
+            }
+            checkInterrupted()
+            return (p.exitValue() == 0) to out.toString()
+        } finally {
+            runningProcesses.remove(p)
+        }
     }
 
     internal fun tikzCacheDir(): File {

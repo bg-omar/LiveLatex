@@ -78,7 +78,11 @@ internal fun extractNewcommands(s: String): Map<String, Macro> {
 }
 
 /** Build MathJax tex.macros (JSON-like) from user + base shims. */
-internal fun buildMathJaxMacros(user: Map<String, Macro>): String {
+internal fun buildMathJaxMacros(user: Map<String, Macro>, fullSource: String = ""): String {
+    val usesSiunitx = Regex("""\\usepackage(?:\[[^\]]*])?\{[^}]*siunitx[^}]*\}""")
+        .containsMatchIn(fullSource) ||
+        Regex("""\\RenewCommandCopy\s*\\qty\s*\\SI""").containsMatchIn(fullSource)
+
     val base = linkedMapOf(
         "ae"   to Macro("\\unicode{x00E6}", 0),
         "AE"   to Macro("\\unicode{x00C6}", 0),
@@ -88,7 +92,6 @@ internal fun buildMathJaxMacros(user: Map<String, Macro>): String {
         "pdv"  to Macro("\\frac{\\partial #1}{\\partial #2}", 2),
         "abs"  to Macro("\\left|#1\\right|", 1),
         "norm" to Macro("\\left\\lVert #1\\right\\rVert", 1),
-        "qty"  to Macro("\\left(#1\\right)", 1),
         "qtyb" to Macro("\\left[#1\\right]", 1),
         "qed"  to Macro("\\square", 0),
         "si"   to Macro("\\mathrm{#1}", 1),
@@ -97,6 +100,9 @@ internal fun buildMathJaxMacros(user: Map<String, Macro>): String {
         "Lam"  to Macro("\\Lambda", 0),
         "rc"   to Macro("r_c", 0),
     )
+    if (usesSiunitx) {
+        base["qty"] = Macro("\\num{#1}\\,\\mathrm{#2}", 2)
+    }
 
     val merged = LinkedHashMap<String, Macro>()
     merged.putAll(base)
@@ -119,6 +125,9 @@ internal fun jsonEscape(tex: String): String =
 /**
  * SST papers use `\titlepageOpen` … `\titlepageClose` with abstract/keywords between.
  * Assemble the span into one block (open def + middle + close def) before general macro expansion.
+ *
+ * Titlepage middle ends at the earliest of `\titlepageClose`, `\section`, or `\begin{figure}` so a
+ * misplaced `\titlepageClose` mid-body (e.g. SST-34) does not swallow sections into the title page.
  */
 internal fun assembleSplitTitlepageMacros(body: String, macros: Map<String, Macro>): String {
     val openMacro = macros["titlepageOpen"] ?: return body
@@ -127,23 +136,33 @@ internal fun assembleSplitTitlepageMacros(body: String, macros: Map<String, Macr
 
     val openRe = Regex("""\\titlepageOpen(?![A-Za-z@])""")
     val closeRe = Regex("""\\titlepageClose(?![A-Za-z@])""")
+    val sectionRe = Regex("""\\section\*?(?![A-Za-z@])\{""")
+    val figureRe = Regex("""\\begin\{figure\}""")
 
+    val openMatch = openRe.find(body) ?: return body
+    val afterOpen = openMatch.range.last + 1
+
+    val closeMatch = closeRe.find(body, afterOpen)
+    val sectionMatch = sectionRe.find(body, afterOpen)
+    val figureMatch = figureRe.find(body, afterOpen)
+    val contentEnd = listOfNotNull(
+        closeMatch?.range?.first,
+        sectionMatch?.range?.first,
+        figureMatch?.range?.first,
+    ).minOrNull() ?: body.length
+
+    val middle = body.substring(afterOpen, contentEnd)
     val sb = StringBuilder(body.length + 512)
-    var i = 0
-    var guard = 0
-    while (i < body.length && guard++ < 5000) {
-        val m = openRe.find(body, i) ?: break
-        sb.append(body, i, m.range.first)
-        val closeMatch = closeRe.find(body, m.range.last + 1)
-        if (closeMatch == null) {
-            sb.append(body, m.range.first, body.length)
-            break
-        }
-        val middle = body.substring(m.range.last + 1, closeMatch.range.first)
-        sb.append(openMacro.def).append(middle).append(closeMacro.def)
-        i = closeMatch.range.last + 1
+    sb.append(body, 0, openMatch.range.first)
+    sb.append(openMacro.def).append(middle).append(closeMacro.def)
+
+    var restStart = contentEnd
+    if (closeMatch != null && closeMatch.range.first == contentEnd) {
+        restStart = closeMatch.range.last + 1
     }
-    if (i < body.length) sb.append(body, i, body.length)
+    var rest = body.substring(restStart)
+    rest = closeRe.replace(rest, "")
+    sb.append(rest)
     return sb.toString()
 }
 

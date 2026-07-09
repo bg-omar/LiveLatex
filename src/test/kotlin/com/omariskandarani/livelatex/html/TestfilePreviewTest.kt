@@ -12,7 +12,7 @@ import java.io.File
 class TestfilePreviewTest {
 
     private val repoRoot = File(System.getProperty("user.dir"))
-    private val testfile = File(repoRoot, "testfile.tex")
+    private val testfile = File(repoRoot, "LiveLatex_full_probes/testfile.tex")
 
     @After
     fun tearDown() {

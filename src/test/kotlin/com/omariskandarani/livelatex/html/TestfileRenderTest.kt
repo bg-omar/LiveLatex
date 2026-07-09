@@ -12,8 +12,8 @@ import java.io.File
 class TestfileRenderTest {
 
     private fun wrapTestfile(): String {
-        val f = File("testfile.tex")
-        assumeTrue("testfile.tex in project root (run Gradle from LiveLatex)", f.isFile)
+        val f = File("LiveLatex_full_probes/testfile.tex")
+        assumeTrue("testfile.tex in LiveLatex_full_probes (run Gradle from LiveLatex)", f.isFile)
         currentBaseDir = f.parentFile?.absolutePath ?: ""
         TikzRenderer.currentBaseDir = currentBaseDir
         return LatexHtml.wrap(f.readText(Charsets.UTF_8))

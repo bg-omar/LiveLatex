@@ -64,6 +64,20 @@ object LatexHtml {
     var lastCollectedSections: List<Pair<String, String>> = emptyList()
         private set
 
+    @Volatile
+    var buildProgressHandler: ((String) -> Unit)? = null
+
+    private fun reportBuildProgress(message: String) {
+        checkBuildInterrupted()
+        buildProgressHandler?.invoke(message)
+    }
+
+    private fun checkBuildInterrupted() {
+        if (Thread.currentThread().isInterrupted) {
+            throw InterruptedException("Preview build cancelled")
+        }
+    }
+
     /** Map editor (orig) char offset → merged source offset. */
     fun charOrigToMerged(offset: Int): Int {
         val map = lastCharOrigToMerged
@@ -113,7 +127,7 @@ object LatexHtml {
 
         val srcNoComments = stripLineComments(texSource)
         val userMacros    = extractNewcommands(srcNoComments)
-        val macrosJs      = buildMathJaxMacros(userMacros)
+        val macrosJs      = buildMathJaxMacros(userMacros, srcNoComments)
         val titleMeta     = extractTitleMeta(srcNoComments)
         val tikzPreamble  = TikzRenderer.collectTikzPreamble(srcNoComments)
 
@@ -127,10 +141,14 @@ object LatexHtml {
 
         val body0 = stripPreamble(texSource)
         val body1 = stripLineComments(body0)
+        reportBuildProgress("Parsing macros…")
+        checkBuildInterrupted()
         val body1a = assembleSplitTitlepageMacros(body1, userMacros)
         val body1b = expandZeroArgMacros(body1a, userMacros)
+        checkBuildInterrupted()
         val body2 = sanitizeForMathJaxProse(body1b)
-        val body2b = convertIncludeGraphics(body2)
+        val body2a = unwrapResizebox(body2)
+        val body2b = convertIncludeGraphics(body2a)
 
         val body2c: String
         val body2d: String
@@ -139,7 +157,9 @@ object LatexHtml {
                 val nTikz = TikzRenderer.countTikzPictureStarts(body2b)
                 val nSst = TikzRenderer.countSstStandaloneMacros(body2b)
                 TikzRenderer.initLiveRenderProgress(nTikz + nSst)
+                if (nTikz + nSst > 0) reportBuildProgress("TikZ 0 / ${nTikz + nSst}")
             }
+            reportBuildProgress("Rendering TikZ…")
             body2c = if (renderTikz)
                 TikzRenderer.convertTikzPictures(body2b, srcNoComments, tikzPreamble)
             else
@@ -152,8 +172,13 @@ object LatexHtml {
             TikzRenderer.finishLiveRenderProgressPhase()
         }
 
+        reportBuildProgress("Converting prose…")
+        checkBuildInterrupted()
+
         lastCollectedSections = collectSectionsList(body2d, absOffset)
         val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments, tikzPreamble)
+        checkBuildInterrupted()
+        reportBuildProgress("Building source map…")
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)
         val body4c = fixInlineBoundarySpaces(body4)
@@ -300,7 +325,7 @@ object LatexHtml {
         currentBaseDir = baseDir
         TikzRenderer.currentBaseDir = baseDir
 
-        // Build marked source to compute orig→merged line mapping across \input/\include expansions
+        reportBuildProgress("Inlining \\input files…")
         val markerPrefix = "%%LLM"
         val origLines = texSource.split('\n')
         val marked = buildString(texSource.length + origLines.size * 10) {

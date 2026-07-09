@@ -1,0 +1,112 @@
+
+
+\begin{tikzpicture}[scale=0.90, line cap=round, line join=round]
+            % ------------------------
+            % Parameters
+            % ------------------------
+            \def\R{3.20}      % major radius (to center of tube)
+            \def\rtube{0.95}  % tube radius (for planar projection amplitude)
+            \def\Rin{\R-\rtube}
+            \def\Rout{\R+\rtube}
+
+            % ------------------------
+            % Styles
+            % ------------------------
+            \tikzset{
+                axisline/.style={->, line width=0.6pt, black!70},
+                annulusfill/.style={fill=gray!10, even odd rule},
+                annulusline/.style={draw=gray!55, line width=0.6pt},
+                corecircle/.style={draw=black!70, line width=0.8pt},
+                outercircle/.style={draw=black!60, line width=0.8pt, dash pattern=on 3pt off 2pt},
+                labelbox/.style={fill=white, draw=black!20, rounded corners=2pt, inner sep=3pt},
+                knotunder/.style={draw=blue!45!black, line width=1.4pt},
+                knotover/.style={
+                    draw=blue!80!black, line width=1.4pt,
+                    preaction={draw=white, line width=3.2pt, line cap=round}
+                },
+                knotarrows/.style={
+                    postaction={decorate},
+                    decoration={
+                        markings,
+                        mark=at position 0.18 with {\arrow{Latex}},
+                        mark=at position 0.52 with {\arrow{Latex}},
+                        mark=at position 0.86 with {\arrow{Latex}}
+                    }
+                }
+            }
+
+            % ------------------------
+            % Axes (x-y plane view)
+            % ------------------------
+            \draw[axisline] (-0.3,0) -- (6.8,0) node[below right] {$x$};
+            \draw[axisline] (0,-3.6) -- (0,3.6) node[left] {$y$};
+
+            % Central rotational axis marker (z comes out of plane at origin)
+            \fill[black] (0,0) circle(2pt);
+
+
+            % ------------------------
+            % Torus annulus (projection band)
+            % ------------------------
+            \fill[annulusfill] (0,0) circle (\Rout) (0,0) circle (\Rin);
+            \draw[annulusline] (0,0) circle (\Rin);
+            \draw[annulusline] (0,0) circle (\Rout);
+            \draw[outercircle] (0,0) circle (4.6);
+
+            % ------------------------
+            % Trefoil T(2,3) projection on torus: parametric planar curve
+            % x(θ) = (R + r cos(3θ)) cos θ
+            % y(θ) = (R + r cos(3θ)) sin θ
+            % Over/under decided by sign of z(θ) = r sin(3θ):
+            %   sin(3θ) > 0  => "over" segments
+            %   sin(3θ) < 0  => "under" segments
+            % We split [0, 2π] at θ = k·π/3.
+            % ------------------------
+            % parameters (numeric, no units)
+            \def\R{3.20}
+            \def\rtube{0.95}
+
+            % Remove custom rad function, use TikZ's built-in angle conversion
+            \tikzset{
+                declare function={
+                    Rx(\ang)= (\R + \rtube*cos(3*\ang))*cos(\ang);
+                    Ry(\ang)= (\R + \rtube*cos(3*\ang))*sin(\ang);
+                }
+            }
+
+            % --- UNDER segments first (behind) ---
+            \draw[knotunder, samples=240, smooth, variable=\ang, domain=60:120]
+            plot ({Rx(\ang)}, {Ry(\ang)});
+            \draw[knotunder, samples=240, smooth, variable=\ang, domain=180:240]
+            plot ({Rx(\ang)}, {Ry(\ang)});
+            \draw[knotunder, samples=240, smooth, variable=\ang, domain=300:360]
+            plot ({Rx(\ang)}, {Ry(\ang)});
+
+              % --- OVER segments (on top) ---
+            \draw[knotover, knotarrows, samples=240, smooth, variable=\ang, domain=0:60]
+            plot ({Rx(\ang)}, {Ry(\ang)});
+            \draw[knotover, knotarrows, samples=240, smooth, variable=\ang, domain=120:180]
+            plot ({Rx(\ang)}, {Ry(\ang)});
+            \draw[knotover, knotarrows, samples=240, smooth, variable=\ang, domain=240:300]
+            plot ({Rx(\ang)}, {Ry(\ang)});
+
+            \node[align=left, labelbox, anchor=south east] at (6.6,3.4) {\footnotesize
+            Trefoil \(3_1\) (torus-knot projection)\\
+            meridional winding \(q=3\)\\
+            \(\Rightarrow\ \Gamma=\mathrm{Lk}\cdot\kappa=\pm 3\,\kappa\)
+            };
+
+            % ------------------------
+            % Circulation test loops in z=0 plane
+            % ------------------------
+            \foreach \RR in {2.10, 2.60, 3.20} {
+                \draw[corecircle] (0,0) circle (\RR);
+            }
+            \node[below left] at (.5,0) {\small central axis ($z$)};
+            \node[labelbox] at (2.10, 2.25) {\(\Gamma \approx -3\,\kappa\)};
+            \node[labelbox] at (2.60,-1.25) {\(\Gamma \approx -3\,\kappa\)};
+            \node[labelbox] at (3.20, 1.75) {\(\Gamma \approx -3\,\kappa\)};
+            \node[labelbox, align=left] at (\R,-2.35) {\footnotesize torus annulus $[R-\!r,\,R+\!r]$};
+
+            \node[labelbox] at (4.6,-1.25) {\(\Gamma \approx 0\)};
+        \end{tikzpicture}

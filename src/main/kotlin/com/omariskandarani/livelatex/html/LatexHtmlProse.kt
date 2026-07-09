@@ -551,6 +551,7 @@ internal fun formatInlineProseNonMath(s0: String): String {
         t = replaceCmd1ArgBalanced(t, "textit")    { "<em>${applyFmt(it, true)}</em>" }
         t = replaceCmd1ArgBalanced(t, "itshape")   { "<em>${applyFmt(it, true)}</em>" }
         t = replaceCmd1ArgBalanced(t, "textsuperscript") { "<sup>${applyFmt(it, true)}</sup>" }
+        t = replaceCmd1ArgBalanced(t, "footnote") { "<sup class=\"footnote\">${applyFmt(it, true)}</sup>" }
         t = t.replace(Regex("""\\itshape\b"""), "")
         t = replaceCmd1ArgBalanced(t, "underline") { "<u>${applyFmt(it, true)}</u>" }
         t = replaceCmd1ArgBalanced(t, "uline")     { "<u>${applyFmt(it, true)}</u>" }

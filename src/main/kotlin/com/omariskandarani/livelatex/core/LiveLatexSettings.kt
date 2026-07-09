@@ -15,6 +15,7 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
 
     data class State(
         var renderTikzInPreview: Boolean = false,  // default off: lighter for IDE/Android; per-figure LiveRender button or toolbar checkbox
+        var autoPreview: Boolean = true,
         var autoScrollPreview: Boolean = true,
         var autoScrollEditor: Boolean = true,
         var syncSelection: Boolean = true,
@@ -34,6 +35,10 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
     var renderTikzInPreview: Boolean
         get() = state.renderTikzInPreview
         set(value) { state.renderTikzInPreview = value }
+
+    var autoPreview: Boolean
+        get() = state.autoPreview
+        set(value) { state.autoPreview = value }
 
     var autoScrollPreview: Boolean
         get() = state.autoScrollPreview

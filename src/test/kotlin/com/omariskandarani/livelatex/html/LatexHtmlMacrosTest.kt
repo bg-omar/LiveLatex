@@ -42,6 +42,14 @@ class LatexHtmlMacrosTest {
     }
 
     @Test
+    fun buildMathJaxMacros_siunitxAddsTwoArgQty() {
+        val src = """\usepackage{siunitx}\AtBeginDocument{\RenewCommandCopy\qty\SI}"""
+        val js = buildMathJaxMacros(emptyMap(), src)
+        assertTrue(js.contains(""""qty": ["""))
+        assertTrue(js.contains(", 2]"))
+    }
+
+    @Test
     fun jsonEscape_escapesBackslashAndWraps() {
         assertEquals(""""x"""", jsonEscape("x"))
         assertEquals(""""a\\b"""", jsonEscape("""a\b"""))
