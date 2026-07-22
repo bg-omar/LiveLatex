@@ -3,6 +3,7 @@ package com.omariskandarani.livelatex.util
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VfsUtil
 import java.nio.file.Path
@@ -21,6 +22,9 @@ object ExternalTexInserter {
 
     fun inputSnippet(relPath: String): String = "\\input{$relPath}"
 
+    /** IntelliJ documents require \\n only; Windows .tex files often have \\r\\n. */
+    fun normalizeForDocument(text: String): String = StringUtil.convertLineSeparators(text)
+
     fun insertAsInput(project: Project, editor: Editor, editorFile: VirtualFile, sourceFile: VirtualFile) {
         val editorPath = Paths.get(editorFile.path)
         val sourcePath = Paths.get(sourceFile.path)
@@ -38,7 +42,7 @@ object ExternalTexInserter {
     private fun insertAtCaret(project: Project, editor: Editor, text: String) {
         WriteCommandAction.runWriteCommandAction(project) {
             val caret = editor.caretModel.currentCaret
-            editor.document.insertString(caret.offset, text)
+            editor.document.insertString(caret.offset, normalizeForDocument(text))
         }
     }
 }

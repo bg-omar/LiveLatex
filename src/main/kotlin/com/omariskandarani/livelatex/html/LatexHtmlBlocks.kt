@@ -187,19 +187,26 @@ internal fun convertTabulars(text: String): String {
         if (endTag < 0) { out.append(text.substring(start)); break }
         var body = text.substring(colClose + 1, endTag).trim()
 
+        // Use lambda replacements for TeX `\\` — Matcher treats `\` specially in string replacements,
+        // so a plain `"\\\\"` insert would only emit one backslash and glue `\\$` into a fake `\$`.
+        val texRowBreak = { _: MatchResult -> "\\\\" }
         body = body
             .replace("\\toprule", "")
             .replace("\\midrule", "")
             .replace("\\bottomrule", "")
             .replace(Regex("""(?m)^\s*\\hline\s*$"""), "")
-            .replace(Regex("""(?<!\\)\\\\\s*\[[^\]]*]"""), "\\\\")
+            .replace(Regex("""\\hline\b"""), "")
+            .replace(Regex("""(?<!\\)\\\\\s*\[[^\]]*]"""), texRowBreak)
             .replace(Regex("""\\arraystretch\s*=\s*([0-9]*\.?[0-9]+)"""), "")
             .replace(Regex("""\\tabcolsep\s*=\s*([0-9]*\.?[0-9]+)"""), "")
             .replace(Regex("""(?m)^\s*\\setlength\{\\tabcolsep\}\{[^}]*}.*$"""), "")
             .replace(Regex("""(?m)^\s*\\renewcommand\{\\arraystretch\}\{[^}]*}.*$"""), "")
             .trim()
 
-        body = body.replace(Regex("""(?i)<br\s*/?>"""), "\\\\")
+        body = body.replace(Regex("""(?i)<br\s*/?>"""), texRowBreak)
+        // Keep `\\` row breaks from gluing onto the next row's `$…$` as a fake TeX `\$`.
+        // Kotlin string templates: use ${'$'} so the regex lookahead is a literal dollar, not end-of-input.
+        body = body.replace(Regex("""(?<!\\)\\\\\s*(?=\${'$'})""")) { "\\\\\n" }
         val rows = Regex("""(?<!\\)\\\\\s*""").split(body)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -381,7 +388,7 @@ internal fun unwrapResizebox(s: String): String {
         val j = s.indexOf(token, i)
         if (j < 0) {
             sb.append(s, i, s.length)
-            break
+            return sb.toString()
         }
         sb.append(s, i, j)
         var p = j + token.length

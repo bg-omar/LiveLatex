@@ -83,6 +83,7 @@ class TitlepageConversionTest {
         assertFalse("raw picture put", html.contains("""\put(0,-45)"""))
         assertFalse("raw vfill", html.contains("""\vfill"""))
         assertFalse("raw picture env", html.contains("""\begin{picture}"""))
+        assertFalse("footer picture must not be omitted", html.contains("ll-picture-omitted"))
         assertFalse("literal titlepageOpen macro", html.contains("""\titlepageOpen"""))
         assertFalse("literal titlepageClose macro", html.contains("""\titlepageClose"""))
     }

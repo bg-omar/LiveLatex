@@ -33,7 +33,7 @@ object TikzRenderer {
         liveRenderStep.set(0)
     }
 
-    private fun bumpLiveRenderProgress(detail: String) {
+    internal fun bumpLiveRenderProgress(detail: String) {
         val tot = liveRenderTotal
         val h = liveRenderHandler ?: return
         if (tot <= 0) return
@@ -115,7 +115,16 @@ object TikzRenderer {
 
     /** Full preamble from the .tex (before \\begin{document}) for TikZ; strips \\documentclass, ensures tikz/ams present. */
     fun collectTikzPreamble(srcNoComments: String): String {
-        var preamble = srcNoComments.substringBefore("\\begin{document}").trim()
+        // Full documents: material before \begin{document}. Fragments (no \begin{document}):
+        // only keep text before the first tikzpicture — otherwise the picture itself becomes
+        // "preamble" and runs before macros/libs in the generated standalone fig.tex.
+        var preamble = if (srcNoComments.contains("\\begin{document}")) {
+            srcNoComments.substringBefore("\\begin{document}").trim()
+        } else {
+            val firstTikz = srcNoComments.indexOf("\\begin{tikzpicture}")
+            if (firstTikz >= 0) srcNoComments.substring(0, firstTikz).trim() else srcNoComments.trim()
+        }
+        preamble = stripTikzpictureEnvironments(preamble).trim()
         preamble = Regex("""\\documentclass\s*(?:\[[^\]]*])?\s*\{[^}]*\}""").replace(preamble, "").trim()
         // Common typo: \usePackage is undefined; LaTeX expects \usepackage
         preamble = preamble.replace("\\usePackage{", "\\usepackage{")
@@ -172,6 +181,25 @@ object TikzRenderer {
         return if (prefix.isBlank()) preamble else prefix + "\n" + preamble
     }
 
+    /** Remove balanced `\\begin{tikzpicture}...\\end{tikzpicture}` blocks (safety for leaked fragment bodies). */
+    private fun stripTikzpictureEnvironments(s: String): String {
+        val beginTok = "\\begin{tikzpicture}"
+        val sb = StringBuilder()
+        var pos = 0
+        while (true) {
+            val start = s.indexOf(beginTok, pos)
+            if (start < 0) {
+                sb.append(s, pos, s.length)
+                break
+            }
+            sb.append(s, pos, start)
+            val end = findMatchingEndTikzpicture(s, start + beginTok.length)
+            if (end < 0) break
+            pos = end
+        }
+        return sb.toString()
+    }
+
     // ───────────────────────── TikZ picture renderer ─────────────────────────
 
     /** Find the end of a tikzpicture block, accounting for nested \begin{tikzpicture}...\end{tikzpicture}. */
@@ -217,23 +245,33 @@ object TikzRenderer {
         return c
     }
 
+    /**
+     * After `\\begin{tikzpicture}`, parse optional `[...]` with nested brackets
+     * (e.g. `arrow/.style={-{Latex[length=2]}, …}`).
+     * @return Pair of option string including brackets (or empty) and index of body start.
+     */
+    private fun parseTikzpictureOptions(htmlLike: String, afterBegin: Int): Pair<String, Int> {
+        val afterOpts = skipTikzpictureBracketOptions(htmlLike, afterBegin)
+        if (afterOpts <= afterBegin) return "" to afterBegin
+        var p = afterBegin
+        while (p < htmlLike.length && htmlLike[p].isWhitespace()) p++
+        if (p >= htmlLike.length || htmlLike[p] != '[') return "" to afterOpts
+        return htmlLike.substring(p, afterOpts) to afterOpts
+    }
+
     fun countSstStandaloneMacros(s: String): Int = sstStandaloneMacroRegex.findAll(s).count()
 
     /** When TikZ rendering is disabled: replace each tikzpicture block with a placeholder span (no compilation). */
     fun replaceTikzPicturesWithPlaceholder(htmlLike: String): String {
         val beginTok = "\\begin{tikzpicture}"
-        val placeholder = """<span class="tikz-placeholder" style="display:block;margin:8px 0;padding:6px 10px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;">[TikZ uit – zet LiveRender aan in de preview-balk om te renderen]</span>"""
+        val placeholder = """<span class="tikz-placeholder" style="display:block;margin:8px 0;padding:6px 10px;background:#f0f0f0;color:#666;font-size:12px;border-radius:4px;">[TikZ off – enable LiveRender in the preview toolbar to render]</span>"""
         val result = StringBuilder(htmlLike.length)
         var pos = 0
         while (true) {
             val start = htmlLike.indexOf(beginTok, pos)
             if (start < 0) break
             result.append(htmlLike, pos, start)
-            var bodyStart = start + beginTok.length
-            if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
-                val closeBracket = htmlLike.indexOf(']', bodyStart)
-                if (closeBracket >= 0) bodyStart = closeBracket + 1
-            }
+            val (_, bodyStart) = parseTikzpictureOptions(htmlLike, start + beginTok.length)
             val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
             if (bodyEnd >= 0) {
                 result.append(placeholder)
@@ -264,15 +302,7 @@ object TikzRenderer {
             val start = htmlLike.indexOf(beginTok, pos)
             if (start < 0) break
             result.append(htmlLike, pos, start)
-            var opts = ""
-            var bodyStart = start + beginTok.length
-            if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
-                val closeBracket = htmlLike.indexOf(']', bodyStart)
-                if (closeBracket >= 0) {
-                    opts = htmlLike.substring(bodyStart, closeBracket + 1)
-                    bodyStart = closeBracket + 1
-                }
-            }
+            val (opts, bodyStart) = parseTikzpictureOptions(htmlLike, start + beginTok.length)
             val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
             if (bodyEnd < 0) {
                 result.append(htmlLike, start, (start + beginTok.length).coerceAtMost(htmlLike.length))
@@ -421,7 +451,7 @@ object TikzRenderer {
     }
 
     /** Build full standalone tex document for one tikzpicture block; returns (sha1Key, texDoc) or null. */
-    private fun buildTikzBlockDoc(
+    internal fun buildTikzBlockDoc(
         body: String,
         opts: String,
         tikzPreamble: String,
@@ -442,44 +472,83 @@ object TikzRenderer {
             if (Regex("""tikzlings|\\(?:bat|bear|bird|cat|coati|cow|cricket|dog|duck|elephant|frog|hippo|mole|mouse|octopus|owl|panda|penguin|pig|rabbit|rhino|sloth|snowman|squirrel|wolf)\b""").containsMatchIn(hay)) add("tikzlings")
             if (Regex("""decorations\.(markings|pathmorphing|pathreplacing)""").containsMatchIn(hay)) add("decorations.markings")
         }
-        val allLibs = (srcLibs + autoLibs).toSortedSet()
+        val needsKnots = Regex("""\\begin\{knot}|\bflip crossing/""").containsMatchIn(hay)
+        // spath3/knots must load exactly once; preamble often already has \usetikzlibrary — strip those
+        // and emit a single libsLine (union of preamble + src + auto + knot styles deps).
+        val preambleLibs = collectUsetikzlibsFromSource(tikzPreamble)
+        val preambleWithoutLibs = stripUsetikzlibraryCommands(tikzPreamble)
+        val knotStyleLibs = if (needsKnots) {
+            setOf(
+                "spath3", "intersections", "arrows", "arrows.meta", "knots", "calc",
+                "hobby", "decorations.pathreplacing", "shapes.geometric",
+            )
+        } else {
+            emptySet()
+        }
+        val allLibs = (srcLibs + autoLibs + preambleLibs + knotStyleLibs).toSortedSet()
+        // knots loads spath3; listing both can double-init. Prefer knots when both present.
+        if ("knots" in allLibs) {
+            allLibs.remove("spath3")
+        }
         val libsLine = if (allLibs.isNotEmpty()) "\\usetikzlibrary{${allLibs.joinToString(",")}}\n" else ""
+        // Newer expl3 rejects \\cs_generate_variant:Nn \\foo:NNn {NNn,...} (variant == base).
+        // spath3 2.8 still does that; shim so knots/spath3 compile on current MiKTeX/TeX Live.
+        val spathExpl3Shim = if ("knots" in allLibs || "spath3" in (srcLibs + autoLibs + preambleLibs + knotStyleLibs)) {
+            """
+\ExplSyntaxOn
+\cs_new_eq:NN \ll_orig_cs_generate_variant:Nn \cs_generate_variant:Nn
+\cs_gset_protected:Npn \cs_generate_variant:Nn #1#2
+  {
+    \str_if_eq:nnTF {#2} {NNn, NNV}
+      { \ll_orig_cs_generate_variant:Nn #1 {NNV} }
+      {
+        \str_if_eq:nnTF {#2} {NNn,NNV}
+          { \ll_orig_cs_generate_variant:Nn #1 {NNV} }
+          { \ll_orig_cs_generate_variant:Nn #1 {#2} }
+      }
+  }
+\ExplSyntaxOff
+""".trimIndent() + "\n"
+        } else {
+            ""
+        }
         val needsPgfplots = Regex("""\\begin\{axis\}|\\addplot|\\pgfplot|xlabel\s*=|ylabel\s*=""").containsMatchIn(hay)
-        val hasPgfplotsInPreamble = Regex("""\\usepackage\s*(?:\[[^\]]*])?\s*\{[^}]*pgfplots[^}]*\}""").containsMatchIn(tikzPreamble)
+        val hasPgfplotsInPreamble = Regex("""\\usepackage\s*(?:\[[^\]]*])?\s*\{[^}]*pgfplots[^}]*\}""").containsMatchIn(preambleWithoutLibs)
+        val swirlFallback = if ("swirlarrow" !in injectedMacroNames &&
+            Regex("""\\swirlarrow\b""").containsMatchIn(hay)
+        ) {
+            "\\providecommand{\\swirlarrow}{\\rightsquigarrow}\n"
+        } else {
+            ""
+        }
+        val pkgHay = preambleWithoutLibs + "\n" + texMacroDefs + "\n" + hay
+        val hasStix = Regex("""\\usepackage\s*(?:\[[^\]]*])?\{[^}]*\bstix\b""").containsMatchIn(preambleWithoutLibs)
+        val hasAmssymb = Regex("""\\usepackage\s*(?:\[[^\]]*])?\{[^}]*\bamssymb\b""").containsMatchIn(preambleWithoutLibs)
+        val hasBm = Regex("""\\usepackage\s*(?:\[[^\]]*])?\{[^}]*\bbm\b""").containsMatchIn(preambleWithoutLibs)
+        // \rightsquigarrow (swirl fallback) needs amssymb; \bm needs bm. Skip with stix (symbol-font limit).
+        val extraMathPkgs = buildString {
+            if (!hasStix && swirlFallback.isNotEmpty() && !hasAmssymb) appendLine("\\usepackage{amssymb}")
+            if (!hasStix && Regex("""\\bm\b""").containsMatchIn(pkgHay) && !hasBm) appendLine("\\usepackage{bm}")
+        }
         val (docClass, preambleBlock) = if (needsPgfplots && !hasPgfplotsInPreamble) {
             // Figure uses axis/xlabel/ylabel but preamble has no pgfplots: add it
             "\\documentclass[border=1pt]{standalone}" to """
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
-$tikzPreamble
+$extraMathPkgs$preambleWithoutLibs
 """
         } else if (needsPgfplots) {
             "\\documentclass[border=1pt]{standalone}" to """
-$tikzPreamble
+$extraMathPkgs$preambleWithoutLibs
 \pgfplotsset{compat=1.18}
 """
         } else {
             "\\documentclass[tikz,border=1pt]{standalone}" to """
-$tikzPreamble
+$extraMathPkgs$preambleWithoutLibs
 """
         }
-        val texDoc = """
-$docClass
-$preambleBlock
-$libsLine
-$texMacroDefs
-\usetikzlibrary{
-    spath3,
-    intersections,
-    arrows,
-    arrows.meta,
-    knots,
-    calc,
-    hobby,
-    decorations.pathreplacing,
-    shapes.geometric,
-}
-
+        val knotsBlock = if (needsKnots) {
+            """
 % ---------------- Global styles (safe for 'knots') ----------------
 \tikzset{
     knot diagram/every strand/.append style={
@@ -493,8 +562,26 @@ $texMacroDefs
     over/.style={preaction={draw=white,line width=8pt}},
 % DO NOT set a global "every path" here; it breaks internal clip paths.
 }
-\providecommand{\swirlarrow}{\rightsquigarrow}
-\begin{document}
+""".trimIndent()
+        } else {
+            ""
+        }
+        // SSTGuidesPoints uses \\ifsstguides; many probes omit \\newif in the snippet we keep.
+        val sstGuidesIf = if (
+            Regex("""\\ifsstguides\b""").containsMatchIn(preambleWithoutLibs + texMacroDefs + scrubbedBody) &&
+            !Regex("""\\newif\s*\\ifsstguides""").containsMatchIn(preambleWithoutLibs + texMacroDefs)
+        ) {
+            "\\newif\\ifsstguides\n"
+        } else {
+            ""
+        }
+        val texDoc = """
+$docClass
+$preambleBlock
+$sstGuidesIf$spathExpl3Shim$libsLine
+$texMacroDefs
+$knotsBlock
+$swirlFallback\begin{document}
 $tikzsetDefs
 \begin{tikzpicture}$opts
 $scrubbedBody
@@ -533,11 +620,7 @@ $scrubbedBody
         val beginTok = "\\begin{tikzpicture}"
         val start = htmlLike.indexOf(beginTok)
         if (start < 0) return null
-        var bodyStart = start + beginTok.length
-        if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
-            val closeBracket = htmlLike.indexOf(']', bodyStart)
-            if (closeBracket >= 0) bodyStart = closeBracket + 1
-        }
+        val (_, bodyStart) = parseTikzpictureOptions(htmlLike, start + beginTok.length)
         val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
         if (bodyEnd < 0) return null
         return htmlLike.substring(0, start) + wrapWebImageHtml(rendered) + htmlLike.substring(bodyEnd)
@@ -562,15 +645,7 @@ $scrubbedBody
             result.append(htmlLike, pos, start)
             bumpLiveRenderProgress("tikzpicture")
 
-            var opts = ""
-            var bodyStart = start + beginTok.length
-            if (bodyStart < htmlLike.length && htmlLike[bodyStart] == '[') {
-                val closeBracket = htmlLike.indexOf(']', bodyStart)
-                if (closeBracket >= 0) {
-                    opts = htmlLike.substring(bodyStart, closeBracket + 1)
-                    bodyStart = closeBracket + 1
-                }
-            }
+            val (opts, bodyStart) = parseTikzpictureOptions(htmlLike, start + beginTok.length)
             val bodyEnd = findMatchingEndTikzpicture(htmlLike, bodyStart)
             if (bodyEnd < 0) {
                 result.append(htmlLike, start, (start + beginTok.length).coerceAtMost(htmlLike.length))
@@ -622,7 +697,7 @@ $scrubbedBody
 
     /** When TikZ rendering is disabled: replace \SST... macro calls with a placeholder (no compilation). */
     fun replaceSstTikzMacrosWithPlaceholder(s: String): String {
-        val placeholder = """<span class="tikz-placeholder" style="display:inline-block;margin:4px 0;padding:4px 8px;background:#f0f0f0;color:#666;font-size:11px;border-radius:4px;">[TikZ uit]</span>"""
+        val placeholder = """<span class="tikz-placeholder" style="display:inline-block;margin:4px 0;padding:4px 8px;background:#f0f0f0;color:#666;font-size:11px;border-radius:4px;">[TikZ off]</span>"""
         return sstStandaloneMacroRegex.replace(s) { placeholder }
     }
 
@@ -745,6 +820,7 @@ $scrubbedBody
         val sb = StringBuilder()
         for ((name, m) in macros) {
             val nargs = m.nargs.coerceAtLeast(0)
+            if (nargs == 0 && m.def.isBlank()) continue
             if (nargs == 0) sb.append("\\providecommand{\\$name}{${m.def}}\n")
             else            sb.append("\\providecommand{\\$name}[$nargs]{${m.def}}\n")
         }
@@ -759,6 +835,17 @@ $scrubbedBody
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toSet()
+
+    /** Remove `\usetikzlibrary{...}` so standalone docs can emit a single merged libs line. */
+    private fun stripUsetikzlibraryCommands(s: String): String =
+        // Trailing `\` only on the same line (TeX line-break). Do not use `\s*\\?` —
+        // `\s` matches newlines and would eat the leading `\` of the next command.
+        Regex("""\\usetikzlibrary\s*\{[^}]*\}(?:[ \t]*\\[ \t]*(?=\r?\n|$))?""")
+            .replace(s, "")
+            // Orphan "\" lines (e.g. TeX line-break after a stripped \\usetikzlibrary)
+            .replace(Regex("""(?m)^[ \t]*\\[ \t]*\r?$"""), "")
+            .replace(Regex("""\n{3,}"""), "\n\n")
+            .trim()
 
     /** Remove every balanced `\tikzset{...}` block (preamble cleanup; see [collectTikzPreamble]). */
     private fun removeTikzsetBlocks(s: String): String {
@@ -832,32 +919,64 @@ $scrubbedBody
     private fun htmlEscapeAll(s: String): String =
         s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;")
 
-    // Parse \newcommand and \def (whole source, copied intact)
+    // Parse \newcommand / \renewcommand / \providecommand / \DeclareRobustCommand / \def
     private fun extractNewcommands(s: String): Map<String, Macro> {
         val out = LinkedHashMap<String, Macro>()
 
-        // --- Improved \newcommand parser ---
-        val rxNewStart = Regex("""\\newcommand\{\\([A-Za-z@]+)\}(?:\[(\d+)])?(?:\[[^\]]*])?\{""")
-        var pos = 0
-        while (true) {
-            val m = rxNewStart.find(s, pos) ?: break
-            val name = m.groupValues[1]
-            val nargs = m.groupValues[2].ifEmpty { "0" }.toInt()
-            val bodyOpen = m.range.last
-            val bodyClose = findBalancedBrace(s, bodyOpen)
-            if (bodyClose < 0) {
-                pos = m.range.last + 1
-                continue // skip malformed
+        fun putMacro(name: String, body: String, nargs: Int, overwrite: Boolean = true) {
+            val existing = out[name]
+            when {
+                existing == null || overwrite -> out[name] = Macro(body, nargs)
+                existing.def.isBlank() && body.isNotBlank() -> out[name] = Macro(body, nargs)
             }
-            val body = s.substring(bodyOpen + 1, bodyClose).trim()
-            out[name] = Macro(body, nargs)
-            pos = bodyClose + 1
         }
 
-        // \def\foo{...}
-        val rxDef = Regex("""\\def\\([A-Za-z@]+)\{(.+?)\}""", RegexOption.DOT_MATCHES_ALL)
-        rxDef.findAll(s).forEach { m ->
-            out.putIfAbsent(m.groupValues[1], Macro(m.groupValues[2].trim(), 0))
+        fun parseBraceCommand(cmd: String, allowStar: Boolean = false) {
+            val star = if (allowStar) "\\*?" else ""
+            val rx = Regex("""\\$cmd$star\s*\{\\([A-Za-z@]+)\}(?:\s*\[(\d+)])?(?:\s*\[[^\]]*])?\s*\{""")
+            var pos = 0
+            while (true) {
+                val m = rx.find(s, pos) ?: break
+                val name = m.groupValues[1]
+                val nargs = m.groupValues[2].ifEmpty { "0" }.toInt()
+                val bodyOpen = m.range.last
+                val bodyClose = findBalancedBrace(s, bodyOpen)
+                if (bodyClose < 0) {
+                    pos = bodyOpen + 1
+                    continue
+                }
+                val body = s.substring(bodyOpen + 1, bodyClose).trim()
+                putMacro(name, body, nargs, overwrite = true)
+                pos = bodyClose + 1
+            }
+        }
+
+        parseBraceCommand("newcommand")
+        parseBraceCommand("renewcommand")
+        parseBraceCommand("providecommand")
+        parseBraceCommand("DeclareRobustCommand", allowStar = true)
+
+        run {
+            val rx = Regex("""\\def\\([A-Za-z@]+)\s*\{""")
+            var pos = 0
+            while (true) {
+                val m = rx.find(s, pos) ?: break
+                val name = m.groupValues[1]
+                val open = m.range.last
+                val close = findBalancedBrace(s, open)
+                if (close < 0) {
+                    pos = open + 1
+                    continue
+                }
+                val body = s.substring(open + 1, close).trim()
+                // Empty \def\foo{} (e.g. inside \pdfstringdefDisableCommands) must not win over a real definition.
+                val existing = out[name]
+                when {
+                    existing == null -> out[name] = Macro(body, 0)
+                    existing.def.isBlank() && body.isNotBlank() -> out[name] = Macro(body, 0)
+                }
+                pos = close + 1
+            }
         }
 
         return out

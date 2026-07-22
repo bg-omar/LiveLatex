@@ -16,21 +16,22 @@ class LatexHtmlProseTest {
     @Test
     fun convertSections_sectionBecomesH2WithSlugId() {
         val out = convertSections("""\section{Intro}""", absOffset = 1)
-        assertTrue(out.contains("""<h2 id="section-intro">Intro</h2>"""))
+        assertTrue(out.contains("""<h2 id="section-intro" class="ll-section-heading">Intro</h2>"""))
         assertTrue(out.contains("""class="llmark""""))
+        assertTrue(out.contains("""data-abs="""))
     }
 
     @Test
     fun convertSections_subsectionAndSubsubsectionLevels() {
         val out = convertSections("""\subsection{Methods}\subsubsection{Detail}""", absOffset = 1)
-        assertTrue(out.contains("""<h3 id="subsection-methods">Methods</h3>"""))
-        assertTrue(out.contains("""<h4 id="subsubsection-detail">Detail</h4>"""))
+        assertTrue(out.contains("""<h3 id="subsection-methods" class="ll-section-heading">Methods</h3>"""))
+        assertTrue(out.contains("""<h4 id="subsubsection-detail" class="ll-section-heading">Detail</h4>"""))
     }
 
     @Test
     fun convertSections_paragraphBecomesH5() {
         val out = convertSections("""\paragraph{Note}""", absOffset = 1)
-        assertTrue(out.contains("""<h5 id="paragraph-note""""))
+        assertTrue(out.contains("""<h5 id="paragraph-note" class="ll-section-heading""""))
         assertTrue(out.contains("Note"))
     }
 
@@ -143,9 +144,21 @@ class LatexHtmlProseTest {
 
     @Test
     fun unescapeLatexSpecials_commonEscapes() {
-        assertEquals("$5 & # _", unescapeLatexSpecials("""\$5 \& \# \_"""))
+        assertEquals(
+            """<span class="tex2jax_ignore">&#36;</span>5 &amp; # _""",
+            unescapeLatexSpecials("""\$5 \& \# \_"""),
+        )
         assertEquals("{a}", unescapeLatexSpecials("""\{a\}"""))
         assertEquals("~^", unescapeLatexSpecials("""\~{}\^{}"""))
+    }
+
+    @Test
+    fun unescapeLatexSpecials_doesNotTouchInlineMathDollars() {
+        assertEquals("""$\alpha$""", unescapeLatexSpecials("""$\alpha$"""))
+        assertEquals(
+            """<span class="tex2jax_ignore">&#36;</span> then $\beta$""",
+            unescapeLatexSpecials("""\$ then $\beta$"""),
+        )
     }
 
     // ── replaceTexorpdfstringBalanced ─────────────────────────────────────────
@@ -203,5 +216,14 @@ class LatexHtmlProseTest {
         val out = formatInlineProseNonMath("""line one \\ line two""")
         assertTrue(out.contains("<br/>"))
         assertFalse(out.contains("""\\"""))
+    }
+
+    @Test
+    fun formatInlineProseNonMath_fboxBecomesBorderedSpan() {
+        val out = formatInlineProseNonMath("""\fbox{\emph{Sample box}}""")
+        assertTrue(out.contains("Sample box"))
+        assertTrue(out.contains("<em>Sample box</em>") || out.contains("Sample box"))
+        assertTrue(out.contains("border:1px solid"))
+        assertFalse(out.contains("""\fbox{"""))
     }
 }

@@ -102,6 +102,12 @@ object LatexHtmlTikz {
             checkInterrupted()
             return (p.exitValue() == 0) to out.toString()
         } finally {
+            if (p.isAlive) {
+                try {
+                    p.destroyForcibly()
+                } catch (_: Throwable) {
+                }
+            }
             runningProcesses.remove(p)
         }
     }

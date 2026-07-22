@@ -60,7 +60,7 @@ internal var lastCharMergedToOrig: IntArray = intArrayOf()
  * - Inserts invisible line anchors to sync scroll with editor
  */
 object LatexHtml {
-    /** Secties uit de laatste wrap (voor Secties-dropdown zonder JS-bridge). */
+    /** Sections from the last wrap (for the Sections dropdown without JS bridge). */
     var lastCollectedSections: List<Pair<String, String>> = emptyList()
         private set
 
@@ -106,15 +106,16 @@ object LatexHtml {
         /*
          * PIPELINE_ORDER — do not reorder without updating tests.
          * Prep: stripPreamble → stripLineComments → assembleSplitTitlepageMacros → expandZeroArgMacros
-         *       → sanitizeForMathJaxProse → convertIncludeGraphics → TikZ convert/placeholder
+         *       → sanitizeForMathJaxProse → convertIncludeGraphics → TikZ/picture convert/placeholder
          * Prose (applyProseConversions): convertLlmark → convertMakeTitle → convertSiunitx
          *       → convertTextblockStar → convertHref → convertSections → convertFigureEnvs
          *       → convertIncludeGraphics → convertMulticols → convertLongtablesToTables
-         *       → convertTcolorboxes → TikZ → convertTableEnvs → convertListEnvironmentsNested
+         *       → convertTcolorboxes → convertTableEnvs → convertListEnvironmentsNested
          *       → convertDescription → convertTabulars → convertTheBibliography → stripAuxDirectives
          * Inline: convertParagraphsOutsideTags → applyInlineFormattingOutsideTags
          *       → fixInlineBoundarySpaces → injectLineAnchors → SourceMapBuilder.applySourceMap
          * formatInlineProseNonMath: \\[dim] before generic \\; replaceCmd1ArgBalanced after unescape.
+         * TikZ/picture are converted once in wrapInternal (not again in applyProseConversions).
          */
         LatexTikzJobStore.clear()
         val renderTikz = renderTikzInPreviewEnabled()
@@ -122,7 +123,7 @@ object LatexHtml {
         if (isHtmlOnlyPreviewInput(texSource)) {
             clearPreviewSourceMaps()
             lastCollectedSections = emptyList()
-            return buildHtml(texSource, macrosJs = "", previewRenderTikzEnabled = renderTikz)
+            return buildHtml(texSource, macrosJs = "")
         }
 
         val srcNoComments = stripLineComments(texSource)
@@ -152,12 +153,14 @@ object LatexHtml {
 
         val body2c: String
         val body2d: String
+        val body2e: String
         try {
             if (renderTikz) {
                 val nTikz = TikzRenderer.countTikzPictureStarts(body2b)
                 val nSst = TikzRenderer.countSstStandaloneMacros(body2b)
-                TikzRenderer.initLiveRenderProgress(nTikz + nSst)
-                if (nTikz + nSst > 0) reportBuildProgress("TikZ 0 / ${nTikz + nSst}")
+                val nPic = PictureRenderer.countPictureStarts(body2b)
+                TikzRenderer.initLiveRenderProgress(nTikz + nSst + nPic)
+                if (nTikz + nSst + nPic > 0) reportBuildProgress("TikZ 0 / ${nTikz + nSst + nPic}")
             }
             reportBuildProgress("Rendering TikZ…")
             body2c = if (renderTikz)
@@ -168,15 +171,22 @@ object LatexHtml {
                 TikzRenderer.convertSstTikzMacros(body2c, srcNoComments)
             else
                 TikzRenderer.replaceSstTikzMacrosWithPlaceholder(body2c)
+            body2e = if (renderTikz)
+                PictureRenderer.convertPictures(body2d)
+            else
+                PictureRenderer.replacePicturesWithLazyPlaceholder(body2d)
         } finally {
             TikzRenderer.finishLiveRenderProgressPhase()
         }
 
+        // Clear leftover \setlength{\unitlength} after pictures became SVG/lazy HTML.
+        val body2f = stripLegacyPictureCommands(body2e)
+
         reportBuildProgress("Converting prose…")
         checkBuildInterrupted()
 
-        lastCollectedSections = collectSectionsList(body2d, absOffset)
-        val body3 = applyProseConversions(body2d, titleMeta, absOffset, srcNoComments, tikzPreamble)
+        lastCollectedSections = collectSectionsList(body2f, absOffset)
+        val body3 = applyProseConversions(body2f, titleMeta, absOffset, srcNoComments, tikzPreamble)
         checkBuildInterrupted()
         reportBuildProgress("Building source map…")
         val body3b = convertParagraphsOutsideTags(body3)
@@ -191,7 +201,7 @@ object LatexHtml {
             installIdentityPreviewMaps(texSource)
         }
 
-        return buildHtml(sourceMap.html, macrosJs, renderTikz)
+        return buildHtml(sourceMap.html, macrosJs)
     }
 
     private fun isHtmlOnlyPreviewInput(source: String): Boolean {
@@ -251,10 +261,6 @@ object LatexHtml {
 
         t = convertLongtablesToTables(t)                 // longtable → table/tabular
         t = convertTcolorboxes(t)                        // ← NEW: render tcolorbox
-        t = if (renderTikzInPreviewEnabled())
-            TikzRenderer.convertTikzPictures(t, fullSourceNoComments, tikzPreamble)
-        else
-            TikzRenderer.replaceTikzPicturesWithLazyPlaceholder(t, fullSourceNoComments, tikzPreamble)
 
         t = convertTableEnvs(t)
         t = convertListEnvironmentsNested(t)

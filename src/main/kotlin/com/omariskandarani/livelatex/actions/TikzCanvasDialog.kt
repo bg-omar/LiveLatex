@@ -509,7 +509,7 @@ class TikzCanvasDialog(
     }
 
     private val livePreviewCheck = JCheckBox("Live preview").apply {
-        toolTipText = "TikZ-preview rechtsonder op het canvas; werkt mee na wijzigingen (debounce)"
+        toolTipText = "TikZ preview in the lower-right of the canvas; updates after changes (debounced)"
     }
 
     private lateinit var canvasLayerHost: JLayeredPane

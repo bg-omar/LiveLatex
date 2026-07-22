@@ -299,14 +299,15 @@ internal fun escapeAngleBracketsInMathFragment(fragment: String): String {
 }
 
 internal fun applyInlineFormattingOutsideTags(html: String): String {
-        val tableRx = Regex("(?is)(<table\\b.*?</table>)")
-        val segments = tableRx.split(html)
-        val tables   = tableRx.findAll(html).map { it.value }.toList()
+        // Protect tables and figures from math-aware rewrites (unpaired `$` must not escape them).
+        val protectRx = Regex("(?is)(<table\\b.*?</table>|<figure\\b.*?</figure>)")
+        val segments = protectRx.split(html)
+        val protectedBlocks = protectRx.findAll(html).map { it.value }.toList()
 
         val out = StringBuilder(html.length + 256)
         for (i in segments.indices) {
             out.append(applyInlineFormattingOutsideTags_NoTables(segments[i]))
-            if (i < tables.size) out.append(tables[i])
+            if (i < protectedBlocks.size) out.append(protectedBlocks[i])
         }
         return out.toString()
     }

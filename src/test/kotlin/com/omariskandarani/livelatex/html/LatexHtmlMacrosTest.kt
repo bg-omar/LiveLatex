@@ -1,6 +1,7 @@
 package com.omariskandarani.livelatex.html
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -100,10 +101,71 @@ class LatexHtmlMacrosTest {
             "vswirl" to Macro("""v_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}""", 0),
             "rhof" to Macro("""\rho_{\!f}""", 0),
         )
-        val body = """$\vswirl$ and $\rhof$"""
+        // Outside math: expansion must keep TeX backslashes in the replacement.
+        val body = """See \vswirl and \rhof outside."""
         val out = expandZeroArgMacros(body, macros)
         assertTrue("""\mkern""", out.contains("""\mkern"""))
         assertTrue("""\boldsymbol""", out.contains("""\boldsymbol"""))
         assertTrue("""\rho""", out.contains("""\rho"""))
+    }
+
+    @Test
+    fun expandZeroArgMacros_doesNotExpandInsideMath() {
+        val macros = mapOf(
+            "vswirl" to Macro("""v_{\mkern-2mu\scriptscriptstyle\boldsymbol{\circlearrowleft}}""", 0),
+            "rhof" to Macro("""\rho_{\!f}""", 0),
+        )
+        val body = """$\vswirl$ and \begin{equation}\rhof\end{equation} and outside \rhof"""
+        val out = expandZeroArgMacros(body, macros)
+        assertTrue("inline math keeps macro", out.contains("""$\vswirl$"""))
+        assertTrue("equation keeps macro", out.contains("""\begin{equation}\rhof\end{equation}"""))
+        assertTrue("prose still expands", out.contains("""\rho_{\!f}""") && !out.contains("""outside \rhof"""))
+    }
+
+    @Test
+    fun expandZeroArgMacros_skipsEmptyDefsSoSwirlarrowSurvives() {
+        val macros = mapOf(
+            "swirlarrow" to Macro("", 0),
+        )
+        val body = """$\mathbf{b}_{\swirlarrow}$"""
+        val out = expandZeroArgMacros(body, macros)
+        assertTrue(out.contains("""\swirlarrow"""))
+    }
+
+    @Test
+    fun expandZeroArgMacros_doesNotFreezeKpathInsideTikzpicture() {
+        // First-wins extract would record Unknot circle; expansion must not rewrite later pictures.
+        val macros = mapOf(
+            "KPATH" to Macro("(0,0) circle (2cm)", 0),
+        )
+        val body = """
+            \begin{tikzpicture}
+            \def\KPATH{(0,0) circle (2cm)}
+            \RenderStrand{\KPATH}{6}{0.15}
+            \end{tikzpicture}
+            \begin{tikzpicture}
+            \def\KPATH{([closed] P1)..(P2)..(P3)}
+            \RenderStrand{\KPATH}{12}{0.15}
+            \node{Trefoil};
+            \end{tikzpicture}
+            Outside \KPATH should expand.
+        """.trimIndent()
+        val out = expandZeroArgMacros(body, macros)
+        val parts = Regex("""\\begin\{tikzpicture}.*?\\end\{tikzpicture}""", RegexOption.DOT_MATCHES_ALL)
+            .findAll(out).toList()
+        assertEquals(2, parts.size)
+        val secondPic = parts[1].value
+        assertTrue(
+            "second picture must keep \\KPATH usage for local \\def",
+            secondPic.contains("""\RenderStrand{\KPATH}"""),
+        )
+        assertFalse(
+            "must not bake Unknot circle into second picture",
+            secondPic.contains("(0,0) circle (2cm)"),
+        )
+        assertTrue(
+            "prose outside tikzpicture still expands",
+            out.contains("Outside (0,0) circle (2cm) should expand."),
+        )
     }
 }

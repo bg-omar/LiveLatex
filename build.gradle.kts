@@ -12,8 +12,8 @@ val pluginVersion: String by project
 
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "2.1.0"
-    id("org.jetbrains.intellij.platform") version "2.5.0"
+    id("org.jetbrains.kotlin.jvm") version "2.3.20"
+    id("org.jetbrains.intellij.platform") version "2.18.1"
     id("org.jetbrains.changelog") version "2.2.0"
 }
 
@@ -30,10 +30,13 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        create("IC", "2025.2")
+        intellijIdea(properties("platformVersion"))
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
-        // Add necessary plugin dependencies for compilation here, example:
-        // bundledPlugin("com.intellij.java")
+        // 2026.2+: JCEF is a separate bundled plugin/module — required to compile JBCefBrowser
+        bundledPlugin("com.intellij.modules.jcef")
+        // Always install TeXiFy in the runIde sandbox (edit .tex while testing LiveLatex).
+        // Not a <depends> in plugin.xml — end users are not required to install TeXiFy.
+        compatiblePlugin("nl.rubensten.texifyidea")
     }
     // Ensure plain JUnit 4 tests can run without relying on platform base classes
     testImplementation("junit:junit:4.13.2")
@@ -41,13 +44,25 @@ dependencies {
 
 intellijPlatform {
     pluginConfiguration {
-        ideaVersion {
-            sinceBuild = "251"
-        }
-
         changeNotes = """
             Initial version
         """.trimIndent()
+    }
+    // Configure on the extension (not only the task) so PRIVATE_KEY / CERTIFICATE_CHAIN env vars
+    // cannot override the files — text PEMs take precedence in SignPluginTask and break IntelliJ runs
+    // when run configs store PEMs with spaces instead of newlines.
+    signing {
+        certificateChainFile.set(layout.projectDirectory.file("secrets/chain.crt"))
+        privateKeyFile.set(layout.projectDirectory.file("secrets/private_encrypted.pem"))
+        password.set(
+            providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+                .filter { it.isNotBlank() }
+                .orElse(
+                    providers.fileContents(layout.projectDirectory.file("secrets/privpass.txt")).asText
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                )
+        )
     }
 }
 
@@ -71,11 +86,6 @@ tasks {
         )
 
     }
-    signPlugin {
-        certificateChainFile.set(file("./secrets/chain.crt"))
-        privateKeyFile.set(file("./secrets/private_encrypted.pem"))
-        password = System.getenv("PRIVATE_KEY_PASSWORD")
-    }
     publishPlugin {
         dependsOn("patchChangelog")
         // dependsOn(generateUpdatePluginsXml)
@@ -83,16 +93,26 @@ tasks {
         channels = properties("pluginVersion").map { listOf(it.substringAfter('-', "").substringBefore('.').ifEmpty { "default" }) }
     }
 
-    // Set the JVM compatibility versions
+    // IntelliJ Platform 2026.2 is built with Java 25 bytecode
     withType<JavaCompile> {
-        sourceCompatibility = "21"
-        targetCompatibility = "21"
+        sourceCompatibility = "25"
+        targetCompatibility = "25"
     }
 }
 
 kotlin {
+    jvmToolchain(25)
     compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25)
+        // Avoid Kotlin generating ToolWindowFactory default-method bridges (isApplicable, getAnchor, …)
+        // that the Marketplace Plugin Verifier flags as deprecated/internal API usages.
+        jvmDefault.set(org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode.NO_COMPATIBILITY)
+    }
+}
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(25))
     }
 }
 

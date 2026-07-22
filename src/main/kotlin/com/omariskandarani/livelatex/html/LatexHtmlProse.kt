@@ -1,6 +1,5 @@
 package com.omariskandarani.livelatex.html
 
-import java.util.regex.Matcher
 import kotlin.collections.ArrayDeque
 import kotlin.text.RegexOption
 
@@ -146,9 +145,9 @@ internal fun convertSections(s: String, absOffset: Int): String {
         val abs = absOffset + s.substring(0, i).count { it == '\n' } + 1
         val htm = latexProseToHtmlWithMath(titlePlain)
         if (m.kind == "paragraph") {
-            sb.append("""<span class="llmark" data-id="$id" data-abs="$abs"></span><h5 id="$id" style="margin:1em 0 .3em 0;">$htm</h5>""")
+            sb.append("""<span class="llmark" data-id="$id" data-abs="$abs"></span><h5 id="$id" class="ll-section-heading" style="margin:1em 0 .3em 0;">$htm</h5>""")
         } else {
-            sb.append("""<span class="llmark" data-id="$id" data-abs="$abs"></span><$tag id="$id">$htm</$tag>""")
+            sb.append("""<span class="llmark" data-id="$id" data-abs="$abs"></span><$tag id="$id" class="ll-section-heading">$htm</$tag>""")
         }
         i = after
     }
@@ -331,8 +330,12 @@ internal fun convertLlmark(s: String, absOffset: Int): String {
 
 internal fun unescapeLatexSpecials(t0: String): String {
     var t = t0
-    t = Regex("""\\\$""").replace(t, Matcher.quoteReplacement("$"))
-    t = Regex("""\\&""").replace(t, "&")
+    // Wrap literal `$` in a MathJax-ignored span. Bare `$` breaks the second pass
+    // (splitHtmlTagsRespectingMath treats it as inline-math start) and MathJax `$` delimiters.
+    // Use &#36; (not a literal `$`) so splitHtmlTagsRespectingMath won't toggle math
+    // on the text node between the span tags. MathJax ignores the span via ignoreHtmlClass.
+    t = Regex("""\\[$]""").replace(t) { """<span class="tex2jax_ignore">&#36;</span>""" }
+    t = Regex("""\\&""").replace(t, "&amp;")
     t = Regex("""\\%""").replace(t, "%")
     t = Regex("""\\#""").replace(t, "#")
     t = Regex("""\\_""").replace(t, "_")
@@ -352,16 +355,9 @@ internal val MATH_ENVS = setOf(
     "tikzpicture","knot",
 )
 
-/** After `\\begin{tikzpicture}`, skip optional `[...]` (e.g. `[use Hobby shortcut]`). */
-internal fun skipTikzpictureBracketOptions(s: String, afterNameClose: Int): Int {
-    var p = afterNameClose
-    while (p < s.length && s[p].isWhitespace()) p++
-    if (p < s.length && s[p] == '[') {
-        val rb = s.indexOf(']', p)
-        if (rb >= 0) return rb + 1
-    }
-    return afterNameClose
-}
+/** After `\\begin{tikzpicture}`, skip optional `[...]` (supports nested brackets, e.g. `Latex[length=2]`). */
+internal fun skipTikzpictureBracketOptions(s: String, afterNameClose: Int): Int =
+    skipBeginEnvBracketOptions(s, afterNameClose)
 
 /** Match `\\end{tikzpicture}` with nested `\\begin{tikzpicture}` depth (same idea as TikzRenderer). */
 internal fun findMatchingEndTikzpictureProse(s: String, bodyStart: Int): Int {
@@ -416,21 +412,32 @@ internal fun latexProseToHtmlWithMath(s: String): String {
         val inner = s.substring(j + 1, close)
         val before = s.substring(0, openIdx)
         val after  = s.substring(close + 1)
-        val tag = when (cmd) {
-            "textbf"       -> "strong"
-            "emph", "textit", "itshape" -> "em"
-            "underline", "uline" -> "u"
-            "small", "footnotesize" -> "small"
-            "texttt"       -> "code"
+        val wrapped = when (cmd) {
+            "textbf"       -> "<strong>" + latexProseToHtmlWithMath(inner) + "</strong>"
+            "emph", "textit", "itshape" -> "<em>" + latexProseToHtmlWithMath(inner) + "</em>"
+            "underline", "uline" -> "<u>" + latexProseToHtmlWithMath(inner) + "</u>"
+            "small", "footnotesize" -> "<small>" + latexProseToHtmlWithMath(inner) + "</small>"
+            "texttt"       -> "<code>" + latexProseToHtmlWithMath(inner) + "</code>"
+            // Outer boxes must wrap before inner emph/texttt, or `\fbox{\emph{…}}` leaves raw `\fbox{`.
+            "fbox" ->
+                """<span style="display:inline-block;border:1px solid var(--fg);padding:0 .25em;">""" +
+                    latexProseToHtmlWithMath(inner) + "</span>"
+            "mbox" ->
+                """<span style="white-space:nowrap;">""" + latexProseToHtmlWithMath(inner) + "</span>"
             else -> return null
         }
-        return before + "<$tag>" + latexProseToHtmlWithMath(inner) + "</$tag>" + latexProseToHtmlWithMath(after)
+        return before + wrapped + latexProseToHtmlWithMath(after)
     }
 
     run {
         var i = s.indexOf('\\')
         while (i >= 0) {
-            for (cmd in arrayOf("textbf","emph","textit","itshape","underline","uline","small","footnotesize","texttt")) {
+            // fbox/mbox before emph/texttt so nested `\fbox{\emph{…}}` stays balanced
+            for (cmd in arrayOf(
+                "fbox", "mbox",
+                "textbf", "emph", "textit", "itshape",
+                "underline", "uline", "small", "footnotesize", "texttt",
+            )) {
                 val rep = tryWrap(cmd, i)
                 if (rep != null) return rep
             }
@@ -464,7 +471,13 @@ internal fun latexProseToHtmlWithMath(s: String): String {
 
         if (next == nextDollar) {
             val isDouble = startsAt(next, "$$")
-            val closeIdx = if (isDouble) s.indexOf("$$", next + 2) else s.indexOf('$', next + 1)
+            val closeIdx = if (isDouble) {
+                s.indexOf("$$", next + 2)
+            } else {
+                var j = s.indexOf('$', next + 1)
+                while (j >= 0 && j < n && isEscaped(s, j)) j = s.indexOf('$', j + 1)
+                j
+            }
             val end = if (closeIdx >= 0) closeIdx + (if (isDouble) 2 else 1) else n
             sb.append(escapeAngleBracketsInMathFragment(s.substring(next, end))); i = end; continue
         }
@@ -603,6 +616,21 @@ internal fun formatInlineProseNonMath(s0: String): String {
 }
 
 internal fun convertParagraphsOutsideTags(html: String): String {
+    // Keep tables/figures intact: an earlier unpaired `$` must not HTML-escape them
+    // (same protection as applyInlineFormattingOutsideTags for tables).
+    val protectRx = Regex("(?is)(<table\\b.*?</table>|<figure\\b.*?</figure>)")
+    val segments = protectRx.split(html)
+    val protected = protectRx.findAll(html).map { it.value }.toList()
+
+    val out = StringBuilder(html.length + 256)
+    for (i in segments.indices) {
+        out.append(convertParagraphsOutsideTags_NoTables(segments[i]))
+        if (i < protected.size) out.append(protected[i])
+    }
+    return out.toString()
+}
+
+private fun convertParagraphsOutsideTags_NoTables(html: String): String {
     val out = StringBuilder(html.length + 256)
     for (piece in splitHtmlTagsRespectingMath(html)) {
         when (piece) {

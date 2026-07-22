@@ -11,7 +11,7 @@ import com.omariskandarani.livelatex.core.LiveLatexSettings
 /** Toggle for LiveRender (TikZ in preview). When off, TikZ is not compiled so the IDE stays responsive. */
 class RenderTikzToggleAction : ToggleAction(
     "LiveRender",
-    "TikZ automatisch in de preview compileren (uit = snellere IDE)",
+    "Compile TikZ automatically in the preview (off = faster IDE)",
     AllIcons.FileTypes.Image
 ) {
     override fun isSelected(e: AnActionEvent): Boolean =

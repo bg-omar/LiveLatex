@@ -44,7 +44,10 @@ class TestfileRenderTest {
         assumeTrue(pictureIdx >= 0)
         val tail = html.substring(pictureIdx, (pictureIdx + 2500).coerceAtMost(html.length))
         assertFalse("picture section must not become titlepage footer", tail.contains("ll-titlepage-footer"))
-        assertTrue(tail.contains("ll-picture-omitted") || !tail.contains("""\line"""))
+        assertFalse("omit placeholder should not appear", tail.contains("ll-picture-omitted"))
+        assertTrue("lazy LiveRender placeholder expected", tail.contains("tikz-lazy"))
+        assertFalse("no raw \\line in picture section", tail.contains("""\line"""))
+        assertFalse("no raw \\put in picture section", tail.contains("""\put("""))
     }
 
     @Test

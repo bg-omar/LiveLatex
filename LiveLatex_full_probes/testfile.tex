@@ -1,13 +1,8 @@
 %! Author = mr
 %! Date = 9/3/2025
-\newcommand{\canonversion}{\textbf{v0.3.4}} % Semantic versioning: vMAJOR.MINOR.PATCH
-\newcommand{\papertitle}{Swirl String Theory (SST) Canon \canonversion}
-\newcommand{\paperdoi}{10.5281/zenodo.17014358}
-
-
 \documentclass{article}
 % ------- TikZ Preamble -------
-\RequirePackage{tikz}
+\usepackage{tikz}
 \usetikzlibrary{knots,hobby,calc,intersections,decorations.pathreplacing,shapes.geometric,spath3}
 % ------- Shared styles (from your preamble) -------
 \tikzset{
@@ -30,6 +25,9 @@
     \fi
 }
 
+\newcommand{\canonversion}{\textbf{v0.3.4}} % Semantic versioning: vMAJOR.MINOR.PATCH
+\newcommand{\papertitle}{Swirl String Theory (SST) Canon \canonversion}
+\newcommand{\paperdoi}{10.5281/zenodo.17014358}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -43,11 +41,10 @@
 
 \usepackage{bm}
 
-
-
 \usepackage{multicol}
 \usepackage{calc,pict2e,picture}
-\usepackage{textgreek,gensymb,stix}
+% No stix: clashes with textcomp and exhausts classic TeX symbol-font slots with amssymb.
+\usepackage{textgreek,gensymb}
 \usepackage{longtable}
 
 
@@ -120,7 +117,7 @@
         $\omegas\quad \vscore\quad \vnorm\quad \rhof\quad \rhoE\quad \rhom\quad \rc\quad \FmaxEM\quad \FmaxG\quad \Lam\quad \Om$
 
         inline equation $a^2 + b^2 = c^2$ type with \$...\$ dollar signs
-        and also like this \(e^{i\pi} + 1 = 0\) with \\( ... \).
+        and also like this \(e^{i\pi} + 1 = 0\) with \texttt{\textbackslash( ... \textbackslash)}.
 
         But does it support \textbf{bold}, \textit{italic} and \underline{underline} text?.
 
@@ -137,14 +134,10 @@
     \end{align}
 
 
-    Shown as plain text in the HTML:
-```
-\[\n\begin{aligned}\n3\frac{\dot a_\mathcal{D}^{\,2}}{a_\mathcal{D}^{\,2}} &= \frac{8\pi G}{c^2}\,\langle \rho c^2 \rangle_\mathcal{D} - \tfrac{1}{2}\,\langle \mathcal{R} \rangle_\mathcal{D} - \tfrac{1}{2}\,\mathcal{Q}_\mathcal{D}, \tag{F1}\n\end{aligned}\n\]
-
-\[\n\begin{aligned}\n3\frac{\ddot a_\mathcal{D}}{a_\mathcal{D}} &= -\frac{4\pi G}{c^2}\,\langle \rho c^2 \rangle_\mathcal{D} + \mathcal{Q}_\mathcal{D}, \tag{F2}\n\end{aligned}\n\]
-```
-
-
+    Shown as plain text in the HTML (verbatim probe; no markdown fences):
+    \begin{verbatim}
+    [align F1/F2 shown above as MathJax-friendly display math]
+    \end{verbatim}
 
     \section{Text}
     Text\quad paragraphs and ligatures goes here.
@@ -166,7 +159,7 @@
     \end{multicols}
 
     \section{Boxes}
-    \medbreak\noindent\fbox{\verb|\mbox{|\emph{Sample box}\verb|}|}\smallbreak
+    \medbreak\noindent\fbox{\emph{Sample box}}\smallbreak
 
     \section{Symbols}
     Sample symbols:
@@ -175,10 +168,14 @@
     \textquotedblleft \textquotedblright \textquoteleft \textquoteright \textbackslash \textbullet \textemdash \textendash
 
 
-\section{New Section $\omegas\quad$} This is a new section
-\subsection{New Subsection} This is a new subsection
-\subsubsection{New Subsubsection} This is a new subsubsection
-\paragraph{New Paragraph  $\omegas\quad$ } This is a new paragraph
+\section{New Section \texorpdfstring{$\omegas$}{omegas}}
+This is a new section
+\subsection{New Subsection}
+This is a new subsection
+\subsubsection{New Subsubsection}
+This is a new subsubsection
+\paragraph{New Paragraph \texorpdfstring{$\omegas$}{omegas}}
+This is a new paragraph
 
 
 % Example table
@@ -199,7 +196,7 @@
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=0.7\linewidth]{src/main/resources/META-INF/pluginIcon.png}
+  \includegraphics[width=0.7\linewidth]{../src/main/resources/META-INF/pluginIcon.png}
   \caption{Screenshot 2023 04 07 145654}
   \label{fig:screenshot-2023-04-07-145654}
 \end{figure}

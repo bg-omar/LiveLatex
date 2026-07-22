@@ -128,6 +128,46 @@ class LatexHtmlBlocksTest {
         assertTrue(out.contains("d"))
     }
 
+    @Test
+    fun convertTabulars_testfileSnippet_keepsAlphaRowSeparate() {
+        // Mirrors testfile.tex: center sanitize turns `\\` into <br/> before convertTabulars.
+        val snippet = """
+            \begin{tabular}{l|c|r}
+              \textbf{Value 1} & \textbf{Value 2} & \textbf{Value 3}<br/>
+              $\alpha$ & $\beta$ & $\gamma$ <br/>
+              \hline
+              1 & 1110.1 & a\\
+            \end{tabular}
+        """.trimIndent()
+        val out = convertTabulars(snippet)
+        val value3 = Regex("""<td[^>]*>\s*<strong>Value 3</strong>\s*</td>""").find(out)
+        assertTrue("Value 3 alone in header cell", value3 != null)
+        assertFalse("no tex2jax_ignore in Value 3 cell", value3!!.value.contains("tex2jax_ignore"))
+        assertTrue(
+            "alpha cell intact",
+            Regex("""<td[^>]*>\s*\$\\alpha\$\s*</td>""").containsMatchIn(out),
+        )
+        assertTrue(
+            "beta cell intact",
+            Regex("""<td[^>]*>\s*\$\\beta\$\s*</td>""").containsMatchIn(out),
+        )
+        assertFalse("hline must not leak as prose", out.contains(">hline"))
+        assertFalse("must not glue a\\\\2 into a\\2", out.contains("""a\2"""))
+    }
+
+    @Test
+    fun convertTabulars_rowBreakBeforeDollar_splitsTwoRows() {
+        val out = convertTabulars(
+            """\begin{tabular}{c}Value 3\\
+$\alpha$\end{tabular}"""
+        )
+        assertTrue(out.contains("<strong>") || out.contains("Value 3"))
+        assertTrue(out.contains("""$\alpha$"""))
+        assertFalse(out.contains("tex2jax_ignore"))
+        // Two data rows (header + alpha), not one glued cell
+        assertEquals(2, Regex("""<tr>""").findAll(out).count())
+    }
+
     // ── convertTableEnvs ──────────────────────────────────────────────────────
 
     @Test
@@ -181,6 +221,20 @@ class LatexHtmlBlocksTest {
         val out = unwrapResizebox(src)
         assertFalse(out.contains("""\resizebox{"""))
         assertTrue(out.contains("tikzpicture"))
+    }
+
+    @Test
+    fun unwrapResizebox_noResizebox_returnsInputUnchanged() {
+        val src = """\begin{tikzpicture}\draw (0,0)--(1,1);\end{tikzpicture}"""
+        val out = unwrapResizebox(src)
+        assertEquals(src, out)
+    }
+
+    @Test
+    fun unwrapResizebox_withTrailingContent_keepsSuffixOnce() {
+        val src = """before \resizebox{\textwidth}{!}{inner} after"""
+        val out = unwrapResizebox(src)
+        assertEquals("before inner after", out)
     }
 
     @Test

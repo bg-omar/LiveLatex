@@ -168,9 +168,16 @@ internal fun assembleSplitTitlepageMacros(body: String, macros: Map<String, Macr
 
 /** Expand 0-arg \\newcommand macros in body (e.g. \\titlepageOpen -> its definition). */
 internal fun expandZeroArgMacros(body: String, macros: Map<String, Macro>): String {
-    var s = body
-    val zeroArg = macros.filter { it.value.nargs == 0 }
-    if (zeroArg.isEmpty()) return s
+    // Skip empty defs (e.g. \def\swirlarrow{} inside \pdfstringdefDisableCommands) so usages stay intact.
+    val zeroArg = macros.filter { it.value.nargs == 0 && it.value.def.isNotBlank() }
+    if (zeroArg.isEmpty()) return body
+
+    // Do not expand inside tikzpicture: local \def\KPATH{...} must stay for pdflatex
+    // (first-wins extractNewcommands would otherwise freeze every \KPATH to the Unknot circle).
+    val (maskedTikz, pictures) = maskTikzpictureEnvironments(body)
+    // Do not expand inside math: leave \vswirl etc. for MathJax tex.macros.
+    val (masked, mathParts) = maskMathRegionsForMacroExpand(maskedTikz)
+    var s = masked
 
     // Protect macro definition heads from replacement, e.g.
     //   \def\Amp{...}, \newcommand{\Amp}{...}
@@ -212,5 +219,162 @@ internal fun expandZeroArgMacros(body: String, macros: Map<String, Macro>): Stri
     for ((token, original) in protectedHeads) {
         s = s.replace(token, original)
     }
-    return s
+    s = unmaskMathRegionsForMacroExpand(s, mathParts)
+    return unmaskTikzpictureEnvironments(s, pictures)
+}
+
+/**
+ * Replace math spans with placeholders so [expandZeroArgMacros] does not expand inside them.
+ * Covers `$…$`, `$$…$$`, `\(…\)`, `\[…\]`, and [MATH_ENVS] environments.
+ */
+internal fun maskMathRegionsForMacroExpand(s: String): Pair<String, List<String>> {
+    val parts = mutableListOf<String>()
+    val out = StringBuilder()
+    var i = 0
+    val n = s.length
+
+    fun startsAt(idx: Int, tok: String): Boolean =
+        idx >= 0 && idx + tok.length <= n && s.regionMatches(idx, tok, 0, tok.length)
+
+    fun emitMasked(from: Int, to: Int) {
+        val token = "__LL_MATH_${parts.size}__"
+        parts.add(s.substring(from, to))
+        out.append(token)
+    }
+
+    while (i < n) {
+        val nextDollar = run {
+            var j = s.indexOf('$', i)
+            while (j >= 0 && j < n && isEscaped(s, j)) j = s.indexOf('$', j + 1)
+            j
+        }
+        val nextBracket = indexOfDisplayMathOpenBracket(s, i)
+        val nextParen = s.indexOf("\\(", i)
+        val nextBegin = s.indexOf("\\begin{", i)
+        val candidates = listOf(nextDollar, nextBracket, nextParen, nextBegin).filter { it >= 0 }
+        if (candidates.isEmpty()) {
+            out.append(s, i, n)
+            break
+        }
+        val next = candidates.minOrNull()!!
+        out.append(s, i, next)
+
+        when (next) {
+            nextDollar -> {
+                val isDouble = startsAt(next, "$$")
+                val closeIdx = if (isDouble) {
+                    s.indexOf("$$", next + 2)
+                } else {
+                    var j = s.indexOf('$', next + 1)
+                    while (j >= 0 && j < n && isEscaped(s, j)) j = s.indexOf('$', j + 1)
+                    j
+                }
+                val end = if (closeIdx >= 0) closeIdx + (if (isDouble) 2 else 1) else n
+                emitMasked(next, end)
+                i = end
+            }
+            nextBracket -> {
+                val closeIdx = s.indexOf("\\]", next + 2)
+                val end = if (closeIdx >= 0) closeIdx + 2 else n
+                emitMasked(next, end)
+                i = end
+            }
+            nextParen -> {
+                val closeIdx = s.indexOf("\\)", next + 2)
+                val end = if (closeIdx >= 0) closeIdx + 2 else n
+                emitMasked(next, end)
+                i = end
+            }
+            else -> {
+                // \begin{...}
+                val nameOpen = next + "\\begin{".length
+                val nameClose = s.indexOf('}', nameOpen)
+                val env = if (nameClose > nameOpen) s.substring(nameOpen, nameClose) else ""
+                if (env in MATH_ENVS) {
+                    val endAt = when (env) {
+                        "tikzpicture" -> {
+                            val afterOpts = skipTikzpictureBracketOptions(s, nameClose + 1)
+                            val e = findMatchingEndTikzpictureProse(s, afterOpts)
+                            if (e < 0) n else e
+                        }
+                        else -> {
+                            val endTok = "\\end{$env}"
+                            s.indexOf(endTok, nameClose + 1).let { if (it < 0) n else it + endTok.length }
+                        }
+                    }
+                    emitMasked(next, endAt)
+                    i = endAt
+                } else {
+                    out.append("\\begin{")
+                    i = nameOpen
+                }
+            }
+        }
+    }
+    return out.toString() to parts
+}
+
+internal fun unmaskMathRegionsForMacroExpand(s: String, parts: List<String>): String {
+    var out = s
+    for ((idx, part) in parts.withIndex()) {
+        out = out.replace("__LL_MATH_${idx}__", part)
+    }
+    return out
+}
+
+/**
+ * Replace each balanced `\\begin{tikzpicture}...\\end{tikzpicture}` with a placeholder token.
+ * Nested tikzpictures are treated as one outer block (depth counting).
+ */
+internal fun maskTikzpictureEnvironments(s: String): Pair<String, List<String>> {
+    val beginTok = "\\begin{tikzpicture}"
+    val endTok = "\\end{tikzpicture}"
+    val pictures = mutableListOf<String>()
+    val out = StringBuilder()
+    var pos = 0
+    while (true) {
+        val start = s.indexOf(beginTok, pos)
+        if (start < 0) {
+            out.append(s, pos, s.length)
+            break
+        }
+        out.append(s, pos, start)
+        var depth = 1
+        var i = start + beginTok.length
+        var end = -1
+        while (i < s.length && depth > 0) {
+            val nextBegin = s.indexOf(beginTok, i)
+            val nextEnd = s.indexOf(endTok, i)
+            if (nextEnd < 0) break
+            if (nextBegin >= 0 && nextBegin < nextEnd) {
+                depth++
+                i = nextBegin + beginTok.length
+            } else {
+                depth--
+                if (depth == 0) {
+                    end = nextEnd + endTok.length
+                    break
+                }
+                i = nextEnd + endTok.length
+            }
+        }
+        if (end < 0) {
+            // Malformed: leave remainder unmasked
+            out.append(s, start, s.length)
+            break
+        }
+        val token = "__LL_TIKZPICTURE_${pictures.size}__"
+        pictures.add(s.substring(start, end))
+        out.append(token)
+        pos = end
+    }
+    return out.toString() to pictures
+}
+
+internal fun unmaskTikzpictureEnvironments(s: String, pictures: List<String>): String {
+    var out = s
+    for ((idx, pic) in pictures.withIndex()) {
+        out = out.replace("__LL_TIKZPICTURE_${idx}__", pic)
+    }
+    return out
 }

@@ -151,7 +151,7 @@ class LatexHtmlSanitizerTest {
     }
 
     @Test
-    fun convertPicturePutBlocks_bodyDrawingBecomesPlaceholder() {
+    fun convertPicturePutBlocks_bodyDrawingKeptIntact() {
         val dollar = "$"
         val out = convertBodyPictureEnvironments("""
             \setlength{\unitlength}{0.8cm}
@@ -161,11 +161,11 @@ class LatexHtmlSanitizerTest {
                 \put(0.7,0.3){${dollar}A${dollar}}
             \end{picture}
         """.trimIndent())
-        assertTrue(out.contains("ll-picture-omitted"))
+        assertTrue(out.contains("""\begin{picture}(6,5)"""))
+        assertTrue(out.contains("""\line(2,1){3}"""))
+        assertTrue(out.contains("""\put(1,0.5)"""))
         assertFalse(out.contains("ll-titlepage-footer"))
-        assertFalse(out.contains("""\line"""))
-        assertFalse(out.contains("""\put"""))
-        assertFalse(out.contains("""\begin{picture}"""))
+        assertFalse(out.contains("ll-picture-omitted"))
     }
 
     @Test
@@ -181,18 +181,35 @@ class LatexHtmlSanitizerTest {
         """.trimIndent())
         assertTrue(out.contains("ll-titlepage-footer"))
         assertTrue(out.contains("Footer affiliation"))
+        assertFalse("footer must not use omit placeholder", out.contains("ll-picture-omitted"))
+        assertFalse(out.contains("""\begin{picture}"""))
     }
 
     @Test
     fun stripLegacyPictureCommands_removesUnitlengthAndThicklines() {
-        val out = stripLegacyPictureCommands("""\setlength{\unitlength}{0.8cm} \thicklines text""")
+        val out = stripLegacyPictureCommands("""\setlength{\unitlength}{0.8cm} \thicklines \thinlines text""")
         assertTrue(out.contains("text"))
         assertFalse(out.contains("unitlength"))
         assertFalse(out.contains("thicklines"))
+        assertFalse(out.contains("thinlines"))
     }
 
     @Test
-    fun sanitizeForMathJaxProse_bodyPictureNotTitlepageFooter() {
+    fun stripLegacyPictureCommands_keepsUnitlengthBeforePicture() {
+        val out = stripLegacyPictureCommands("""
+            \setlength{\unitlength}{0.8cm}
+            \begin{picture}(6,5)
+            \thicklines
+            \put(1,0.5){\line(2,1){3}}
+            \end{picture}
+        """.trimIndent())
+        assertTrue(out.contains("""\setlength{\unitlength}{0.8cm}"""))
+        assertTrue(out.contains("""\thicklines"""))
+        assertTrue(out.contains("""\begin{picture}"""))
+    }
+
+    @Test
+    fun sanitizeForMathJaxProse_bodyPictureKeptNotTitlepageFooter() {
         val out = sanitizeForMathJaxProse("""
             \section{Picture}
             \setlength{\unitlength}{0.8cm}
@@ -201,9 +218,31 @@ class LatexHtmlSanitizerTest {
             \end{picture}
         """.trimIndent())
         assertFalse(out.contains("ll-titlepage-footer"))
-        assertTrue(out.contains("ll-picture-omitted"))
-        assertFalse(out.contains("""\setlength"""))
-        assertFalse(out.contains("""\line"""))
+        assertFalse(out.contains("ll-picture-omitted"))
+        assertTrue(out.contains("""\begin{picture}(6,5)"""))
+        assertTrue(out.contains("""\line(2,1){3}"""))
+        assertTrue(out.contains("""\setlength{\unitlength}{0.8cm}"""))
+    }
+
+    @Test
+    fun sanitizeForMathJaxProse_testfileLikePictureSnippet_keepsDrawing() {
+        val dollar = "$"
+        val out = sanitizeForMathJaxProse("""
+            \section{Picture}
+            Sample picture:
+            \setlength{\unitlength}{0.8cm}
+            \begin{picture}(6,5)
+                \thicklines
+                \put(1,0.5){\line(2,1){3}}
+                \put(0.7,0.3){${dollar}A${dollar}}
+            \end{picture}
+        """.trimIndent())
+        assertTrue(out.contains("Sample picture"))
+        assertTrue(out.contains("""\begin{picture}(6,5)"""))
+        assertTrue(out.contains("""\setlength{\unitlength}{0.8cm}"""))
+        assertTrue(out.contains("""\line(2,1){3}"""))
+        assertFalse(out.contains("ll-titlepage-footer"))
+        assertFalse(out.contains("ll-picture-omitted"))
     }
 
     // ── parseOneMinipageColumn ────────────────────────────────────────────────

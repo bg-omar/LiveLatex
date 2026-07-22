@@ -12,6 +12,9 @@
 
 
     <depends>com.intellij.modules.platform</depends>
+    <!-- Optional: module exists as a separate plugin from ~2025.3/2026.2; on older IDEs JCEF is still
+         part of the platform, so a mandatory depends fails Marketplace verification (e.g. IU-252). -->
+    <depends optional="true" config-file="livelatex-jcef.xml">com.intellij.modules.jcef</depends>
 
     <!-- Tool Window -->
     <extensions defaultExtensionNs="com.intellij">

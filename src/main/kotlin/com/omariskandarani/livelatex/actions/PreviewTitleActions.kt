@@ -5,15 +5,28 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.actionSystem.ToggleAction
+import com.intellij.openapi.actionSystem.ex.CustomComponentAction
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.awt.RelativePoint
 import com.omariskandarani.livelatex.core.LatexPreviewService
 import com.omariskandarani.livelatex.core.LiveLatexSettings
-import com.intellij.openapi.application.ApplicationManager
+import java.awt.BorderLayout
+import java.awt.Component
+import java.awt.Dimension
+import java.awt.event.HierarchyEvent
+import javax.swing.DefaultComboBoxModel
+import javax.swing.DefaultListCellRenderer
 import javax.swing.JComponent
+import javax.swing.JList
+import javax.swing.JPanel
 
 /** Manual refresh when auto-preview is off. */
 class PreviewRefreshAction(private val project: Project) : AnAction("Refresh", "Refresh LaTeX preview", AllIcons.Actions.Refresh) {
@@ -39,38 +52,102 @@ class PreviewCancelRenderAction(private val project: Project) : AnAction("Cancel
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 }
 
-/** Secties-dropdown in de tool window-titelbalk: toont sectielijst uit de preview, springt bij selectie. */
-class PreviewSectionsAction(private val project: Project) : AnAction("Secties", "Ga naar sectie", AllIcons.Toolwindows.ToolWindowStructure) {
-    override fun actionPerformed(e: AnActionEvent) {
-        val svc = project.getService(LatexPreviewService::class.java)
-        val sections = svc.lastSections
-        if (sections.isEmpty()) {
-            JBPopupFactory.getInstance().createMessage("Geen secties beschikbaar.\nWacht tot de preview geladen is of controleer of het document \\section-koppen heeft.")
-                .show(RelativePoint.getSouthWestOf(e.inputEvent?.component as? JComponent ?: return))
-            return
-        }
-        val labels = sections.map { it.second }
-        JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(labels)
-            .setItemChosenCallback { label ->
-                val idx = labels.indexOf(label)
-                if (idx in sections.indices) svc.requestJumpToSection(sections[idx].first)
-            }
-            .createPopup()
-            .show(RelativePoint.getSouthWestOf(e.inputEvent?.component as? JComponent ?: return))
+/**
+ * Chapter/section combo in the tool window title bar.
+ * Swing ComboBox (not ComboBoxAction) so scroll-spy updates and user selection work reliably.
+ */
+class PreviewChapterComboAction(private val project: Project) :
+    AnAction("Sections", "Jump to section", null),
+    CustomComponentAction,
+    DumbAware {
+
+    private data class SectionItem(val id: String, val label: String) {
+        override fun toString(): String = label
     }
 
-    override fun update(e: AnActionEvent) {
-        val sections = project.getService(LatexPreviewService::class.java).lastSections
-        e.presentation.isEnabled = true
-        e.presentation.description = if (sections.isEmpty()) "Ga naar sectie (nog geen secties geladen)" else "Ga naar sectie (${sections.size} secties)"
+    override fun actionPerformed(e: AnActionEvent) {
+        // Selection is handled by the ComboBox ActionListener.
+    }
+
+    override fun createCustomComponent(presentation: Presentation, place: String): JComponent {
+        val svc = project.getService(LatexPreviewService::class.java)
+        val combo = ComboBox<SectionItem>().apply {
+            toolTipText = "Jump to section"
+            maximumRowCount = 20
+            isSwingPopup = true
+            preferredSize = Dimension(200, 28)
+            minimumSize = Dimension(120, 28)
+            renderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(
+                    list: JList<*>?,
+                    value: Any?,
+                    index: Int,
+                    isSelected: Boolean,
+                    cellHasFocus: Boolean,
+                ): Component {
+                    val c = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                    text = (value as? SectionItem)?.label ?: "Sections"
+                    return c
+                }
+            }
+        }
+
+        var updating = false
+        fun applyState(sections: List<Pair<String, String>>, activeId: String?) {
+            updating = true
+            try {
+                if (sections.isEmpty()) {
+                    combo.model = DefaultComboBoxModel(arrayOf(SectionItem("", "Sections")))
+                    combo.isEnabled = false
+                    combo.selectedIndex = 0
+                    return
+                }
+                val items = sections.map { (id, label) -> SectionItem(id, label) }
+                combo.model = DefaultComboBoxModel(items.toTypedArray())
+                combo.isEnabled = true
+                val idx = items.indexOfFirst { it.id == activeId }
+                combo.selectedIndex = if (idx >= 0) idx else -1
+            } finally {
+                updating = false
+            }
+        }
+
+        combo.addActionListener {
+            if (updating) return@addActionListener
+            val item = combo.selectedItem as? SectionItem ?: return@addActionListener
+            if (item.id.isBlank()) return@addActionListener
+            svc.requestJumpToSection(item.id)
+        }
+
+        val listener = LatexPreviewService.SectionsUiListener { sections, activeId ->
+            applyState(sections, activeId)
+        }
+        svc.addSectionsUiListener(listener)
+        combo.putClientProperty("livelatex.sectionsListener", listener)
+        combo.addHierarchyListener { e ->
+            if ((e.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) != 0L && !combo.isShowing) {
+                val l = combo.getClientProperty("livelatex.sectionsListener") as? LatexPreviewService.SectionsUiListener
+                if (l != null) {
+                    svc.removeSectionsUiListener(l)
+                    combo.putClientProperty("livelatex.sectionsListener", null)
+                }
+            }
+        }
+
+        applyState(svc.lastSections, svc.activeSectionId)
+
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(combo, BorderLayout.CENTER)
+            preferredSize = Dimension(200, 28)
+        }
     }
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 }
 
-/** Zoom uit (−) in de tool window-titelbalk. */
-class PreviewZoomOutAction(private val project: Project) : AnAction("−", "Zoom uit", AllIcons.General.Remove) {
+/** Zoom out (−) in the tool window title bar. */
+class PreviewZoomOutAction(private val project: Project) : AnAction("−", "Zoom out", AllIcons.General.Remove) {
     override fun actionPerformed(e: AnActionEvent) {
         project.getService(LatexPreviewService::class.java).requestZoomOut()
     }
@@ -78,7 +155,7 @@ class PreviewZoomOutAction(private val project: Project) : AnAction("−", "Zoom
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 }
 
-/** Zoom in (+) in de tool window-titelbalk. */
+/** Zoom in (+) in the tool window title bar. */
 class PreviewZoomInAction(private val project: Project) : AnAction("+", "Zoom in", AllIcons.General.Add) {
     override fun actionPerformed(e: AnActionEvent) {
         project.getService(LatexPreviewService::class.java).requestZoomIn()
@@ -87,8 +164,8 @@ class PreviewZoomInAction(private val project: Project) : AnAction("+", "Zoom in
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 }
 
-/** Opties (☰) in de tool window-titelbalk: Auto scroll preview/editor (met vinkje), Cache legen. */
-class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opties", AllIcons.General.GearPlain) {
+/** Options (gear) in the tool window title bar: auto-scroll, one-shot HTML export, cache clear, etc. */
+class PreviewOptionsAction(private val project: Project) : AnAction("Options", "Options", AllIcons.General.Settings) {
     override fun actionPerformed(e: AnActionEvent) {
         val svc = project.getService(LatexPreviewService::class.java)
         val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
@@ -97,42 +174,29 @@ class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opti
                 override fun isSelected(e2: AnActionEvent) = settings.autoPreview
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {
                     settings.autoPreview = state
+                    if (state) {
+                        svc.requestRefresh()
+                    }
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
-            add(object : ToggleAction("Auto scroll preview", "Scroll preview mee met cursor", null) {
+            add(object : ToggleAction("Auto scroll preview", "Scroll preview to follow the editor caret", null) {
                 override fun isSelected(e2: AnActionEvent) = settings.autoScrollPreview
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {
                     settings.autoScrollPreview = state
                     svc.evalJs("try { localStorage.setItem('ll_auto_scroll', $state); } catch(e){}")
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
-            add(object : ToggleAction("Auto scroll editor", "Scroll editor mee met preview", null) {
+            add(object : ToggleAction("Auto scroll editor", "Move editor caret to follow preview scroll", null) {
                 override fun isSelected(e2: AnActionEvent) = settings.autoScrollEditor
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {
                     settings.autoScrollEditor = state
                     svc.evalJs("try { localStorage.setItem('ll_auto_scroll_editor', $state); } catch(e){}")
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
-            add(object : ToggleAction("Sync selection", "Selectie editor ↔ preview synchroniseren", null) {
-                override fun isSelected(e2: AnActionEvent) = settings.syncSelection
-                override fun setSelected(e2: AnActionEvent, state: Boolean) {
-                    settings.syncSelection = state
-                    svc.evalJs("try { localStorage.setItem('ll_sync_selection', $state); } catch(e){}")
-                }
-            })
-            add(object : ToggleAction("Show TikZ debug", "Toon/verberg TikZ debug badges", null) {
-                override fun isSelected(e2: AnActionEvent) = settings.showTikzDebugOverlay
-                override fun setSelected(e2: AnActionEvent, state: Boolean) {
-                    settings.showTikzDebugOverlay = state
-                    svc.evalJs(
-                        "try { " +
-                            "localStorage.setItem('ll_show_tikz_debug', $state); " +
-                            "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug($state); " +
-                        "} catch(e){}"
-                    )
-                }
-            })
-            add(object : ToggleAction("Inverted scroll-h", "Horizontaal scrollen omkeren (JCEF/Chromium)", null) {
+            add(object : ToggleAction("Inverted scroll-h", "Invert horizontal scrolling (JCEF/Chromium)", null) {
                 override fun isSelected(e2: AnActionEvent) = settings.invertScrollHorizontal
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {
                     settings.invertScrollHorizontal = state
@@ -143,8 +207,9 @@ class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opti
                         "} catch(e){}"
                     )
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
-            add(object : ToggleAction("Inverted scroll-v", "Verticaal scrollen omkeren", null) {
+            add(object : ToggleAction("Inverted scroll-v", "Invert vertical scrolling", null) {
                 override fun isSelected(e2: AnActionEvent) = settings.invertScrollVertical
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {
                     settings.invertScrollVertical = state
@@ -155,21 +220,47 @@ class PreviewOptionsAction(private val project: Project) : AnAction("☰", "Opti
                         "} catch(e){}"
                     )
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
             add(Separator.getInstance())
-            add(object : AnAction("Cache legen voor dit document") {
+            add(object : AnAction("Export preview HTML…", "Write preview HTML next to the .tex file (for development or sharing issues)", null) {
+                override fun actionPerformed(e2: AnActionEvent) {
+                    val confirmed = Messages.showOkCancelDialog(
+                        project,
+                        "This writes the current preview as an .html file next to your .tex source.\n\n" +
+                            "Use it for development or when sharing issues — not for normal editing.",
+                        "Export preview HTML",
+                        "Export",
+                        "Cancel",
+                        Messages.getWarningIcon(),
+                    )
+                    if (confirmed != Messages.OK) return
+                    if (!svc.exportPreviewHtmlBesideSource()) {
+                        Messages.showWarningDialog(
+                            project,
+                            "No preview HTML available yet.\nOpen a .tex file and wait until the preview has loaded.",
+                            "Export preview HTML",
+                        )
+                    }
+                }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
+            })
+            add(Separator.getInstance())
+            add(object : AnAction("Clear cache for this document") {
                 override fun actionPerformed(e2: AnActionEvent) {
                     svc.requestClearCache()
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
-            add(object : AnAction("Alle cache legen") {
+            add(object : AnAction("Clear all cache") {
                 override fun actionPerformed(e2: AnActionEvent) {
                     svc.requestClearAllCache()
                 }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
         }
         val popup = JBPopupFactory.getInstance().createActionGroupPopup(
-            "Opties",
+            "Options",
             group,
             e.dataContext,
             JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,

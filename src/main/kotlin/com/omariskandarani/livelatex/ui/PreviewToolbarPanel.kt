@@ -15,32 +15,32 @@ import javax.swing.JProgressBar
 import javax.swing.JSeparator
 
 /**
- * Toolbar boven de LaTeX-preview: hamburger (opties), sections-dropdown, zoom −/+, LiveRender.
- * Vervangt de in-page .ll-topbar.
+ * Toolbar above the LaTeX preview: options menu, sections dropdown, zoom −/+, LiveRender.
+ * Replaces the in-page .ll-topbar.
  */
 class PreviewToolbarPanel(
     private val project: com.intellij.openapi.project.Project
 ) : JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)) {
 
     companion object {
-        /** Voortgangsbalk alleen bij veel figuren (TikZ + SST), om flikkering te vermijden. */
+        /** Progress bar only when many figures (TikZ + SST), to avoid flicker. */
         private const val MIN_STEPS_TO_SHOW_LIVERENDER_PROGRESS = 10
     }
 
     private val hamburgerBtn = JButton("☰").apply {
-        toolTipText = "Opties"
+        toolTipText = "Options"
         addActionListener { showOptionsMenu() }
     }
 
     val sectionsCombo = JComboBox<String>().apply {
-        toolTipText = "Ga naar sectie"
+        toolTipText = "Jump to section"
         maximumRowCount = 20
         isEnabled = false
         preferredSize = java.awt.Dimension(180, 28)
     }
 
     private val zoomOutBtn = JButton("−").apply {
-        toolTipText = "Zoom uit"
+        toolTipText = "Zoom out"
         addActionListener { requestZoomOut() }
     }
 
@@ -50,7 +50,7 @@ class PreviewToolbarPanel(
     }
 
     private val renderTikzCheck = JBCheckBox("LiveRender", false).apply {
-        toolTipText = "TikZ automatisch compileren in de preview (uit = lichter; per figuur: knop \"LiveRender\")"
+        toolTipText = "Compile TikZ automatically in the preview (off = lighter; per figure: \"LiveRender\" button)"
         isSelected = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview
         addItemListener { e ->
             if (e.stateChange == ItemEvent.SELECTED || e.stateChange == ItemEvent.DESELECTED) {
@@ -67,7 +67,7 @@ class PreviewToolbarPanel(
         maximumSize = Dimension(240, 16)
     }
 
-    /** Secties: (id, label). Combo toont label; item = id. */
+    /** Sections: (id, label). Combo shows label; selection uses id. */
     private data class SectionItem(val id: String, val label: String) {
         override fun toString(): String = label
     }
@@ -86,7 +86,7 @@ class PreviewToolbarPanel(
         add(liveRenderProgress)
     }
 
-    /** EDT: voortgang tijdens LiveRender-build (alleen zichtbaar vanaf [MIN_STEPS_TO_SHOW_LIVERENDER_PROGRESS] stappen). */
+    /** EDT: LiveRender build progress (visible only from [MIN_STEPS_TO_SHOW_LIVERENDER_PROGRESS] steps). */
     fun setLiveRenderProgress(current: Int, total: Int, detail: String) {
         if (total < MIN_STEPS_TO_SHOW_LIVERENDER_PROGRESS) return
         liveRenderProgress.isIndeterminate = false
@@ -110,7 +110,7 @@ class PreviewToolbarPanel(
 
     private var updatingSections = false
 
-    /** Wordt door LatexPreviewService aangeroepen wanneer de pagina de sectielijst doorgeeft. */
+    /** Called by LatexPreviewService when the page provides the section list. */
     fun setSections(items: List<Pair<String, String>>) {
         updatingSections = true
         sectionItems = items.map { (id, label) -> SectionItem(id, label) }
@@ -120,7 +120,7 @@ class PreviewToolbarPanel(
         updatingSections = false
     }
 
-    /** Geselecteerde sectie-id (voor jump). */
+    /** Selected section id (for jump). */
     fun getSelectedSectionId(): String? {
         val idx = sectionsCombo.selectedIndex
         return if (idx in sectionItems.indices) sectionItems[idx].id else null
@@ -134,12 +134,12 @@ class PreviewToolbarPanel(
         }
     }
 
-    /** Callback voor sectie-selectie (LatexPreviewService zet deze). */
+    /** Callback for section selection (set by LatexPreviewService). */
     fun setSectionSelectionCallback(callback: (String) -> Unit) {
         sectionSelectionCallback = callback
     }
 
-    /** Selectie van sectie vanaf de pagina (scroll-spy) – zonder jump te triggeren. */
+    /** Select section from the page (scroll-spy) without triggering a jump. */
     fun setSelectedSectionId(id: String?) {
         if (id == null) return
         val idx = sectionItems.indexOfFirst { it.id == id }
@@ -155,14 +155,12 @@ class PreviewToolbarPanel(
         val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
         val autoScrollPreview = javax.swing.JCheckBoxMenuItem("Auto scroll preview", settings.autoScrollPreview)
         val autoScrollEditor = javax.swing.JCheckBoxMenuItem("Auto scroll editor", settings.autoScrollEditor)
-        val showTikzDebug = javax.swing.JCheckBoxMenuItem("Show TikZ debug", settings.showTikzDebugOverlay)
         val invertScrollH = javax.swing.JCheckBoxMenuItem("Inverted scroll-h", settings.invertScrollHorizontal)
         val invertScrollV = javax.swing.JCheckBoxMenuItem("Inverted scroll-v", settings.invertScrollVertical)
         val svc = project.getService(LatexPreviewService::class.java)
 
         popup.add(autoScrollPreview)
         popup.add(autoScrollEditor)
-        popup.add(showTikzDebug)
         popup.add(invertScrollH)
         popup.add(invertScrollV)
         autoScrollPreview.addActionListener {
@@ -172,15 +170,6 @@ class PreviewToolbarPanel(
         autoScrollEditor.addActionListener {
             settings.autoScrollEditor = autoScrollEditor.isSelected
             svc.evalJs("try { localStorage.setItem('ll_auto_scroll_editor', " + autoScrollEditor.isSelected + "); } catch(e){}")
-        }
-        showTikzDebug.addActionListener {
-            settings.showTikzDebugOverlay = showTikzDebug.isSelected
-            svc.evalJs(
-                "try { " +
-                    "localStorage.setItem('ll_show_tikz_debug', " + showTikzDebug.isSelected + "); " +
-                    "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug(" + showTikzDebug.isSelected + "); " +
-                "} catch(e){}"
-            )
         }
         invertScrollH.addActionListener {
             settings.invertScrollHorizontal = invertScrollH.isSelected
@@ -201,10 +190,24 @@ class PreviewToolbarPanel(
             )
         }
         popup.add(JSeparator())
-        popup.add("Cache legen voor dit document").addActionListener {
+        popup.add("Export preview HTML…").addActionListener {
+            val confirmed = javax.swing.JOptionPane.showConfirmDialog(
+                hamburgerBtn,
+                "This writes the current preview as an .html file next to your .tex source.\n\n" +
+                    "Use it for development or when sharing issues — not for normal editing.",
+                "Export preview HTML",
+                javax.swing.JOptionPane.OK_CANCEL_OPTION,
+                javax.swing.JOptionPane.WARNING_MESSAGE,
+            )
+            if (confirmed == javax.swing.JOptionPane.OK_OPTION) {
+                svc.exportPreviewHtmlBesideSource()
+            }
+        }
+        popup.add(JSeparator())
+        popup.add("Clear cache for this document").addActionListener {
             svc.requestClearCache()
         }
-        popup.add("Alle cache legen").addActionListener {
+        popup.add("Clear all cache").addActionListener {
             svc.requestClearAllCache()
         }
         popup.show(hamburgerBtn, 0, hamburgerBtn.height)
@@ -218,7 +221,7 @@ class PreviewToolbarPanel(
         project.getService(LatexPreviewService::class.java).requestZoomOut()
     }
 
-    /** Sync LiveRender-checkbox met instelling (bij openen venster). */
+    /** Sync LiveRender checkbox with the setting (when opening the window). */
     fun syncRenderTikzFromSettings() {
         renderTikzCheck.isSelected = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java).renderTikzInPreview
     }

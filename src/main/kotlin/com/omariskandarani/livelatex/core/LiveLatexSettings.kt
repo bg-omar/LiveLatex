@@ -17,8 +17,8 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
         var renderTikzInPreview: Boolean = false,  // default off: lighter for IDE/Android; per-figure LiveRender button or toolbar checkbox
         var autoPreview: Boolean = true,
         var autoScrollPreview: Boolean = true,
-        var autoScrollEditor: Boolean = true,
-        var syncSelection: Boolean = true,
+        var autoScrollEditor: Boolean = true, // preview scroll / section spy → editor caret
+        var syncSelection: Boolean = false,    // default off; UI hidden until next version
         var showTikzDebugOverlay: Boolean = false,
         var invertScrollHorizontal: Boolean = false,
         var invertScrollVertical: Boolean = false,
@@ -29,6 +29,8 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
     override fun getState(): State = state
 
     override fun loadState(state: State) {
+        // Clear any previously persisted TikZ-debug toggle (feature is one-shot export now).
+        state.showTikzDebugOverlay = false
         this.state = state
     }
 

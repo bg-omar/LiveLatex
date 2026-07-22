@@ -44,4 +44,15 @@ class ExternalTexInserterTest {
         val source = Paths.get("D:\\other\\file.tex")
         assertNull(ExternalTexInserter.relativePath(editor, source))
     }
+
+    @Test
+    fun normalizeForDocument_convertsCrlfToLf() {
+        val raw = "\\documentclass{article}\r\n\\begin{document}\r\nHi\r\n\\end{document}\r\n"
+        val normalized = ExternalTexInserter.normalizeForDocument(raw)
+        assertEquals(-1, normalized.indexOf('\r'))
+        assertEquals(
+            "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n",
+            normalized
+        )
+    }
 }

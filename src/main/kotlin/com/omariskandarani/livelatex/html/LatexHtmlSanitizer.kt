@@ -87,13 +87,10 @@ private fun isTitlepagePictureFooter(inner: String): Boolean {
     return inner.substring(p + 1, close).contains("""\begin{minipage}""")
 }
 
-private const val PICTURE_OMITTED_PLACEHOLDER =
-    """<div class="ll-picture-omitted" style="font-style:italic;opacity:0.7;margin:8px 0;">[picture omitted in preview]</div>"""
-
 /**
  * `picture` + `\\put(...){...}` blocks (common on custom title pages) → footer HTML.
- * When [titlepageContext] is false, only footer-pattern pictures are converted; drawing pictures
- * become a neutral placeholder.
+ * When [titlepageContext] is false, only footer-pattern pictures are converted; body drawings
+ * are left intact for the TikZ-like SVG/lazy pipeline.
  */
 internal fun convertPicturePutBlocks(s: String, titlepageContext: Boolean = false): String {
     val beginTok = "\\begin{picture}"
@@ -120,27 +117,43 @@ internal fun convertPicturePutBlocks(s: String, titlepageContext: Boolean = fals
             break
         }
         val inner = s.substring(p, endIdx)
-        val html = when {
-            titlepageContext || isTitlepagePictureFooter(inner) ->
-                extractPicturePutFooterHtml(inner)
-            else -> PICTURE_OMITTED_PLACEHOLDER
+        val endExclusive = endIdx + endTok.length
+        if (titlepageContext || isTitlepagePictureFooter(inner)) {
+            sb.append(extractPicturePutFooterHtml(inner))
+        } else {
+            // Keep classic drawing pictures for convertPictures / lazy placeholder.
+            sb.append(s, j, endExclusive)
         }
-        sb.append(html)
-        i = endIdx + endTok.length
+        i = endExclusive
     }
     return sb.toString()
 }
 
-/** Body-level `picture` drawings → placeholder; title-page footer pattern still → footer HTML. */
+/** Body-level footer-pattern `picture` → HTML; drawings left as TeX for SVG/lazy render. */
 internal fun convertBodyPictureEnvironments(s: String): String =
     convertPicturePutBlocks(s, titlepageContext = false)
 
-/** Strip legacy `picture` setup/drawing commands that leak when the env is omitted. */
+/**
+ * Strip orphaned legacy `picture` setup commands outside `picture` environments.
+ * Keeps `\setlength{\unitlength}` when it immediately precedes a `\begin{picture}` so the
+ * picture doc-builder can look behind and include it; call again after convert/lazy to clear leftovers.
+ */
 internal fun stripLegacyPictureCommands(s: String): String {
-    var t = s
-    t = t.replace(Regex("""\\setlength\s*\{\\unitlength\}\s*\{[^}]*\}"""), "")
+    val pictures = mutableListOf<String>()
+    var t = Regex("""\\begin\{picture\}[\s\S]*?\\end\{picture\}""").replace(s) { m ->
+        val token = "\uE000PIC${pictures.size}\uE001"
+        pictures.add(m.value)
+        token
+    }
+    t = Regex("""\\setlength\s*\{\\unitlength\}\s*\{[^}]*\}""").replace(t) { m ->
+        val after = t.substring(m.range.last + 1).take(160)
+        if (Regex("""\\begin\{picture\}|\uE000PIC\d+\uE001""").containsMatchIn(after)) m.value else ""
+    }
     t = t.replace(Regex("""\\thicklines\b"""), "")
     t = t.replace(Regex("""\\thinlines\b"""), "")
+    pictures.forEachIndexed { i, pic ->
+        t = t.replace("\uE000PIC$i\uE001", pic)
+    }
     return t
 }
 
@@ -374,7 +387,7 @@ internal fun sanitizeForMathJaxProse(bodyText: String): String {
         val mathEnvs =
             "(?:equation\\*?|align\\*?|aligned\\*?|aligned|gather\\*?|multline\\*?|flalign\\*?|alignat\\*?|bmatrix|pmatrix|vmatrix|Bmatrix|Vmatrix|smallmatrix|matrix|cases|split)"
         val keepEnvs =
-            "(?:$mathEnvs|tabular|table|longtable|figure|center|tikzpicture|knot|tcolorbox|thebibliography|itemize|enumerate|description|multicols)"
+            "(?:$mathEnvs|tabular|table|longtable|figure|center|tikzpicture|picture|knot|tcolorbox|thebibliography|itemize|enumerate|description|multicols)"
 
         s = s.replace(Regex("""\\begin\{(?!$keepEnvs)\w+\}"""), "")
         s = s.replace(Regex("""\\end\{(?!$keepEnvs)\w+\}"""), "")
@@ -419,7 +432,6 @@ internal fun convertSiunitx(s: String): String {
         }
         t = t.replace(Regex("""\\textasciitilde\{\}"""), "~")
             .replace(Regex("""\\textasciitilde"""), "~")
-            .replace(Regex("""\\&"""), "&")
         return t
     }
 
