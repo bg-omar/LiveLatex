@@ -148,6 +148,15 @@ class TikzCanvasDialog(
     private var mode = EditMode.ADD
     private var tool = Tool.KNOT
     private var dirty = false
+    private val undoStack = UndoStack<CanvasSnap>(limit = 80)
+    private var undoSuspended = false
+    private var knotDragMoved = false
+
+    private data class CanvasSnap(
+        val knot: List<Point>,
+        val flip: String,
+        val shapes: List<Shape>,
+    )
 
     // Background image for tracing knots
     private var backgroundImage: Image? = null
@@ -732,8 +741,34 @@ class TikzCanvasDialog(
             }
 
             g2.setTransform(savedTx)
+
+            // Help overlay (screen space, top-left)
+            val help = arrayOf(
+                "Click+hold point: grab / move",
+                "Click+hold empty: add point",
+                "Right-click point: delete",
+                "Click+hold on line: insert point",
+                "Ctrl+Z / Ctrl+Shift+Z: undo / redo",
+            )
+            g2.font = g2.font.deriveFont(Font.PLAIN, 11f)
+            val fm = g2.fontMetrics
+            var hy = 16
+            val pad = 6
+            val boxW = help.maxOf { fm.stringWidth(it) } + pad * 2
+            val boxH = help.size * (fm.height + 2) + pad * 2
+            g2.color = Color(255, 255, 255, 210)
+            g2.fillRoundRect(8, 8, boxW, boxH, 8, 8)
+            g2.color = Color(30, 30, 30, 200)
+            g2.drawRoundRect(8, 8, boxW, boxH, 8, 8)
+            g2.color = Color(40, 40, 40)
+            for (line in help) {
+                g2.drawString(line, 8 + pad, hy + pad)
+                hy += fm.height + 2
+            }
         }
     }
+
+    private lateinit var scrollCanvas: JScrollPane
 
     init {
         title = "TikZ Knot"
@@ -744,20 +779,31 @@ class TikzCanvasDialog(
         canvas.addComponentListener(object : java.awt.event.ComponentAdapter() {
             override fun componentResized(e: java.awt.event.ComponentEvent?) {
                 // When editing a knot from .tex: import coordinates once canvas has size, then skip preset
-                if (initialTikz != null && !initialTikzImported && canvas.width > 0 && canvas.height > 0) {
-                    importCoordinates(initialTikz)
-                    initialTikzImported = true
-                    initialPresetLoaded = true
-                }
                 if (restoreFromSession && !sessionRestored && canvas.width > 0 && canvas.height > 0) {
                     restoreSessionState()
                     sessionRestored = true
                     initialPresetLoaded = true
+                    resetUndoHistory()
+                    centerOriginInViewport()
+                }
+                if (initialTikz != null && !initialTikzImported && canvas.width > 0 && canvas.height > 0) {
+                    importCoordinates(initialTikz)
+                    initialTikzImported = true
+                    initialPresetLoaded = true
+                    resetUndoHistory()
+                    centerOriginInViewport()
                 }
                 if (!initialPresetLoaded && !restoreFromSession && initialTikz == null && presets.isNotEmpty()) {
                     titleCombo.selectedIndex = 0
                     doLoadSelected()
                     initialPresetLoaded = true
+                    resetUndoHistory()
+                    centerOriginInViewport()
+                }
+                if (!initialPresetLoaded && !restoreFromSession && initialTikz == null && presets.isEmpty() && canvas.width > 0) {
+                    initialPresetLoaded = true
+                    resetUndoHistory()
+                    centerOriginInViewport()
                 }
                 layoutCanvasPreviewOverlay()
             }
@@ -966,7 +1012,7 @@ class TikzCanvasDialog(
         header.add(toolsRow)
         header.add(fileRow)
 
-        val scrollCanvas = JScrollPane(canvas)
+        scrollCanvas = JScrollPane(canvas)
         knotPreviewEmbedCard = JPanel(BorderLayout()).apply {
             border = BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(JBColor.border(), 1),
@@ -983,6 +1029,7 @@ class TikzCanvasDialog(
             addComponentListener(object : ComponentAdapter() {
                 override fun componentResized(e: ComponentEvent?) {
                     layoutCanvasPreviewOverlay()
+                    centerOriginInViewport()
                 }
             })
         }
@@ -992,13 +1039,17 @@ class TikzCanvasDialog(
             add(header, BorderLayout.NORTH)
             add(canvasLayerHost, BorderLayout.CENTER)
             addAncestorListener(object : AncestorListener {
-                override fun ancestorAdded(event: AncestorEvent) {}
+                override fun ancestorAdded(event: AncestorEvent) {
+                    SwingUtilities.invokeLater { centerOriginInViewport() }
+                }
                 override fun ancestorRemoved(event: AncestorEvent) {
                     disposeKnotPreviewEmbed()
                 }
                 override fun ancestorMoved(event: AncestorEvent) {}
             })
         }
+
+        installUndoRedoKeys(rootPanel)
 
         setOKButtonText("Add to TeX")
         setCancelButtonText("Cancel")
@@ -1023,7 +1074,7 @@ class TikzCanvasDialog(
                 if (SwingUtilities.isRightMouseButton(e) || e.button == MouseEvent.BUTTON3 || e.isPopupTrigger) {
                     nearestKnot(modelPoint(e))?.let { idx ->
                         knotPts.removeAt(idx)
-                        markDirty()
+                        markDirty(recordUndo = true)
                         canvas.repaint()
                     }
                     return
@@ -1036,6 +1087,7 @@ class TikzCanvasDialog(
                     if (near != null) {
                         dragKnotIndex = near
                         autoMoveGrab = true
+                        knotDragMoved = false
                         return
                     }
 
@@ -1077,7 +1129,8 @@ class TikzCanvasDialog(
                 if (autoMoveGrab || mode == EditMode.MOVE) {
                     if (dragKnotIndex >= 0) {
                         knotPts[dragKnotIndex] = p
-                        markDirty()
+                        knotDragMoved = true
+                        markDirty(recordUndo = false)
                         canvas.repaint()
                     }
                 } else if (pressButton == MouseEvent.BUTTON1) {
@@ -1174,6 +1227,7 @@ class TikzCanvasDialog(
         autoMoveGrab = false
         longPressReady = false
         dragKnotIndex = -1
+        knotDragMoved = false
         drag = null
     }
 
@@ -1181,9 +1235,11 @@ class TikzCanvasDialog(
         val p = snap(modelPoint(e))
         when (tool) {
             Tool.KNOT -> {
-                // If we were dragging an existing point, just end the drag
+                // If we were dragging an existing point, commit one undo entry for the whole drag
                 if (autoMoveGrab || mode == EditMode.MOVE) {
-                    // no-op; dragKnotIndex cleared in reset
+                    if (knotDragMoved) {
+                        markDirty(recordUndo = true)
+                    }
                 } else if (pressButton == MouseEvent.BUTTON1 && longPressReady) {
                     // Commit add on release if the press lasted long enough
                     val raw = pressRaw ?: modelPoint(e)
@@ -1409,6 +1465,8 @@ class TikzCanvasDialog(
 
             dirty = true
             canvas.repaint()
+            resetUndoHistory()
+            centerOriginInViewport()
             return
         }
 
@@ -1418,6 +1476,8 @@ class TikzCanvasDialog(
         }
         knotPts.clear(); knotPts.addAll(pts.map { Point(it) })
         dirty = false; canvas.repaint()
+        resetUndoHistory()
+        centerOriginInViewport()
     }
 
     private fun doNew() {
@@ -1438,6 +1498,8 @@ class TikzCanvasDialog(
         shapes.clear()
         dirty = false
         canvas.repaint()
+        resetUndoHistory()
+        centerOriginInViewport()
         scheduleEmbedLivePreview()
     }
 
@@ -1948,10 +2010,93 @@ class TikzCanvasDialog(
             .replace("^", "\\^{}")
             .replace("~", "\\~{}")
 
-    private fun markDirty() {
+    private fun markDirty(recordUndo: Boolean = true) {
         dirty = true
+        if (recordUndo && !undoSuspended) {
+            undoStack.push(takeSnapshot())
+        }
         scheduleEmbedLivePreview()
         scheduleAutoSave()
+    }
+
+    private fun takeSnapshot(): CanvasSnap =
+        CanvasSnap(
+            knot = knotPts.map { Point(it.x, it.y) },
+            flip = flipField.text,
+            shapes = shapes.map { cloneShape(it) },
+        )
+
+    private fun cloneShape(s: Shape): Shape = when (s) {
+        is Dot -> Dot(Point(s.p))
+        is Label -> Label(Point(s.p), s.text)
+        is LineSeg -> LineSeg(Point(s.a), Point(s.b))
+        is Circ -> Circ(Point(s.c), s.rUnits)
+        is Rect -> Rect(Point(s.a), Point(s.b))
+    }
+
+    private fun restoreSnapshot(snap: CanvasSnap) {
+        undoSuspended = true
+        try {
+            knotPts.clear()
+            knotPts.addAll(snap.knot.map { Point(it) })
+            flipField.text = snap.flip
+            shapes.clear()
+            shapes.addAll(snap.shapes.map { cloneShape(it) })
+            canvas.repaint()
+            scheduleEmbedLivePreview()
+        } finally {
+            undoSuspended = false
+        }
+    }
+
+    private fun performUndo() {
+        val snap = undoStack.undo() ?: return
+        restoreSnapshot(snap)
+        dirty = true
+    }
+
+    private fun performRedo() {
+        val snap = undoStack.redo() ?: return
+        restoreSnapshot(snap)
+        dirty = true
+    }
+
+    private fun resetUndoHistory() {
+        undoStack.clear()
+        undoStack.push(takeSnapshot())
+    }
+
+    private fun installUndoRedoKeys(target: JComponent) {
+        val undoKey = KeyStroke.getKeyStroke(KeyEvent.VK_Z, Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx)
+        val redoKey = KeyStroke.getKeyStroke(KeyEvent.VK_Z, Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx or KeyEvent.SHIFT_DOWN_MASK)
+        val redoY = KeyStroke.getKeyStroke(KeyEvent.VK_Y, Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx)
+        fun bind(comp: JComponent) {
+            val im = comp.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+            im.put(undoKey, "ll-tikz-undo")
+            im.put(redoKey, "ll-tikz-redo")
+            im.put(redoY, "ll-tikz-redo")
+            comp.actionMap.put("ll-tikz-undo", object : AbstractAction() {
+                override fun actionPerformed(e: java.awt.event.ActionEvent?) = performUndo()
+            })
+            comp.actionMap.put("ll-tikz-redo", object : AbstractAction() {
+                override fun actionPerformed(e: java.awt.event.ActionEvent?) = performRedo()
+            })
+        }
+        bind(target)
+        bind(canvas)
+    }
+
+    private fun centerOriginInViewport() {
+        if (!this::scrollCanvas.isInitialized) return
+        val view = scrollCanvas.viewport
+        val vp = view.extentSize
+        if (vp.width <= 0 || vp.height <= 0) return
+        val originX = canvas.width / 2
+        val originY = canvas.height / 2
+        val maxX = (canvas.width - vp.width).coerceAtLeast(0)
+        val maxY = (canvas.height - vp.height).coerceAtLeast(0)
+        val pos = TikzCanvasOrigin.scrollToCenterOrigin(originX, originY, vp.width, vp.height, maxX, maxY)
+        view.viewPosition = Point(pos.x, pos.y)
     }
 
     private fun layoutCanvasPreviewOverlay() {
