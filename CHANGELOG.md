@@ -1,18 +1,51 @@
 # Changelog
 
-## Unreleased 0.0.9 - 2026-04-19
+## Unreleased
+
+## 0.0.10 - 2026-07-24
 
 ### Added
 
+- Editor context menu reorder: **LaTeX Preview** first with **Ctrl+Alt+P** show/hide toggle; nest cite/ref under LiveLaTeX insert; rename Format to **Selected Text**
+- Sections combo: place **rightmost** and widen it; nest subsection labels; **Options** filters to hide sub/subsubsection entries
+- Simplified **Generate Table** wizard: one header row, compact body/cols, placement dropdown, floating align row above the table mock
+- **TikZ canvas toolbar**: rotate ±, width %, autosave, New confirm; content-hash preview cache with a reusable preview window
+- TikZ export wrapped in `\resizebox` (Width% of linewidth); **Load Last** to re-insert the previous canvas session
+- TikZ canvas **help overlay**, centered origin kept in view, and **undo/redo** (Ctrl+Z / Ctrl+Shift+Z)
+- HTML preview: convert `\url{...}` hyperlinks
+
 ### Changed
 
-### Deprecated
-
-### Removed
+- **Refresh** clears the current document cache and reloads the preview
+- Gradle / IntelliJ Platform / SDK configuration updated (platform **2026.2**)
+- Plugin logo size and placement
 
 ### Fixed
 
-### Security
+- **Insert Reference** bibliography lookup no longer freezes the EDT (resolve `.bib` via project root, editor parents, and FilenameIndex; action updates on BGT)
+- Removed preview-to-editor auto-scroll (keep editor-to-preview sync and click jumps without align echo)
+
+### Removed
+
+- Duplicate Options **clear document cache** entry (Refresh covers this)
+
+## 0.0.9 - 2026-05-04
+
+### Added
+
+- In-preview **Render TikZ** checkbox bridged to LiveRender / `LiveLatexSettings`
+- HTML preview conversion for letter environments and `textblock*` (textpos)
+- Safer section-title parsing: `\texorpdfstring`, optional short titles, nested itemize/enumerate
+
+### Changed
+
+- HTML prose pipeline: distinguish display-math `\[` from line-break spacing `\\[dim]`; nested list environments
+- Preview focus: do not auto-activate the tool window on tab changes; pull focus back to the active editor; listener registration aligned with dispose
+- Plugin branding assets (64px icons)
+
+### Fixed
+
+- Preview corruption when line-break spacing was misread as a display-math opener
 
 ## 0.0.8 - 2026-03-31
 

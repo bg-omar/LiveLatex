@@ -42,11 +42,21 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 
+changelog {
+    version.set(providers.gradleProperty("pluginVersion"))
+    path.set(file("CHANGELOG.md").invariantSeparatorsPath)
+}
+
 intellijPlatform {
     pluginConfiguration {
-        changeNotes = """
-            Initial version
-        """.trimIndent()
+        changeNotes = provider {
+            changelog.renderItem(
+                changelog.getLatest()
+                    .withHeader(false)
+                    .withEmptySections(false),
+                Changelog.OutputType.HTML,
+            )
+        }
     }
     // Configure on the extension (not only the task) so PRIVATE_KEY / CERTIFICATE_CHAIN env vars
     // cannot override the files — text PEMs take precedence in SignPluginTask and break IntelliJ runs
@@ -67,6 +77,12 @@ intellijPlatform {
 }
 
 tasks {
+    processResources {
+        from(layout.projectDirectory.file("CHANGELOG.md")) {
+            into("META-INF")
+        }
+    }
+
     patchPluginXml {
         version = properties("pluginVersion").orNull ?: project.version.toString()
         sinceBuild = properties("pluginSinceBuild").orNull
@@ -91,6 +107,28 @@ tasks {
         // dependsOn(generateUpdatePluginsXml)
         token = System.getenv("PUBLISH_TOKEN")
         channels = properties("pluginVersion").map { listOf(it.substringAfter('-', "").substringBefore('.').ifEmpty { "default" }) }
+    }
+
+    // So What's New notification reappears on every sandbox run (lastSeenPluginVersion).
+    register("clearLiveLatexSandboxSettings") {
+        group = "intellij platform"
+        description = "Delete sandbox livelatex.xml so What's New shows on every runIde"
+        val sandboxRoot = layout.projectDirectory.dir(".intellijPlatform/sandbox")
+        doLast {
+            val root = sandboxRoot.asFile
+            if (!root.isDirectory) return@doLast
+            root.walkTopDown()
+                .filter { it.isFile && it.name.equals("livelatex.xml", ignoreCase = true) }
+                .forEach { file ->
+                    if (file.delete()) {
+                        logger.lifecycle("Deleted {} (What's New will show on next runIde)", file)
+                    }
+                }
+        }
+    }
+
+    named("runIde") {
+        dependsOn("clearLiveLatexSandboxSettings")
     }
 
     // IntelliJ Platform 2026.2 is built with Java 25 bytecode

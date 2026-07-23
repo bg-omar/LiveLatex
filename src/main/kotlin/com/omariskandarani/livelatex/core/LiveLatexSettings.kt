@@ -24,6 +24,8 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
         var invertScrollVertical: Boolean = false,
         var showDropdownSubsections: Boolean = true,
         var showDropdownSubsubsections: Boolean = true,
+        /** Last plugin version for which What's New was shown (Notifications). */
+        var lastSeenPluginVersion: String = "",
     )
 
     private var state = State()
@@ -77,4 +79,8 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
     var showDropdownSubsubsections: Boolean
         get() = state.showDropdownSubsubsections
         set(value) { state.showDropdownSubsubsections = value }
+
+    var lastSeenPluginVersion: String
+        get() = state.lastSeenPluginVersion
+        set(value) { state.lastSeenPluginVersion = value }
 }

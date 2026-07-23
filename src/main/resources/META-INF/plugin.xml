@@ -24,6 +24,8 @@
                     icon="/icons/livelatex.svg"/>
         <applicationService serviceImplementation="com.omariskandarani.livelatex.core.LiveLatexSettings"/>
         <projectService serviceImplementation="com.omariskandarani.livelatex.core.LatexPreviewService"/>
+        <notificationGroup id="LiveLatex" displayType="BALLOON"/>
+        <postStartupActivity implementation="com.omariskandarani.livelatex.core.WhatsNewProjectActivity"/>
     </extensions>
 
     <actions>
