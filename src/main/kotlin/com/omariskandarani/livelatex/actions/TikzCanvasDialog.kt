@@ -511,12 +511,19 @@ class TikzCanvasDialog(
     private val livePreviewCheck = JCheckBox("Live preview").apply {
         toolTipText = "TikZ preview in the lower-right of the canvas; updates after changes (debounced)"
     }
+    private val autoSaveCheck = JCheckBox("Autosave").apply {
+        toolTipText = "Debounced save of knot points when the canvas changes"
+    }
+    private lateinit var spWidthPct: JSpinner
 
     private lateinit var canvasLayerHost: JLayeredPane
     private lateinit var knotPreviewEmbedCard: JPanel
     private var knotPreviewBrowser: JBCefBrowser? = null
     private var livePreviewTimer: Timer? = null
     private var livePreviewRequestSeq = 0
+    private var autoSaveTimer: Timer? = null
+    private var knotPreviewDialog: JDialog? = null
+    private var knotPreviewDialogBrowser: JBCefBrowser? = null
 
     private lateinit var twoStrandBox: JCheckBox
 
@@ -786,10 +793,7 @@ class TikzCanvasDialog(
     /** Normalized degrees in [0, 360), 0 = no rotation; matches TikZ `rotate` (CCW in standard coords). */
     private fun knotViewRotateDeg(): Double {
         val v = (spKnotRotate.value as? Number)?.toDouble() ?: 0.0
-        var d = v % 360.0
-        if (d < 0) d += 360.0
-        if (abs(d) < 1e-9 || abs(d - 360.0) < 1e-9) return 0.0
-        return d
+        return TikzToolbarHelpers.normalizeRotateDeg(v)
     }
 
     /** Java2D rotation that matches TikZ `rotate` for the same numeric angle (screen y-down vs. paper y-up). */
@@ -865,8 +869,8 @@ class TikzCanvasDialog(
         clearBgBtn.addActionListener { clearBackgroundImage() }
         bgOpacitySpinner.addChangeListener { canvas.repaint() }
 
-        spKnotRotate = JSpinner(SpinnerNumberModel(0, 0, 360, 1)).apply {
-            toolTipText = "Rotate entire knot and shapes (0–360°, matches TikZ rotate)"
+        spKnotRotate = JSpinner(SpinnerNumberModel(0, -360, 360, 1)).apply {
+            toolTipText = "Rotate entire knot and shapes (−360…360°, matches TikZ rotate)"
             preferredSize = Dimension(56, preferredSize.height)
             addChangeListener {
                 canvas.repaint()
@@ -877,6 +881,11 @@ class TikzCanvasDialog(
             }
         }
 
+        spWidthPct = JSpinner(SpinnerNumberModel(80, 10, 100, 5)).apply {
+            toolTipText = "Export width as percent of \\linewidth (used when placing in TeX)"
+            preferredSize = Dimension(56, preferredSize.height)
+        }
+
         val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
             add(optionsBtn)
             add(Box.createHorizontalStrut(12))
@@ -885,6 +894,9 @@ class TikzCanvasDialog(
             add(Box.createHorizontalStrut(12))
             add(JLabel("Rotate °"))
             add(spKnotRotate)
+            add(Box.createHorizontalStrut(8))
+            add(JLabel("Width %"))
+            add(spWidthPct)
             add(Box.createHorizontalStrut(12))
             add(loadBgBtn); add(clearBgBtn)
         }
@@ -916,6 +928,7 @@ class TikzCanvasDialog(
             add(previewBtn)
             add(Box.createHorizontalStrut(8))
             add(livePreviewCheck)
+            add(autoSaveCheck)
         }
 
         exportSetupBtn.addActionListener { saveSetupToFile() }
@@ -1346,6 +1359,19 @@ class TikzCanvasDialog(
         if (title.isBlank()) { title = autoTitle(); titleCombo.editor.item = title }
         store.save(title, knotPts); refreshTitlesCombo(title); dirty = false
     }
+
+    private fun scheduleAutoSave() {
+        if (!autoSaveCheck.isSelected) return
+        autoSaveTimer?.stop()
+        val t = Timer(800) {
+            autoSaveTimer?.stop()
+            if (autoSaveCheck.isSelected) maybeAutoSave()
+        }
+        t.isRepeats = false
+        autoSaveTimer = t
+        t.start()
+    }
+
     private fun doLoadSelected() {
         maybeAutoSave()
         cancelInlineText()
@@ -1385,9 +1411,24 @@ class TikzCanvasDialog(
     }
 
     private fun doNew() {
-        maybeAutoSave()
+        val hasContent = dirty || knotPts.isNotEmpty() || shapes.isNotEmpty() || currentTitle().isNotBlank()
+        if (hasContent) {
+            val choice = JOptionPane.showConfirmDialog(
+                rootPanel,
+                "Clear the current TikZ canvas?",
+                "New",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE,
+            )
+            if (choice != JOptionPane.YES_OPTION) return
+        }
         cancelInlineText()
-        titleCombo.editor.item = ""; knotPts.clear(); dirty = false; canvas.repaint()
+        titleCombo.editor.item = ""
+        knotPts.clear()
+        shapes.clear()
+        dirty = false
+        canvas.repaint()
+        scheduleEmbedLivePreview()
     }
 
     // ---------- import/export ----------
@@ -1448,12 +1489,7 @@ class TikzCanvasDialog(
         previewBtn.isEnabled = false
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                val baseDir = project.basePath
-                if (baseDir != null) TikzRenderer.currentBaseDir = baseDir
-                TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
-                val key = "tikz-knot-preview"
-                val svgFile = LatexHtmlTikz.renderTexToSvg(texDoc, key)
-                // ModalityState.any(): run while the modal TikZ dialog is still open (default invokeLater waits until it closes).
+                val svgFile = renderKnotPreviewSvg(texDoc)
                 ApplicationManager.getApplication().invokeLater(
                     {
                         previewBtn.isEnabled = true
@@ -1465,24 +1501,7 @@ class TikzCanvasDialog(
 <div style="background:white;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">$svgText</div>
 </body></html>
                             """.trimIndent()
-                            val canvasWindow = SwingUtilities.getWindowAncestor(rootPanel) as? Window
-                            val owner = canvasWindow ?: WindowManager.getInstance().getFrame(project) as? Window
-                            val dlg = JDialog(owner, "Knot Preview", Dialog.ModalityType.MODELESS)
-                            dlg.defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
-                            dlg.layout = BorderLayout()
-                            val browser = JBCefBrowser()
-                            browser.loadHTML(html, "about:blank")
-                            dlg.add(browser.component, BorderLayout.CENTER)
-                            dlg.setSize(500, 500)
-                            dlg.setLocationRelativeTo(owner)
-                            dlg.isVisible = true
-                            dlg.toFront()
-                            dlg.requestFocus()
-                            // JCEF can reparent HWNDs slightly later on Windows; second bump keeps preview above the modal editor.
-                            SwingUtilities.invokeLater {
-                                dlg.toFront()
-                                dlg.requestFocus()
-                            }
+                            showOrUpdateKnotPreviewDialog(html)
                         } else {
                             JOptionPane.showMessageDialog(rootPanel,
                                 "TikZ compilation failed. Ensure pdflatex and dvisvgm/pdf2svg are installed.",
@@ -1502,6 +1521,60 @@ class TikzCanvasDialog(
             }
         }
     }
+
+    private fun renderKnotPreviewSvg(texDoc: String): File? {
+        val baseDir = project.basePath
+        if (baseDir != null) TikzRenderer.currentBaseDir = baseDir
+        TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
+        val key = TikzToolbarHelpers.previewCacheKey(texDoc)
+        return LatexHtmlTikz.renderTexToSvg(texDoc, key)
+    }
+
+    private fun showOrUpdateKnotPreviewDialog(html: String) {
+        val canvasWindow = SwingUtilities.getWindowAncestor(rootPanel) as? Window
+        val owner = canvasWindow ?: WindowManager.getInstance().getFrame(project) as? Window
+        val existing = knotPreviewDialog
+        if (existing != null && existing.isDisplayable) {
+            knotPreviewDialogBrowser?.loadHTML(html, "about:blank")
+            existing.toFront()
+            existing.requestFocus()
+            return
+        }
+        val dlg = JDialog(owner, "Knot Preview", Dialog.ModalityType.MODELESS)
+        dlg.defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
+        dlg.layout = BorderLayout()
+        val browser = JBCefBrowser()
+        knotPreviewDialogBrowser = browser
+        browser.loadHTML(html, "about:blank")
+        dlg.add(browser.component, BorderLayout.CENTER)
+        dlg.setSize(500, 500)
+        dlg.setLocationRelativeTo(owner)
+        dlg.addWindowListener(object : java.awt.event.WindowAdapter() {
+            override fun windowClosed(e: java.awt.event.WindowEvent?) {
+                if (knotPreviewDialog === dlg) {
+                    knotPreviewDialog = null
+                    knotPreviewDialogBrowser = null
+                    try {
+                        Disposer.dispose(browser)
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+        })
+        knotPreviewDialog = dlg
+        dlg.isVisible = true
+        dlg.toFront()
+        dlg.requestFocus()
+        SwingUtilities.invokeLater {
+            dlg.toFront()
+            dlg.requestFocus()
+        }
+    }
+
+    /** Width percent for \\linewidth wrap when placing in TeX (plan 09). */
+    fun exportWidthPercent(): Int =
+        TikzToolbarHelpers.clampWidthPercent((spWidthPct.value as? Number)?.toInt() ?: 80)
+
 
     override fun doOKAction() {
         // 1) Read UI into settings
@@ -1840,6 +1913,7 @@ class TikzCanvasDialog(
     private fun markDirty() {
         dirty = true
         scheduleEmbedLivePreview()
+        scheduleAutoSave()
     }
 
     private fun layoutCanvasPreviewOverlay() {
@@ -1867,6 +1941,8 @@ class TikzCanvasDialog(
     private fun disposeKnotPreviewEmbed() {
         livePreviewTimer?.stop()
         livePreviewTimer = null
+        autoSaveTimer?.stop()
+        autoSaveTimer = null
         knotPreviewBrowser?.let {
             try {
                 Disposer.dispose(it)
@@ -1877,6 +1953,9 @@ class TikzCanvasDialog(
         if (this::knotPreviewEmbedCard.isInitialized) {
             knotPreviewEmbedCard.removeAll()
         }
+        knotPreviewDialog?.dispose()
+        knotPreviewDialog = null
+        knotPreviewDialogBrowser = null
     }
 
     private fun scheduleEmbedLivePreview() {
@@ -1913,11 +1992,7 @@ $body
         ApplicationManager.getApplication().executeOnPooledThread {
             if (requestId != livePreviewRequestSeq) return@executeOnPooledThread
             try {
-                val baseDir = project.basePath
-                if (baseDir != null) TikzRenderer.currentBaseDir = baseDir
-                TikzRenderer.pluginCacheRoot = File(PathManager.getSystemPath(), "livelatex-cache").absolutePath
-                val jobKey = "tikz-canvas-live-" + texDoc.hashCode()
-                val svgFile = LatexHtmlTikz.renderTexToSvg(texDoc, jobKey)
+                val svgFile = renderKnotPreviewSvg(texDoc)
                 ApplicationManager.getApplication().invokeLater(
                     {
                         if (!livePreviewCheck.isSelected || requestId != livePreviewRequestSeq) return@invokeLater
