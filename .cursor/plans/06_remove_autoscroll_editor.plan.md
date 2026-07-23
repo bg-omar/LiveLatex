@@ -4,19 +4,19 @@ overview: "autoScrollEditor weg; editor→preview + jumps blijven. Template/sett
 todos:
   - id: test-helpers
     content: "Assert template/settings: geen ll_auto_scroll_editor paths (gewenst na fix); pipeline suite blijft"
-    status: pending
+    status: completed
   - id: remove-setting-toggles
     content: "autoScrollEditor setting + toggles + localStorage push weg"
-    status: pending
+    status: completed
   - id: remove-template-paths
     content: "onPreviewScroll, __llAutoScrollEditor, emitIfStable moveCaret-tak weg"
-    status: pending
+    status: completed
   - id: snapback-guards
     content: "jsMoveCaret align-echo weg; syncingFromPreview langer"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen; handcheck scroll-policy"
-    status: pending
+    status: completed
 isProject: false
 ---
 

@@ -258,7 +258,22 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
   const dbgEl = () => document.getElementById('ll-debug');
   let lastT = 0, lastSig = '';
 
+  function llDebugScrollEnabled(){
+    try { return localStorage.getItem('ll_debug_scroll') === 'true'; } catch(_) { return false; }
+  }
+  function applyDebugScroll(on){
+    const el = dbgEl(); if (!el) return;
+    if (on) el.classList.add('visible');
+    else el.classList.remove('visible');
+  }
+  window.__llDebugScroll = llDebugScrollEnabled;
+  window.__llApplyDebugScroll = function(on){
+    try { localStorage.setItem('ll_debug_scroll', on ? 'true' : 'false'); } catch(_){}
+    applyDebugScroll(!!on);
+  };
+
   function updateDebug(data){
+    if (!llDebugScrollEnabled()) return;
     const el = dbgEl(); if (!el) return;
     const now = Date.now();
     if (now - lastT < 150) return;
@@ -295,15 +310,37 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
 
   const sync = {
     idx: [], lastEl: null,
-    init(){ this.idx = Array.from(document.querySelectorAll('.syncline')).map(el => ({ el, abs:+el.dataset.abs||0 })); },
+    init(){
+      this.idx = Array.from(document.querySelectorAll('.syncline'))
+        .map(el => ({ el, abs:+el.dataset.abs||0 }))
+        .filter(x => x.abs > 0)
+        .sort((a,b) => a.abs - b.abs);
+    },
     scrollToAbs(line, mode='center', meta){
       if (!this.idx.length) this.init();
-      const arr = this.idx; if (!arr.length) return;
+      const arr = this.idx;
+      // no synclines: continuous callers may fall back to marks
+      if (!arr.length) return false;
+
+      // Preamble / before first body anchor: stay at top (do not clamp to a late first syncline).
+      if (line < arr[0].abs) {
+        window.scrollTo({ top: 0 });
+        _lastTargetAbs = line;
+        _lastPlannedTop = 0;
+        _lastScrollTs = Date.now();
+        updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta, preamble:true, targetAbs:null});
+        return true;
+      }
 
       // binary search: last anchor with abs <= line
-      let lo=0, hi=arr.length-1, ans=0;
+      let lo=0, hi=arr.length-1, ans=-1;
       while (lo<=hi){ const mid=(lo+hi)>>1; if (arr[mid].abs<=line){ ans=mid; lo=mid+1; } else hi=mid-1; }
-      const target = arr[ans] && arr[ans].el; if (!target) return;
+      if (ans < 0) {
+        window.scrollTo({ top: 0 });
+        updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta, preamble:true});
+        return true;
+      }
+      const target = arr[ans] && arr[ans].el; if (!target) return false;
 
       if (this.lastEl) this.lastEl.classList.remove('sync-target');
       target.classList.add('sync-target'); this.lastEl = target;
@@ -328,7 +365,7 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
       const tooSoon = (now - _lastScrollTs) < 50; // collapse back-to-back frames
 
       if (sameTarget && sameY && tooSoon) {
-        return; // skip duplicate
+        return true; // skip duplicate
       }
 
       window.scrollTo({ top: plannedTop });
@@ -337,6 +374,7 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
       _lastScrollTs = now;
 
       updateDebug({event:'scrollToAbs', mergedAbs: line, mode, meta});
+      return true;
     }
   };
   window.sync = sync;
@@ -357,6 +395,34 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
           mergedAbs = window.__llO2M[mergedAbs-1];
         }
 
+        // Continuous editor follow: line anchors (syncline), not section marks.
+        // Mark-based scroll freezes within a section then page-jumps at the next heading.
+        const continuous = (d.source === 'scroll' || d.source === 'caret' || d.source === 'initial');
+        if (continuous) {
+          let did = false;
+          if (window.sync && typeof window.sync.scrollToAbs === 'function') {
+            did = !!window.sync.scrollToAbs(mergedAbs, d.mode || 'center', { from: d.source || 'scroll' });
+          }
+          // no synclines: fall back to nearest section mark so follow still works
+          if (!did) {
+            if (!window.__llMarks || !window.__llMarks.length) {
+              if (typeof window.__collectMarks === 'function') window.__collectMarks();
+            }
+            const realMarks = (window.__llMarks || []).filter(m => !m.synthetic);
+            if (realMarks.length && typeof window.__scrollToMark === 'function') {
+              let lo=0, hi=realMarks.length-1, ans=0;
+              while (lo<=hi){ const mid=(lo+hi)>>1; if (realMarks[mid].abs<=mergedAbs){ ans=mid; lo=mid+1; } else hi=mid-1; }
+              if (mergedAbs < realMarks[0].abs) {
+                window.scrollTo({ top: 0 });
+              } else {
+                window.__scrollToMark(realMarks[ans], d.mode || 'center');
+              }
+              try { if (typeof updateDebug==='function') updateDebug({event:'host-sync', origAbs:d.abs, mergedAbs, fallback:'mark'}); } catch(_){}
+            }
+          }
+          return;
+        }
+
         if (!window.__llMarks || !window.__llMarks.length) {
           if (typeof window.__collectMarks === 'function') window.__collectMarks();
         }
@@ -364,7 +430,7 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
         const realMarks = allMarks.filter(m => !m.synthetic); // <— ignore synthetic here
 
         if (realMarks.length) {
-          // === mark-based scroll (unchanged, but use realMarks) ===
+          // === mark-based scroll for discrete navigation ===
           let lo=0, hi=realMarks.length-1, ans=0;
           while (lo<=hi){ const mid=(lo+hi)>>1; if (realMarks[mid].abs<=mergedAbs){ ans=mid; lo=mid+1; } else hi=mid-1; }
           const mark = realMarks[ans];
@@ -694,15 +760,29 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
     <div class="full-text">$fullTextHtml</div>
   </div>
   <div id="ll-spacer" style="height:0;"></div>
-  <div id="ll-debug" title="LiveLaTeX debug HUD (press D to toggle)"></div>
+  <div id="ll-debug" title="LiveLaTeX scroll debug HUD (Options → Debug Mode, or press D)"></div>
   
 
   <script>
     (function(){
+      function applyFromStorage(){
+        var on = false;
+        try { on = localStorage.getItem('ll_debug_scroll') === 'true'; } catch(_){}
+        var el = document.getElementById('ll-debug'); if (!el) return;
+        if (on) el.classList.add('visible'); else el.classList.remove('visible');
+      }
+      applyFromStorage();
       document.addEventListener('keydown', function(e){
         if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-          var el = document.getElementById('ll-debug'); if (!el) return;
-          el.classList.toggle('visible');
+          var cur = false;
+          try { cur = localStorage.getItem('ll_debug_scroll') === 'true'; } catch(_){}
+          var next = !cur;
+          try { localStorage.setItem('ll_debug_scroll', next ? 'true' : 'false'); } catch(_){}
+          if (typeof window.__llApplyDebugScroll === 'function') window.__llApplyDebugScroll(next);
+          else {
+            var el = document.getElementById('ll-debug'); if (!el) return;
+            if (next) el.classList.add('visible'); else el.classList.remove('visible');
+          }
         }
       }, false);
     })();

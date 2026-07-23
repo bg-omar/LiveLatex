@@ -36,6 +36,15 @@
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>
         </action>
 
+        <action id="LiveLaTeX.EditTikzFigure"
+                class="com.omariskandarani.livelatex.actions.EditTikzFigureAction"
+                text="Edit TikZ…"
+                description="Edit the tikzpicture under the caret in the canvas">
+            <add-to-group group-id="EditorPopupMenu"
+                          anchor="after"
+                          relative-to-action="com.omariskandarani.LiveLatex.actions.ShowPreview"/>
+        </action>
+
         <group id="LiveLaTeX.InsertReference"
                class="com.omariskandarani.livelatex.actions.InsertReferenceActionGroup"
                text="Cite or ref"

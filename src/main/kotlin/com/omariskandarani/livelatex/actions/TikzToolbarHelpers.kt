@@ -40,4 +40,57 @@ object TikzToolbarHelpers {
         val frac = linewidthFraction(widthPercent)
         return "\\resizebox{$frac\\linewidth}{!}{%\n$trimmed\n}"
     }
+
+    /**
+     * Start index for replacing a tikzpicture: include same-line leading spaces/tabs before
+     * `\begin{tikzpicture}` so re-exports do not stack indent on top of leftover whitespace.
+     */
+    fun includeLeadingWhitespace(text: String, blockStart: Int): Int {
+        var i = blockStart.coerceIn(0, text.length)
+        while (i > 0) {
+            val c = text[i - 1]
+            if (c != ' ' && c != '\t') break
+            i--
+        }
+        return i
+    }
+
+    /**
+     * Replace-range payload for an existing tikzpicture: eat prior leading whitespace and
+     * re-apply it once to the new body (after stripping a common indent from the export).
+     */
+    fun tikzEditorReplace(
+        documentText: String,
+        blockStart: Int,
+        blockEnd: Int,
+        newBody: String,
+    ): Triple<Int, Int, String> {
+        val start = includeLeadingWhitespace(documentText, blockStart)
+        val ambient = documentText.substring(start, blockStart.coerceAtLeast(start))
+        val stripped = stripCommonIndent(newBody.trimEnd('\n', '\r'))
+        val payload = if (ambient.isEmpty()) {
+            stripped
+        } else {
+            stripped.split("\n").joinToString("\n") { line ->
+                if (line.isEmpty()) line else ambient + line
+            }
+        }
+        return Triple(start, blockEnd.coerceIn(start, documentText.length), payload)
+    }
+
+    /** Remove the largest indent shared by all non-blank lines (spaces/tabs). */
+    fun stripCommonIndent(text: String): String {
+        val lines = text.split("\n")
+        val indents = lines.mapNotNull { line ->
+            if (line.isBlank()) null
+            else line.indexOfFirst { it != ' ' && it != '\t' }.let { if (it < 0) line.length else it }
+        }
+        val min = indents.minOrNull() ?: return text
+        if (min <= 0) return text
+        return lines.joinToString("\n") { line ->
+            if (line.isBlank()) ""
+            else if (line.length >= min && line.take(min).all { it == ' ' || it == '\t' }) line.drop(min)
+            else line.trimStart(' ', '\t')
+        }
+    }
 }

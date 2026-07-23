@@ -4,16 +4,16 @@ overview: "Combo indent + Show subsections/subsubsections. Pure helpers + ./grad
 todos:
   - id: test-helpers
     content: "Unit tests sectionLevel / indentLabel / filterSectionsForDropdown"
-    status: pending
+    status: completed
   - id: indent-labels
     content: "Display-labels indenten op id-prefix"
-    status: pending
+    status: completed
   - id: settings-filter-toggles
     content: "Settings + Options toggles + UI refresh"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen; handcheck dropdown"
-    status: pending
+    status: completed
 isProject: false
 ---
 

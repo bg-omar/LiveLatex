@@ -4,19 +4,19 @@ overview: "TikZ export/apply/place in editor: resizebox linewidth-wrap; New/Edit
 todos:
   - id: test-lock-export-helpers
     content: "Unit tests wrapResizebox / export body contract (gewenst gedrag)"
-    status: pending
+    status: completed
   - id: export-resizebox
     content: "Export wrap \\resizebox{W\\linewidth}{!}{tikzpicture}; preview-doc zonder broken linewidth"
-    status: pending
+    status: completed
   - id: editor-menu-tikz
     content: "New/Edit TikZ + Load Last; descriptions; plugin.xml labels; TikzSessionStore uitbreiden"
-    status: pending
+    status: completed
   - id: session-on-ok
     content: "doOKAction / Add to TeX schrijft session voor Load Last"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen"
-    status: pending
+    status: completed
 isProject: false
 ---
 

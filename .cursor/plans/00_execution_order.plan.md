@@ -1,37 +1,37 @@
 ---
 name: Execution Order
-overview: "Genummerde plannen + test-gate. Uitvoering 01→10 aaneen; één git commit per plan. TikZ = 08–10. Inventory vervallen."
+overview: Genummerde plannen + test-gate. Uitvoering 01→10 aaneen; één git commit per plan. TikZ = 08–10. Inventory vervallen.
 todos:
   - id: p01
-    content: "01_fix_insert_reference_edt (+ commit)"
-    status: pending
+    content: 01_fix_insert_reference_edt (+ commit)
+    status: completed
   - id: p02
-    content: "02_editor_popup_menu (+ commit)"
-    status: pending
+    content: 02_editor_popup_menu (+ commit)
+    status: completed
   - id: p03
-    content: "03_refresh_clears_cache (+ commit)"
-    status: pending
+    content: 03_refresh_clears_cache (+ commit)
+    status: completed
   - id: p04
-    content: "04_combo_right_wide (+ commit)"
-    status: pending
+    content: 04_combo_right_wide (+ commit)
+    status: completed
   - id: p05
-    content: "05_combo_indent_filters (+ commit)"
-    status: pending
+    content: 05_combo_indent_filters (+ commit)
+    status: completed
   - id: p06
-    content: "06_remove_autoscroll_editor (+ commit)"
-    status: pending
+    content: 06_remove_autoscroll_editor (+ commit)
+    status: completed
   - id: p07
-    content: "07_table_wizard_ux (+ commit)"
-    status: pending
+    content: 07_table_wizard_ux (+ commit)
+    status: completed
   - id: p08
-    content: "08_tikz_toolbar (+ commit)"
-    status: pending
+    content: 08_tikz_toolbar (+ commit)
+    status: completed
   - id: p09
-    content: "09_tikz_export_tex (+ commit)"
-    status: pending
+    content: 09_tikz_export_tex (+ commit)
+    status: completed
   - id: p10
-    content: "10_tikz_canvas_behaviour (+ commit)"
-    status: pending
+    content: 10_tikz_canvas_behaviour (+ commit)
+    status: completed
 isProject: false
 ---
 

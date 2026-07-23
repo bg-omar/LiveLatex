@@ -4,6 +4,112 @@
     <option name="entries">
       <list>
         <Entry>
+          <option name="name" value="@ 3₁ Half-Twist Trefoil" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="725" />
+                <option name="y" value="324" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="500" />
+                <option name="y" value="499" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="500" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="700" />
+                <option name="y" value="699" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="800" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="600" />
+                <option name="y" value="524" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="400" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="500" />
+                <option name="y" value="699" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="700" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="700" />
+                <option name="y" value="499" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="475" />
+                <option name="y" value="324" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
+          <option name="name" value="★ 3₁ Half-Twist Trefoil" />
+          <option name="points">
+            <list>
+              <PointBean>
+                <option name="x" value="550" />
+                <option name="y" value="399" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="500" />
+                <option name="y" value="499" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="500" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="700" />
+                <option name="y" value="699" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="800" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="600" />
+                <option name="y" value="524" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="400" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="500" />
+                <option name="y" value="699" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="700" />
+                <option name="y" value="599" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="700" />
+                <option name="y" value="499" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="700" />
+                <option name="y" value="424" />
+              </PointBean>
+              <PointBean>
+                <option name="x" value="650" />
+                <option name="y" value="349" />
+              </PointBean>
+            </list>
+          </option>
+        </Entry>
+        <Entry>
           <option name="name" value="★ 9₂ Twist" />
           <option name="points">
             <list>
@@ -141,61 +247,6 @@
               <PointBean>
                 <option name="x" value="639" />
                 <option name="y" value="406" />
-              </PointBean>
-            </list>
-          </option>
-        </Entry>
-        <Entry>
-          <option name="name" value="★ 3₁ Half-Twist Trefoil" />
-          <option name="points">
-            <list>
-              <PointBean>
-                <option name="x" value="600" />
-                <option name="y" value="399" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="500" />
-                <option name="y" value="499" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="500" />
-                <option name="y" value="599" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="700" />
-                <option name="y" value="699" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="800" />
-                <option name="y" value="599" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="600" />
-                <option name="y" value="524" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="400" />
-                <option name="y" value="599" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="500" />
-                <option name="y" value="699" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="700" />
-                <option name="y" value="599" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="700" />
-                <option name="y" value="499" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="600" />
-                <option name="y" value="399" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="600" />
-                <option name="y" value="399" />
               </PointBean>
             </list>
           </option>
@@ -491,73 +542,6 @@
               <PointBean>
                 <option name="x" value="736" />
                 <option name="y" value="200" />
-              </PointBean>
-            </list>
-          </option>
-        </Entry>
-        <Entry>
-          <option name="name" value="★ 6₁ Stevedore (Down Quark)" />
-          <option name="points">
-            <list>
-              <PointBean>
-                <option name="x" value="936" />
-                <option name="y" value="550" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="886" />
-                <option name="y" value="300" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="736" />
-                <option name="y" value="200" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="536" />
-                <option name="y" value="300" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="636" />
-                <option name="y" value="550" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="786" />
-                <option name="y" value="600" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="611" />
-                <option name="y" value="625" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="536" />
-                <option name="y" value="550" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="586" />
-                <option name="y" value="300" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="736" />
-                <option name="y" value="200" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="936" />
-                <option name="y" value="300" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="836" />
-                <option name="y" value="550" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="686" />
-                <option name="y" value="600" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="861" />
-                <option name="y" value="625" />
-              </PointBean>
-              <PointBean>
-                <option name="x" value="936" />
-                <option name="y" value="550" />
               </PointBean>
             </list>
           </option>

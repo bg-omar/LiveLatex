@@ -4,16 +4,16 @@ overview: "Fix PluginException: InsertReferenceActionGroup EDT walkTopDown. BGT 
 todos:
   - id: test-helpers
     content: "Extract/test resolveBibFile + label parse (gewenst: geen full-tree walk)"
-    status: pending
+    status: completed
   - id: declare-bgt
     content: "InsertReferenceActionGroup (+ nested): getActionUpdateThread = BGT"
-    status: pending
+    status: completed
   - id: replace-walk
     content: "walkTopDown weg; direct/sibling/FilenameIndex"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen; right-click popup handcheck"
-    status: pending
+    status: completed
 isProject: false
 ---
 

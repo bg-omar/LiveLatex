@@ -4,13 +4,13 @@ overview: "Sections-combo rechts + breed in title-actions. Layout vooral handche
 todos:
   - id: reorder-title-actions
     content: "PreviewChapterComboAction als laatste in setTitleActions"
-    status: pending
+    status: completed
   - id: combo-grow-width
     content: "Combo/wrapper max+preferred breedte / resize fill-remaining"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen; handcheck layout + jump"
-    status: pending
+    status: completed
 isProject: false
 ---
 

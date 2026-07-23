@@ -51,4 +51,44 @@ class TikzToolbarHelpersTest {
         assertEquals("0.85", TikzToolbarHelpers.linewidthFraction(85))
         assertEquals("1", TikzToolbarHelpers.linewidthFraction(100))
     }
+
+    @Test
+    fun includeLeadingWhitespace_eatsSpacesAndTabs() {
+        val text = "\t\t\\begin{tikzpicture}\n\\end{tikzpicture}"
+        val begin = text.indexOf("\\begin{tikzpicture}")
+        assertEquals(0, TikzToolbarHelpers.includeLeadingWhitespace(text, begin))
+        val flush = "x\\begin{tikzpicture}"
+        assertEquals(1, TikzToolbarHelpers.includeLeadingWhitespace(flush, flush.indexOf("\\begin{tikzpicture}")))
+    }
+
+    @Test
+    fun stripCommonIndent_removesSharedSpaces() {
+        val body = "    \\begin{tikzpicture}\n    \\draw (0,0)--(1,1);\n    \\end{tikzpicture}"
+        val stripped = TikzToolbarHelpers.stripCommonIndent(body)
+        assertEquals("\\begin{tikzpicture}\n\\draw (0,0)--(1,1);\n\\end{tikzpicture}", stripped)
+    }
+
+    @Test
+    fun tikzEditorReplace_doesNotStackIndent() {
+        fun beginIndent(s: String): Int {
+            val i = s.indexOf("\\begin{tikzpicture}")
+            var n = 0
+            var j = i - 1
+            while (j >= 0 && (s[j] == ' ' || s[j] == '\t')) {
+                n++; j--
+            }
+            return n
+        }
+
+        val export = "    \\begin{tikzpicture}[use Hobby shortcut]\n    \\coordinate (P1) at (0,0);\n    \\end{tikzpicture}"
+        var doc = "        \\begin{tikzpicture}[use Hobby shortcut]\n        \\end{tikzpicture}"
+        repeat(3) {
+            val begin = doc.indexOf("\\begin{tikzpicture}")
+            val end = doc.indexOf("\\end{tikzpicture}") + "\\end{tikzpicture}".length
+            val (start, stop, payload) = TikzToolbarHelpers.tikzEditorReplace(doc, begin, end, export)
+            doc = doc.substring(0, start) + payload + doc.substring(stop)
+        }
+        assertEquals(8, beginIndent(doc))
+        assertTrue(doc.startsWith("        \\begin{tikzpicture}"))
+    }
 }

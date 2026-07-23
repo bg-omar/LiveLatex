@@ -4,19 +4,19 @@ overview: "TikZ canvas behaviour: help-overlay, (0,0) centreren, undo/redo Ctrl+
 todos:
   - id: test-lock-undo-origin
     content: "Unit tests undo stack push/pop; origin-center helper math indien geëxtraheerd"
-    status: pending
+    status: completed
   - id: canvas-help-overlay
     content: "Help-tekst linksboven (grab/add/delete/insert-on-line)"
-    status: pending
+    status: completed
   - id: origin-centered
     content: "centerOriginInViewport bij open/resize/load/new"
-    status: pending
+    status: completed
   - id: undo-redo
     content: "Undo/redo snapshots + shortcuts Ctrl+Z / Ctrl+Shift+Z"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen"
-    status: pending
+    status: completed
 isProject: false
 ---
 

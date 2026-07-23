@@ -184,18 +184,11 @@ class PreviewToolbarPanel(
             )
         }
         popup.add(JSeparator())
-        popup.add("Export preview HTML…").addActionListener {
-            val confirmed = javax.swing.JOptionPane.showConfirmDialog(
-                hamburgerBtn,
-                "This writes the current preview as an .html file next to your .tex source.\n\n" +
-                    "Use it for development or when sharing issues — not for normal editing.",
-                "Export preview HTML",
-                javax.swing.JOptionPane.OK_CANCEL_OPTION,
-                javax.swing.JOptionPane.WARNING_MESSAGE,
-            )
-            if (confirmed == javax.swing.JOptionPane.OK_OPTION) {
-                svc.exportPreviewHtmlBesideSource()
-            }
+        val debugMode = javax.swing.JCheckBoxMenuItem("Debug Mode", settings.debugScrollLog)
+        popup.add(debugMode)
+        debugMode.addActionListener {
+            settings.debugScrollLog = debugMode.isSelected
+            svc.setDebugMode(debugMode.isSelected)
         }
         popup.add(JSeparator())
         popup.add("Clear all cache").addActionListener {

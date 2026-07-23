@@ -45,7 +45,7 @@ class LatexPreviewToolWindowFactory : ToolWindowFactory, DumbAware {
             ContentFactory.getInstance().createContent(panel, "", false)
         )
 
-        // Combo last so it sits rightmost among our actions (before IDE ··· / hide).
+        // Combo then Options so the gear sits rightmost among our actions (before IDE ··· / hide).
         toolWindow.setTitleActions(
             listOf(
                 RenderTikzToggleAction(),
@@ -53,8 +53,8 @@ class LatexPreviewToolWindowFactory : ToolWindowFactory, DumbAware {
                 PreviewCancelRenderAction(project),
                 PreviewZoomOutAction(project),
                 PreviewZoomInAction(project),
-                PreviewOptionsAction(project),
                 PreviewChapterComboAction(project),
+                PreviewOptionsAction(project),
             )
         )
 

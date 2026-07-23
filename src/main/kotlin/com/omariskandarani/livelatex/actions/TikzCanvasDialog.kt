@@ -137,10 +137,22 @@ class TikzCanvasDialog(
     private lateinit var spTurns: JSpinner
     private lateinit var spSamples: JSpinner
     private lateinit var tfWth: JTextField
-    private lateinit var tfCore: JTextField
+    private lateinit var cpCore: JComboBox<String>
     private lateinit var tfMask: JTextField
-    private lateinit var tfClrA: JTextField
-    private lateinit var tfClrB: JTextField
+    private lateinit var cpClrA: JComboBox<String>
+    private lateinit var cpClrB: JComboBox<String>
+    private lateinit var lblAmp: JLabel
+    private lateinit var lblTwists: JLabel
+    private lateinit var lblSamples: JLabel
+    private lateinit var lblTwistWidth: JLabel
+    private lateinit var lblCore: JLabel
+    private lateinit var lblMask: JLabel
+    private lateinit var lblClrA: JLabel
+    private lateinit var lblClrB: JLabel
+    private lateinit var lblKnotColor: JLabel
+    private lateinit var openRecentMenu: JMenu
+    private val twistDependentControls = mutableListOf<JComponent>()
+
 
     // --------- services / state ----------
     private val store = project.getService(TikzKnotStore::class.java)
@@ -173,6 +185,14 @@ class TikzCanvasDialog(
     private fun unitsToPixelsPoints(units: List<Pair<Double,Double>>): List<Point> {
         val cx = canvas.width / 2; val cy = canvas.height / 2
         return units.map { (ux, uy) -> Point(cx + fromUnits(ux), cy - fromUnits(uy)) }
+    }
+
+    /** Ensure canvas polyline has exactly one closing point (Pn+1 = P1) for the last segment. */
+    private fun applyClosedRingToKnotPts() {
+        if (knotPts.size < 2) return
+        val closed = TikzCanvasPathHelpers.ensureClosedCanvasRing(knotPts)
+        knotPts.clear()
+        knotPts.addAll(closed)
     }
     private fun unitsToPixelsCircles(units: List<Triple<Double,Double,Double>>): List<Circ> {
         val cx = canvas.width / 2; val cy = canvas.height / 2
@@ -207,8 +227,6 @@ class TikzCanvasDialog(
                 -1.0 to -1.0,
                 1.0 to  0.0,
                 1.0 to  1.0,
-                0.0 to  2.0,
-                0.0 to  2.0
             ),
             flipList = "2,4,6,8,10,12,14"
         ),
@@ -223,7 +241,6 @@ class TikzCanvasDialog(
                  2.0 to -2.0,
                 -1.0 to  0.5,
                  1.0 to  0.5,
-                -2.0 to -2.0
             ),
             flipList = "2,4,6,8,10,12,14"
         ),
@@ -240,8 +257,6 @@ class TikzCanvasDialog(
                 0.75 to -1.0,
                 1.25 to -0.50,
                 0.25 to  1.75,
-                -0.25 to  1.75,
-                -0.25 to  1.75
             ),
             flipList = "2,4,6,8,10,12,14"
         ),
@@ -262,7 +277,6 @@ class TikzCanvasDialog(
                 1.0 to -1.5,
                -0.5 to -2.0,
                 1.25 to -2.25,
-                2.0 to -1.5
             ),
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
@@ -283,7 +297,6 @@ class TikzCanvasDialog(
                 -0.5 to -2.0,
                  1.5 to -1.0,
                  2.0 to  2.0,
-                 0.0 to  2.0
             ),
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
@@ -304,8 +317,6 @@ class TikzCanvasDialog(
                 1.50 to  0.0,
                 1.50 to  0.50,
                 0.25 to  2.0,
-                -0.25 to  2.0,
-                -0.25 to  2.0
             ),
             flipList = "2,4,6,8,10,12,14,16,18"
         ),
@@ -330,7 +341,6 @@ class TikzCanvasDialog(
                 1.75 to -1.75,
                 1.50 to  0.0,
                 2.0  to  2.50,
-                0.0  to  2.0,
             ),
             flipList = "2,4,6,8,10,12,14,16,18,20"
         ),
@@ -353,7 +363,6 @@ class TikzCanvasDialog(
                 0.50 to -0.75,
                 2.75 to -0.50,
                 1.25 to  1.25,
-                0.75 to  3.25
             ),
             flipList = "2,4,6,8,10,12,14,16,18,20"
 
@@ -379,7 +388,6 @@ class TikzCanvasDialog(
                  1.75 to -1.0,
                  3.0  to  0.25,
                  1.0  to  2.0,
-                 0.25 to  3.25,
             ),
             flipList = "2,4,6,8,10,12,14,16,18,20"
         ),
@@ -405,7 +413,6 @@ class TikzCanvasDialog(
                  0.50 to -0.75,
                  2.75 to -0.50,
                  1.25 to  1.25,
-                 0.75 to  3.25,
             ),
             flipList = "2,4,6,8,10,12,14,16,18,20"
         ),
@@ -432,7 +439,6 @@ class TikzCanvasDialog(
                  3.0  to -1.0,
                  1.75 to  1.0,
                  1.75 to  3.0,
-                 0.0  to  2.0,
             ),
             flipList = "2,4,6,8,10,12,14,16,18,20"
         ),
@@ -485,66 +491,54 @@ class TikzCanvasDialog(
     private var initialPresetLoaded = false
     private var initialTikzImported = false
     private var sessionRestored = false
+    /** Last successfully loaded title (preset or saved); used for autosave / confirm. */
+    private var lastStableTitle: String = ""
+    private var currentWorkingTitle: String = ""
 
     // --------- UI controls ----------
     private lateinit var rootPanel: JPanel
 
-    private val titleCombo = JComboBox(DefaultComboBoxModel(store.names().toTypedArray())).apply {
-        isEditable = true
-        preferredSize = Dimension(220, preferredSize.height)
-        toolTipText = "Select preset or saved knot"
-        addActionListener {
-            val s = currentTitle().trim()
-            if (s.isNotBlank() && s != "— saved —") doLoadSelected()
-        }
-    }
-    private val newBtn = JButton("New")
-
     private val flipField = JTextField().apply { columns = 14 }
     private val showPointsBox = JCheckBox("Guides", true)
-    private val optionsBtn = JButton("Knot options…").apply {
-        toolTipText = "Twist, knot color, flip crossings, and more"
-    }
 
-    private val loadBgBtn = JButton("Load Background").apply {
-        toolTipText = "Load an image to trace a knot"
-    }
-    private val clearBgBtn = JButton("Clear Background").apply {
-        toolTipText = "Remove background image"
-    }
     private lateinit var bgOpacitySpinner: JSpinner
     /** Whole knot/shapes preview & export rotation (degrees), 0–360; matches TikZ `rotate`. */
     private lateinit var spKnotRotate: JSpinner
 
-    private val exportSetupBtn = JButton("Export")
-    private val importSetupBtn = JButton("Import")
     private val previewBtn = JButton("Preview").apply {
         toolTipText = "Render and preview the knot before export"
     }
 
-    private val livePreviewCheck = JCheckBox("Live preview").apply {
-        toolTipText = "TikZ preview in the lower-right of the canvas; updates after changes (debounced)"
+    /** Model state only — UI lives in Knot Preview dialog. Always starts off. */
+    private val livePreviewCheck = JCheckBox("Live preview", false).apply {
+        toolTipText = "Update Knot Preview after edits"
+        isVisible = false
+        isSelected = false
     }
-    private val autoSaveCheck = JCheckBox("Autosave").apply {
+    private val autoSaveCheck = JCheckBox("Autosave", false).apply {
         toolTipText = "Debounced save of knot points when the canvas changes"
+        isVisible = false
+        isSelected = false
     }
     private lateinit var spWidthPct: JSpinner
 
     private lateinit var canvasLayerHost: JLayeredPane
-    private lateinit var knotPreviewEmbedCard: JPanel
-    private var knotPreviewBrowser: JBCefBrowser? = null
+    private lateinit var helpTipsOverlay: JPanel
     private var livePreviewTimer: Timer? = null
     private var livePreviewRequestSeq = 0
     private var autoSaveTimer: Timer? = null
     private var knotPreviewDialog: JDialog? = null
     private var knotPreviewDialogBrowser: JBCefBrowser? = null
+    private var knotPreviewLiveCheck: JCheckBox? = null
+    private var knotPreviewAutoSaveCheck: JCheckBox? = null
+    private var suppressLivePreviewSync = false
+    private var suppressAutoSaveSync = false
 
     private lateinit var twoStrandBox: JCheckBox
 
-
-    private val knotColor = JComboBox(arrayOf("black","red","blue","green","teal","orange","purple","gray")).apply {
+    private val knotColor = JComboBox(TikzColorHelpers.NAMED.toTypedArray()).apply {
         selectedItem = "black"
-        toolTipText = "Knot color"
+        toolTipText = "Knot color (classic export; hidden when Twist is on)"
         preferredSize = Dimension(100, preferredSize.height)
     }
     private val toolCombo = JComboBox(arrayOf("Knot", "Line", "Circle", "Rectangle", "Dot", "Text")).apply {
@@ -741,30 +735,6 @@ class TikzCanvasDialog(
             }
 
             g2.setTransform(savedTx)
-
-            // Help overlay (screen space, top-left)
-            val help = arrayOf(
-                "Click+hold point: grab / move",
-                "Click+hold empty: add point",
-                "Right-click point: delete",
-                "Click+hold on line: insert point",
-                "Ctrl+Z / Ctrl+Shift+Z: undo / redo",
-            )
-            g2.font = g2.font.deriveFont(Font.PLAIN, 11f)
-            val fm = g2.fontMetrics
-            var hy = 16
-            val pad = 6
-            val boxW = help.maxOf { fm.stringWidth(it) } + pad * 2
-            val boxH = help.size * (fm.height + 2) + pad * 2
-            g2.color = Color(255, 255, 255, 210)
-            g2.fillRoundRect(8, 8, boxW, boxH, 8, 8)
-            g2.color = Color(30, 30, 30, 200)
-            g2.drawRoundRect(8, 8, boxW, boxH, 8, 8)
-            g2.color = Color(40, 40, 40)
-            for (line in help) {
-                g2.drawString(line, 8 + pad, hy + pad)
-                hy += fm.height + 2
-            }
         }
     }
 
@@ -794,8 +764,7 @@ class TikzCanvasDialog(
                     centerOriginInViewport()
                 }
                 if (!initialPresetLoaded && !restoreFromSession && initialTikz == null && presets.isNotEmpty()) {
-                    titleCombo.selectedIndex = 0
-                    doLoadSelected()
+                    doLoadByTitle(presets.first().name, confirmReplace = false)
                     initialPresetLoaded = true
                     resetUndoHistory()
                     centerOriginInViewport()
@@ -805,10 +774,10 @@ class TikzCanvasDialog(
                     resetUndoHistory()
                     centerOriginInViewport()
                 }
-                layoutCanvasPreviewOverlay()
+                layoutCanvasOverlays()
             }
         })
-        SwingUtilities.invokeLater { layoutCanvasPreviewOverlay() }
+        SwingUtilities.invokeLater { layoutCanvasOverlays() }
     }
 
     private fun drawShapes(g2: Graphics2D) {
@@ -921,8 +890,6 @@ class TikzCanvasDialog(
             toolTipText = "Background opacity for tracing"
             preferredSize = Dimension(60, preferredSize.height)
         }
-        loadBgBtn.addActionListener { loadBackgroundImage() }
-        clearBgBtn.addActionListener { clearBackgroundImage() }
         bgOpacitySpinner.addChangeListener { canvas.repaint() }
 
         spKnotRotate = JSpinner(SpinnerNumberModel(0, -360, 360, 1)).apply {
@@ -933,7 +900,7 @@ class TikzCanvasDialog(
                 textEditPending?.let { pending ->
                     textEditField?.setBounds(modelToScreen(pending).x, modelToScreen(pending).y, 180, 24)
                 }
-                scheduleEmbedLivePreview()
+                scheduleLivePreviewRefresh()
             }
         }
 
@@ -942,9 +909,73 @@ class TikzCanvasDialog(
             preferredSize = Dimension(56, preferredSize.height)
         }
 
+        twoStrandSettings = TwoStrandSettingsService.getInstance().state.copy()
+        twoStrandBox = JCheckBox("Twist", false)
+
+        spAmp = JSpinner(SpinnerNumberModel(twoStrandSettings.amp, 0.0, 5.0, 0.01))
+        spTurns = JSpinner(SpinnerNumberModel(twoStrandSettings.turns, 0.0, 20.0, 0.25))
+        spSamples = JSpinner(SpinnerNumberModel(twoStrandSettings.samples, 50, 2000, 10))
+        tfWth = JTextField(twoStrandSettings.wth, 6)
+        tfMask = JTextField(twoStrandSettings.mask, 6)
+        cpCore = TikzColorHelpers.createPicker(twoStrandSettings.core, "Twist core color (TikZ)", 10)
+        cpClrA = TikzColorHelpers.createPicker(twoStrandSettings.clrA, "Twist strand A color (TikZ)", 14)
+        cpClrB = TikzColorHelpers.createPicker(twoStrandSettings.clrB, "Twist strand B color (TikZ)", 14)
+
+        lblAmp = JLabel("Amp")
+        lblTwists = JLabel("Twists")
+        lblSamples = JLabel("Samples")
+        lblTwistWidth = JLabel("Width")
+        lblCore = JLabel("Core")
+        lblMask = JLabel("Mask")
+        lblClrA = JLabel("Color A")
+        lblClrB = JLabel("Color B")
+        lblKnotColor = JLabel("Knot color:")
+
+        for (c in listOf(
+            lblAmp, spAmp, lblTwists, spTurns, lblSamples, spSamples,
+            lblTwistWidth, tfWth, lblCore, cpCore, lblMask, tfMask, lblClrA, cpClrA, lblClrB, cpClrB,
+        )) {
+            twistDependentControls += c
+        }
+
+        twoStrandBox.addItemListener {
+            syncTwistControlsEnabled()
+            scheduleLivePreviewRefresh()
+        }
+
+        previewBtn.addActionListener { doPreview() }
+
+        livePreviewCheck.addItemListener {
+            if (!suppressLivePreviewSync) {
+                suppressLivePreviewSync = true
+                try {
+                    knotPreviewLiveCheck?.isSelected = livePreviewCheck.isSelected
+                } finally {
+                    suppressLivePreviewSync = false
+                }
+            }
+            if (livePreviewCheck.isSelected) {
+                scheduleLivePreviewRefresh()
+            } else {
+                livePreviewTimer?.stop()
+            }
+        }
+
+        autoSaveCheck.addItemListener {
+            if (!suppressAutoSaveSync) {
+                suppressAutoSaveSync = true
+                try {
+                    knotPreviewAutoSaveCheck?.isSelected = autoSaveCheck.isSelected
+                } finally {
+                    suppressAutoSaveSync = false
+                }
+            }
+            if (autoSaveCheck.isSelected) scheduleAutoSave()
+        }
+
+        val menuBar = buildFileMenuBar()
+
         val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
-            add(optionsBtn)
-            add(Box.createHorizontalStrut(12))
             add(JLabel("Tool:"))
             add(toolCombo)
             add(Box.createHorizontalStrut(12))
@@ -954,96 +985,87 @@ class TikzCanvasDialog(
             add(JLabel("Width %"))
             add(spWidthPct)
             add(Box.createHorizontalStrut(12))
-            add(loadBgBtn); add(clearBgBtn)
-        }
-        twoStrandSettings = TwoStrandSettingsService.getInstance().state.copy()
-        twoStrandBox = JCheckBox("Twist", false)
-        refreshTitlesCombo()
-
-
-        // --- Two-strand Setups row ---
-        spAmp     = JSpinner(SpinnerNumberModel(twoStrandSettings.amp,    0.0,  5.0, 0.01))
-        spTurns   = JSpinner(SpinnerNumberModel(twoStrandSettings.turns,  0.0, 20.0, 0.25))
-        spSamples = JSpinner(SpinnerNumberModel(twoStrandSettings.samples, 50, 2000, 10))
-
-        tfWth  = JTextField(twoStrandSettings.wth,   6)
-        tfCore = JTextField(twoStrandSettings.core,  8)
-        tfMask = JTextField(twoStrandSettings.mask,  6)
-        tfClrA = JTextField(twoStrandSettings.clrA, 14)
-        tfClrB = JTextField(twoStrandSettings.clrB, 14)
-
-        newBtn.addActionListener { doNew() }
-
-        val fileRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            add(titleCombo)
-            add(newBtn)
+            add(lblKnotColor)
+            add(knotColor)
             add(Box.createHorizontalStrut(12))
-            add(exportSetupBtn)
-            add(importSetupBtn)
-            add(Box.createHorizontalStrut(12))
-            add(previewBtn)
+            add(JLabel("Flip crossings:"))
+            add(flipField)
             add(Box.createHorizontalStrut(8))
-            add(livePreviewCheck)
-            add(autoSaveCheck)
+            add(showPointsBox)
+            add(Box.createHorizontalStrut(8))
+            add(JLabel("Opacity:"))
+            add(bgOpacitySpinner)
         }
 
-        exportSetupBtn.addActionListener { saveSetupToFile() }
-        importSetupBtn.addActionListener { loadSetupFromFile() }
-        previewBtn.addActionListener { doPreview() }
-
-        livePreviewCheck.addItemListener {
-            val on = livePreviewCheck.isSelected
-            knotPreviewEmbedCard.isVisible = on
-            if (on) {
-                ensureKnotPreviewBrowserInCard()
-                layoutCanvasPreviewOverlay()
-                scheduleEmbedLivePreview()
-            } else {
-                livePreviewTimer?.stop()
-            }
-            canvasLayerHost.revalidate()
-            canvasLayerHost.repaint()
+        val twistRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
+            add(twoStrandBox)
+            add(lblAmp); add(spAmp)
+            add(lblTwists); add(spTurns)
+            add(lblSamples); add(spSamples)
+            add(lblTwistWidth); add(tfWth)
+            add(lblCore); add(cpCore)
+            add(lblMask); add(tfMask)
+            add(lblClrA); add(cpClrA)
+            add(lblClrB); add(cpClrB)
         }
 
-        optionsBtn.addActionListener { showKnotOptionsModal() }
+        syncTwistControlsEnabled()
 
         val header = JPanel()
         header.layout = BoxLayout(header, BoxLayout.Y_AXIS)
         header.add(toolsRow)
-        header.add(fileRow)
+        header.add(twistRow)
 
         scrollCanvas = JScrollPane(canvas)
-        knotPreviewEmbedCard = JPanel(BorderLayout()).apply {
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(JBColor.border(), 1),
-                BorderFactory.createEmptyBorder(4, 4, 4, 4)
-            )
-            background = JBColor.namedColor("Panel.background", Color(0xF2, 0xF3, 0xF5))
+        helpTipsOverlay = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = true
-            isVisible = false
+            background = Color(255, 255, 255, 210)
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(Color(30, 30, 30, 200), 1),
+                BorderFactory.createEmptyBorder(6, 8, 6, 8),
+            )
+            val tipFont = UIManager.getFont("Label.font")?.deriveFont(11f) ?: Font(Font.SANS_SERIF, Font.PLAIN, 11)
+            for (line in listOf(
+                "Click+hold point: grab / move",
+                "Click+hold empty: add point",
+                "Right-click point: delete",
+                "Click+hold on line: insert point",
+                "Ctrl+Z / Ctrl+Shift+Z: undo / redo",
+            )) {
+                add(JLabel(line).apply {
+                    font = tipFont
+                    foreground = Color(40, 40, 40)
+                    alignmentX = Component.LEFT_ALIGNMENT
+                })
+            }
         }
         canvasLayerHost = JLayeredPane().apply {
             preferredSize = Dimension(640, 480)
             add(scrollCanvas, Integer.valueOf(JLayeredPane.DEFAULT_LAYER))
-            add(knotPreviewEmbedCard, Integer.valueOf(JLayeredPane.PALETTE_LAYER))
+            add(helpTipsOverlay, Integer.valueOf(JLayeredPane.PALETTE_LAYER))
             addComponentListener(object : ComponentAdapter() {
                 override fun componentResized(e: ComponentEvent?) {
-                    layoutCanvasPreviewOverlay()
+                    layoutCanvasOverlays()
                     centerOriginInViewport()
                 }
             })
         }
 
+        val north = JPanel(BorderLayout())
+        north.add(menuBar, BorderLayout.NORTH)
+        north.add(header, BorderLayout.CENTER)
+
         rootPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createEmptyBorder(6, 6, 6, 6)
-            add(header, BorderLayout.NORTH)
+            add(north, BorderLayout.NORTH)
             add(canvasLayerHost, BorderLayout.CENTER)
             addAncestorListener(object : AncestorListener {
                 override fun ancestorAdded(event: AncestorEvent) {
                     SwingUtilities.invokeLater { centerOriginInViewport() }
                 }
                 override fun ancestorRemoved(event: AncestorEvent) {
-                    disposeKnotPreviewEmbed()
+                    disposeKnotPreviewResources()
                 }
                 override fun ancestorMoved(event: AncestorEvent) {}
             })
@@ -1053,6 +1075,64 @@ class TikzCanvasDialog(
 
         setOKButtonText("Add to TeX")
         setCancelButtonText("Cancel")
+    }
+
+    private fun buildFileMenuBar(): JMenuBar {
+        openRecentMenu = JMenu("Open recent")
+        rebuildOpenRecentMenu()
+
+        val presetMenu = JMenu("Preset")
+        for (p in presets) {
+            presetMenu.add(JMenuItem(p.name).apply {
+                addActionListener { doLoadByTitle(p.name, confirmReplace = true) }
+            })
+        }
+
+        val file = JMenu("File")
+        file.add(JMenuItem("New").apply { addActionListener { doNew() } })
+        file.addSeparator()
+        file.add(presetMenu)
+        file.add(openRecentMenu)
+        file.addSeparator()
+        file.add(JMenuItem("Import knot").apply { addActionListener { loadSetupFromFile() } })
+        file.add(JMenuItem("Export knot").apply { addActionListener { saveSetupToFile() } })
+        file.addSeparator()
+        file.add(JMenuItem("Load Background").apply { addActionListener { loadBackgroundImage() } })
+        file.add(JMenuItem("Clear Background").apply { addActionListener { clearBackgroundImage() } })
+
+        return JMenuBar().apply { add(file) }
+    }
+
+    private fun rebuildOpenRecentMenu() {
+        if (!this::openRecentMenu.isInitialized) return
+        openRecentMenu.removeAll()
+        val names = store.names()
+        if (names.isEmpty()) {
+            openRecentMenu.isEnabled = false
+            openRecentMenu.add(JMenuItem("(none)").apply { isEnabled = false })
+        } else {
+            openRecentMenu.isEnabled = true
+            for (name in names) {
+                openRecentMenu.add(JMenuItem(name).apply {
+                    addActionListener { doLoadByTitle(name, confirmReplace = true) }
+                })
+            }
+        }
+    }
+
+    private fun syncTwistControlsEnabled() {
+        val on = twoStrandBox.isSelected
+        for (c in twistDependentControls) c.isEnabled = on
+        lblKnotColor.isVisible = !on
+        knotColor.isVisible = !on
+    }
+
+    override fun createSouthPanel(): JComponent {
+        val buttons = super.createSouthPanel()
+        return JPanel(BorderLayout()).apply {
+            add(JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { add(previewBtn) }, BorderLayout.WEST)
+            add(buttons, BorderLayout.EAST)
+        }
     }
 
     override fun createCenterPanel(): JComponent = rootPanel
@@ -1384,24 +1464,8 @@ class TikzCanvasDialog(
     }
 
     // ---------- save/load ----------
-    private fun currentTitle(): String = (titleCombo.editor.item?.toString() ?: "").trim()
-    private fun refreshTitlesCombo(select: String? = null) {
-        val presetNames = presets.map { it.name }
-        val savedNames = store.names()
-        val items = mutableListOf<String>().apply {
-            addAll(presetNames)
-            if (savedNames.isNotEmpty()) {
-                add("— saved —")
-                addAll(savedNames)
-            }
-        }
-        titleCombo.model = DefaultComboBoxModel(items.toTypedArray())
-        if (select != null && items.contains(select)) {
-            titleCombo.selectedItem = select
-        } else if (items.isNotEmpty()) {
-            titleCombo.selectedIndex = 0
-        }
-    }
+    private fun currentTitle(): String = currentWorkingTitle.trim().ifBlank { lastStableTitle.trim() }
+
     private fun autoTitle(): String {
         val base = "Untitled"
         val names = store.names().toSet()
@@ -1411,19 +1475,28 @@ class TikzCanvasDialog(
     }
     private fun doSave(explicit: Boolean) {
         var title = currentTitle().trim()
-        if (title.isBlank() || presets.any { it.name == title } || title == "— saved —") {
+        if (title.isBlank() || presets.any { it.name == title }) {
             title = autoTitle()
-            titleCombo.editor.item = title
+            currentWorkingTitle = title
         }
         store.save(title, knotPts)
-        refreshTitlesCombo(title); dirty = false
+        lastStableTitle = title
+        currentWorkingTitle = title
+        rebuildOpenRecentMenu()
+        dirty = false
         if (explicit) JOptionPane.showMessageDialog(rootPanel, "Saved \"$title\".")
     }
     private fun maybeAutoSave() {
         if (!dirty) return
         var title = currentTitle()
-        if (title.isBlank()) { title = autoTitle(); titleCombo.editor.item = title }
-        store.save(title, knotPts); refreshTitlesCombo(title); dirty = false
+        if (title.isBlank() || presets.any { it.name == title }) {
+            title = autoTitle()
+            currentWorkingTitle = title
+        }
+        store.save(title, knotPts)
+        lastStableTitle = title
+        rebuildOpenRecentMenu()
+        dirty = false
     }
 
     private fun scheduleAutoSave() {
@@ -1438,46 +1511,58 @@ class TikzCanvasDialog(
         t.start()
     }
 
-    private fun doLoadSelected() {
+    private fun doLoadByTitle(titleRaw: String, confirmReplace: Boolean = true) {
         maybeAutoSave()
         cancelInlineText()
-        val title = currentTitle().trim()
-        if (title.isBlank() || title == "— saved —") {
+        val title = titleRaw.trim()
+        if (title.isBlank()) {
             JOptionPane.showMessageDialog(rootPanel, "Choose a title to load."); return
+        }
+
+        val hasContent = dirty || knotPts.isNotEmpty() || shapes.isNotEmpty()
+        if (confirmReplace && hasContent) {
+            val choice = JOptionPane.showConfirmDialog(
+                rootPanel,
+                "Replace the current canvas with this preset/saved knot?",
+                "Load",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE,
+            )
+            if (choice != JOptionPane.YES_OPTION) return
         }
 
         val preset = presets.firstOrNull { it.name == title }
         if (preset != null) {
-            // clear canvas
             knotPts.clear()
             shapes.clear()
-
-            // load main path (if any)
             if (preset.ptsUnits.isNotEmpty()) {
-                knotPts.addAll(unitsToPixelsPoints(preset.ptsUnits))
+                knotPts.addAll(unitsToPixelsPoints(TikzCanvasPathHelpers.ensureClosedUnitRing(preset.ptsUnits)))
             }
-            // load circles (if any)
             if (preset.circlesUnits.isNotEmpty()) {
                 shapes.addAll(unitsToPixelsCircles(preset.circlesUnits))
             }
-            // optional default flips for classic export
             flipField.text = preset.flipList ?: ""
-
             dirty = true
             canvas.repaint()
             resetUndoHistory()
             centerOriginInViewport()
+            lastStableTitle = title
+            currentWorkingTitle = title
+            scheduleLivePreviewRefresh()
             return
         }
 
-        // Saved
         val pts = store.load(title) ?: run {
             JOptionPane.showMessageDialog(rootPanel, "No saved knot named \"$title\"."); return
         }
         knotPts.clear(); knotPts.addAll(pts.map { Point(it) })
+        applyClosedRingToKnotPts()
         dirty = false; canvas.repaint()
         resetUndoHistory()
         centerOriginInViewport()
+        lastStableTitle = title
+        currentWorkingTitle = title
+        scheduleLivePreviewRefresh()
     }
 
     private fun doNew() {
@@ -1493,14 +1578,15 @@ class TikzCanvasDialog(
             if (choice != JOptionPane.YES_OPTION) return
         }
         cancelInlineText()
-        titleCombo.editor.item = ""
+        currentWorkingTitle = ""
+        lastStableTitle = ""
         knotPts.clear()
         shapes.clear()
         dirty = false
         canvas.repaint()
         resetUndoHistory()
         centerOriginInViewport()
-        scheduleEmbedLivePreview()
+        scheduleLivePreviewRefresh()
     }
 
     // ---------- import/export ----------
@@ -1522,6 +1608,7 @@ class TikzCanvasDialog(
         val cx = canvas.width / 2; val cy = canvas.height / 2
         knotPts.clear()
         knotPts.addAll(pairs.map { (x, y) -> Point(cx + fromUnits(x), cy - fromUnits(y)) })
+        applyClosedRingToKnotPts()
         // Parse flip crossing/.list={2,4,6,...} from \begin{knot}[...] so edit preserves crossings
         val flipRx = Regex("""flip\s+crossing/\s*\.list\s*=\s*\{\s*([^}]+)\s*\}""")
         flipRx.find(tikz)?.let { m ->
@@ -1529,6 +1616,7 @@ class TikzCanvasDialog(
         }
         dirty = true
         canvas.repaint()
+        scheduleLivePreviewRefresh()
     }
 
     private fun buildCurrentExportBody(): String {
@@ -1536,15 +1624,16 @@ class TikzCanvasDialog(
         val turns = (spTurns.value as Number).toDouble()
         val samples = (spSamples.value as Number).toInt()
         val wth = tfWth.text.trim().ifEmpty { "2.5pt" }
-        val core = tfCore.text.trim().ifEmpty { "black" }
+        val core = TikzColorHelpers.value(cpCore).ifEmpty { "black" }
         val mask = tfMask.text.trim().ifEmpty { "5.0pt" }
-        val clrA = tfClrA.text.trim().ifEmpty { "black!60!black" }
-        val clrB = tfClrB.text.trim().ifEmpty { "red!70!black" }
+        val clrA = TikzColorHelpers.value(cpClrA).ifEmpty { "black!60!black" }
+        val clrB = TikzColorHelpers.value(cpClrB).ifEmpty { "red!70!black" }
+        val classicColor = knotColor.selectedItem?.toString()?.trim()?.takeIf { it.isNotEmpty() }
         return when {
             twoStrandBox.isSelected && knotPts.isNotEmpty() ->
                 exportBodyTwoStrand(knotPts, amp, turns, samples, wth, core, mask, clrA, clrB)
             knotPts.isNotEmpty() ->
-                exportBody(knotPts, showPointsBox.isSelected, flipField.text.trim(), null, false)
+                exportBody(knotPts, showPointsBox.isSelected, flipField.text.trim(), classicColor, false)
             shapes.isNotEmpty() ->
                 exportShapesOnly()
             else ->
@@ -1566,14 +1655,7 @@ class TikzCanvasDialog(
                     {
                         previewBtn.isEnabled = true
                         if (svgFile != null && svgFile.exists()) {
-                            val svgText = svgFile.readText()
-                            val html = """
-<!DOCTYPE html><html><head><meta charset="utf-8"/></head>
-<body style="margin:0;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;">
-<div style="background:white;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.1);">$svgText</div>
-</body></html>
-                            """.trimIndent()
-                            showOrUpdateKnotPreviewDialog(html)
+                            showOrUpdateKnotPreviewDialog(TikzCanvasPathHelpers.knotPreviewHtml(svgFile.readText()))
                         } else {
                             JOptionPane.showMessageDialog(rootPanel,
                                 "TikZ compilation failed. Ensure pdflatex and dvisvgm/pdf2svg are installed.",
@@ -1608,6 +1690,7 @@ class TikzCanvasDialog(
         val existing = knotPreviewDialog
         if (existing != null && existing.isDisplayable) {
             knotPreviewDialogBrowser?.loadHTML(html, "about:blank")
+            syncKnotPreviewLiveCheck()
             existing.toFront()
             existing.requestFocus()
             return
@@ -1619,13 +1702,45 @@ class TikzCanvasDialog(
         knotPreviewDialogBrowser = browser
         browser.loadHTML(html, "about:blank")
         dlg.add(browser.component, BorderLayout.CENTER)
-        dlg.setSize(500, 500)
+        val liveBox = JCheckBox("Live preview", livePreviewCheck.isSelected).apply {
+            toolTipText = livePreviewCheck.toolTipText
+            addItemListener {
+                if (suppressLivePreviewSync) return@addItemListener
+                suppressLivePreviewSync = true
+                try {
+                    livePreviewCheck.isSelected = isSelected
+                } finally {
+                    suppressLivePreviewSync = false
+                }
+            }
+        }
+        val autoBox = JCheckBox("Autosave", autoSaveCheck.isSelected).apply {
+            toolTipText = autoSaveCheck.toolTipText
+            addItemListener {
+                if (suppressAutoSaveSync) return@addItemListener
+                suppressAutoSaveSync = true
+                try {
+                    autoSaveCheck.isSelected = isSelected
+                } finally {
+                    suppressAutoSaveSync = false
+                }
+            }
+        }
+        knotPreviewLiveCheck = liveBox
+        knotPreviewAutoSaveCheck = autoBox
+        dlg.add(JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
+            add(liveBox)
+            add(autoBox)
+        }, BorderLayout.SOUTH)
+        dlg.setSize(720, 720)
         dlg.setLocationRelativeTo(owner)
         dlg.addWindowListener(object : java.awt.event.WindowAdapter() {
             override fun windowClosed(e: java.awt.event.WindowEvent?) {
                 if (knotPreviewDialog === dlg) {
                     knotPreviewDialog = null
                     knotPreviewDialogBrowser = null
+                    knotPreviewLiveCheck = null
+                    knotPreviewAutoSaveCheck = null
                     try {
                         Disposer.dispose(browser)
                     } catch (_: Throwable) {
@@ -1643,6 +1758,25 @@ class TikzCanvasDialog(
         }
     }
 
+    private fun syncKnotPreviewLiveCheck() {
+        val box = knotPreviewLiveCheck ?: return
+        if (box.isSelected == livePreviewCheck.isSelected) return
+        suppressLivePreviewSync = true
+        try {
+            box.isSelected = livePreviewCheck.isSelected
+        } finally {
+            suppressLivePreviewSync = false
+        }
+        val autoBox = knotPreviewAutoSaveCheck ?: return
+        if (autoBox.isSelected == autoSaveCheck.isSelected) return
+        suppressAutoSaveSync = true
+        try {
+            autoBox.isSelected = autoSaveCheck.isSelected
+        } finally {
+            suppressAutoSaveSync = false
+        }
+    }
+
     /** Width percent for \\linewidth wrap when placing in TeX (plan 09). */
     fun exportWidthPercent(): Int =
         TikzToolbarHelpers.clampWidthPercent((spWidthPct.value as? Number)?.toInt() ?: 80)
@@ -1654,10 +1788,10 @@ class TikzCanvasDialog(
         twoStrandSettings.turns   = (spTurns.value as Number).toDouble()
         twoStrandSettings.samples = (spSamples.value as Number).toInt()
         twoStrandSettings.wth     = tfWth.text.trim().ifEmpty { "2.5pt" }
-        twoStrandSettings.core    = tfCore.text.trim().ifEmpty { "black" }
+        twoStrandSettings.core    = TikzColorHelpers.value(cpCore).ifEmpty { "black" }
         twoStrandSettings.mask    = tfMask.text.trim().ifEmpty { "5.0pt" }
-        twoStrandSettings.clrA    = tfClrA.text.trim().ifEmpty { "black!60!black" }
-        twoStrandSettings.clrB    = tfClrB.text.trim().ifEmpty { "red!70!black" }
+        twoStrandSettings.clrA    = TikzColorHelpers.value(cpClrA).ifEmpty { "black!60!black" }
+        twoStrandSettings.clrB    = TikzColorHelpers.value(cpClrB).ifEmpty { "red!70!black" }
 
         // 2) Persist to service
         TwoStrandSettingsService.getInstance().loadState(twoStrandSettings)
@@ -1690,9 +1824,10 @@ class TikzCanvasDialog(
         if (this::spWidthPct.isInitialized) {
             spWidthPct.value = TikzToolbarHelpers.clampWidthPercent(session.lastWidthPercent)
         }
+        applyClosedRingToKnotPts()
         dirty = false
         canvas.repaint()
-        scheduleEmbedLivePreview()
+        scheduleLivePreviewRefresh()
     }
 
     private fun exportBodyTwoStrand(
@@ -2015,7 +2150,7 @@ class TikzCanvasDialog(
         if (recordUndo && !undoSuspended) {
             undoStack.push(takeSnapshot())
         }
-        scheduleEmbedLivePreview()
+        scheduleLivePreviewRefresh()
         scheduleAutoSave()
     }
 
@@ -2043,7 +2178,7 @@ class TikzCanvasDialog(
             shapes.clear()
             shapes.addAll(snap.shapes.map { cloneShape(it) })
             canvas.repaint()
-            scheduleEmbedLivePreview()
+            scheduleLivePreviewRefresh()
         } finally {
             undoSuspended = false
         }
@@ -2099,56 +2234,39 @@ class TikzCanvasDialog(
         view.viewPosition = Point(pos.x, pos.y)
     }
 
-    private fun layoutCanvasPreviewOverlay() {
+    private fun layoutCanvasOverlays() {
         if (!this::canvasLayerHost.isInitialized) return
         val w = canvasLayerHost.width
         val h = canvasLayerHost.height
         if (w <= 0 || h <= 0) return
         val scroll = canvasLayerHost.getComponent(0) as? JScrollPane ?: return
         scroll.setBounds(0, 0, w, h)
-        if (!knotPreviewEmbedCard.isVisible) return
-        val pw = (w * 0.36).toInt().coerceIn(180, 340)
-        val ph = (h * 0.40).toInt().coerceIn(150, 300)
-        val m = 10
-        knotPreviewEmbedCard.setBounds((w - pw - m).coerceAtLeast(0), (h - ph - m).coerceAtLeast(0), pw, ph)
+        if (this::helpTipsOverlay.isInitialized) {
+            val pref = helpTipsOverlay.preferredSize
+            helpTipsOverlay.setBounds(8, 8, pref.width.coerceAtLeast(120), pref.height.coerceAtLeast(40))
+        }
     }
 
-    private fun ensureKnotPreviewBrowserInCard() {
-        if (knotPreviewBrowser != null) return
-        val b = JBCefBrowser()
-        knotPreviewBrowser = b
-        knotPreviewEmbedCard.removeAll()
-        knotPreviewEmbedCard.add(b.component, BorderLayout.CENTER)
-    }
-
-    private fun disposeKnotPreviewEmbed() {
+    private fun disposeKnotPreviewResources() {
         livePreviewTimer?.stop()
         livePreviewTimer = null
         autoSaveTimer?.stop()
         autoSaveTimer = null
-        knotPreviewBrowser?.let {
-            try {
-                Disposer.dispose(it)
-            } catch (_: Throwable) {
-            }
-        }
-        knotPreviewBrowser = null
-        if (this::knotPreviewEmbedCard.isInitialized) {
-            knotPreviewEmbedCard.removeAll()
-        }
         knotPreviewDialog?.dispose()
         knotPreviewDialog = null
         knotPreviewDialogBrowser = null
+        knotPreviewLiveCheck = null
+        knotPreviewAutoSaveCheck = null
     }
 
-    private fun scheduleEmbedLivePreview() {
+    private fun scheduleLivePreviewRefresh() {
         if (!livePreviewCheck.isSelected) return
         livePreviewRequestSeq++
         val req = livePreviewRequestSeq
         livePreviewTimer?.stop()
         val t = Timer(400) {
             livePreviewTimer?.stop()
-            runEmbedLivePreview(req)
+            runLivePreviewRefresh(req)
         }
         t.isRepeats = false
         livePreviewTimer = t
@@ -2169,7 +2287,7 @@ $body
         """.trimIndent()
     }
 
-    private fun runEmbedLivePreview(requestId: Int) {
+    private fun runLivePreviewRefresh(requestId: Int) {
         if (!livePreviewCheck.isSelected || requestId != livePreviewRequestSeq) return
         val texDoc = buildKnotPreviewTexDocument() ?: return
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -2180,12 +2298,7 @@ $body
                     {
                         if (!livePreviewCheck.isSelected || requestId != livePreviewRequestSeq) return@invokeLater
                         val svg = svgFile?.takeIf { it.exists() }?.readText() ?: return@invokeLater
-                        val html = """
-<!DOCTYPE html><html><head><meta charset="utf-8"/><style>html,body{margin:0;height:100%;background:#f0f0f0;}body{display:flex;align-items:center;justify-content:center;overflow:hidden;}</style></head>
-<body><div style="max-width:100%;max-height:100%;">$svg</div></body></html>
-                        """.trimIndent()
-                        ensureKnotPreviewBrowserInCard()
-                        knotPreviewBrowser?.loadHTML(html, "about:blank")
+                        showOrUpdateKnotPreviewDialog(TikzCanvasPathHelpers.knotPreviewHtml(svg))
                     },
                     ModalityState.any()
                 )
@@ -2280,52 +2393,6 @@ $body
         canvas.repaint()
     }
 
-    private fun showKnotOptionsModal() {
-        val owner = rootPanel.topLevelAncestor as? Window ?: return
-        val dlg = JDialog(owner, "Knot options", Dialog.ModalityType.APPLICATION_MODAL)
-        dlg.layout = BorderLayout()
-        val content = JPanel()
-        content.layout = BoxLayout(content, BoxLayout.Y_AXIS)
-        content.border = BorderFactory.createEmptyBorder(12, 12, 12, 12)
-
-        val twistRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-        twistRow.add(twoStrandBox)
-        twistRow.add(JLabel("Amp")); twistRow.add(spAmp)
-        twistRow.add(JLabel("Twists")); twistRow.add(spTurns)
-        twistRow.add(JLabel("Samples")); twistRow.add(spSamples)
-        twistRow.add(JLabel("Width")); twistRow.add(tfWth)
-        twistRow.add(JLabel("Core")); twistRow.add(tfCore)
-        twistRow.add(JLabel("Mask")); twistRow.add(tfMask)
-        twistRow.add(JLabel("Color A")); twistRow.add(tfClrA)
-        twistRow.add(JLabel("Color B")); twistRow.add(tfClrB)
-
-        val knotRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-        knotRow.add(JLabel("Knot color:"))
-        knotRow.add(knotColor)
-        knotRow.add(Box.createHorizontalStrut(12))
-        knotRow.add(JLabel("Flip crossings:"))
-        knotRow.add(flipField)
-        knotRow.add(Box.createHorizontalStrut(12))
-        knotRow.add(showPointsBox)
-        knotRow.add(Box.createHorizontalStrut(12))
-        knotRow.add(JLabel("Opacity:"))
-        knotRow.add(bgOpacitySpinner)
-
-        content.add(twistRow)
-        content.add(knotRow)
-
-        val okBtn = JButton("Close")
-        okBtn.addActionListener { dlg.dispose() }
-        val south = JPanel(FlowLayout(FlowLayout.RIGHT))
-        south.add(okBtn)
-
-        dlg.add(content, BorderLayout.CENTER)
-        dlg.add(south, BorderLayout.SOUTH)
-        dlg.pack()
-        dlg.setLocationRelativeTo(rootPanel)
-        dlg.isVisible = true
-    }
-
     private fun updateFlipCrossingsForNewPoint() {
         val n = knotPts.size
         if (n < 2) return
@@ -2374,10 +2441,10 @@ $body
             props["turns"] = spTurns.value.toString()
             props["samples"] = spSamples.value.toString()
             props["wth"] = tfWth.text
-            props["core"] = tfCore.text
+            props["core"] = TikzColorHelpers.value(cpCore)
             props["mask"] = tfMask.text
-            props["clrA"] = tfClrA.text
-            props["clrB"] = tfClrB.text
+            props["clrA"] = TikzColorHelpers.value(cpClrA)
+            props["clrB"] = TikzColorHelpers.value(cpClrB)
             props["flip"] = flipField.text
             props["knotColor"] = knotColor.selectedItem?.toString() ?: ""
             props["showPoints"] = showPointsBox.isSelected.toString()
@@ -2407,10 +2474,10 @@ $body
             spTurns.value = props.getProperty("turns")?.toDoubleOrNull() ?: spTurns.value
             spSamples.value = props.getProperty("samples")?.toIntOrNull() ?: spSamples.value
             tfWth.text = props.getProperty("wth") ?: tfWth.text
-            tfCore.text = props.getProperty("core") ?: tfCore.text
+            props.getProperty("core")?.let { TikzColorHelpers.setValue(cpCore, it) }
             tfMask.text = props.getProperty("mask") ?: tfMask.text
-            tfClrA.text = props.getProperty("clrA") ?: tfClrA.text
-            tfClrB.text = props.getProperty("clrB") ?: tfClrB.text
+            props.getProperty("clrA")?.let { TikzColorHelpers.setValue(cpClrA, it) }
+            props.getProperty("clrB")?.let { TikzColorHelpers.setValue(cpClrB, it) }
             flipField.text = props.getProperty("flip") ?: flipField.text
             knotColor.selectedItem = props.getProperty("knotColor") ?: knotColor.selectedItem
             showPointsBox.isSelected = props.getProperty("showPoints")?.toBoolean() ?: showPointsBox.isSelected

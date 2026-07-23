@@ -4,19 +4,19 @@ overview: "Editor rechtermuis: Preview bovenaan + toggle; Insert+cite; Selected 
 todos:
   - id: preview-toggle
     content: "ShowPreviewAction: toggle show/hide; optioneel pure helper + kleine test"
-    status: pending
+    status: completed
   - id: reorder-preview-top
     content: "plugin.xml: Preview eerste LiveLaTeX EditorPopup-item"
-    status: pending
+    status: completed
   - id: cite-under-insert
     content: "InsertReference onder InsertGroup; weg uit top-level"
-    status: pending
+    status: completed
   - id: rename-format
     content: "TextFormatGroup → LiveLaTeX Selected Text"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen; handcheck menu-volgorde + Ctrl+Alt+P toggle"
-    status: pending
+    status: completed
 isProject: false
 ---
 

@@ -4,22 +4,22 @@ overview: "Generate Table: 1 header vast; body rows; placement dropdown; floatin
 todos:
   - id: test-helpers
     content: "TableGeneratorTest: 1 header + N body; colspec l/c/r/p; placement in table env"
-    status: pending
+    status: completed
   - id: fixed-one-header
     content: "Header-spinner weg; altijd headerRows=1; Rows=body"
-    status: pending
+    status: completed
   - id: compact-spinners-row
     content: "Body rows + Cols naast elkaar"
-    status: pending
+    status: completed
   - id: placement-dropdown
     content: "Placement dropdown + tooltip"
-    status: pending
+    status: completed
   - id: floating-align-over-preview
     content: "Zwevende align-rij boven tabel-mock"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen; handcheck dialog"
-    status: pending
+    status: completed
 isProject: false
 ---
 

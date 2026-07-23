@@ -4,28 +4,28 @@ overview: "TikZ dialog toolbar: Preview cache-key + herbruikbaar venster; Live p
 todos:
   - id: test-lock-rotate-hash
     content: "Helpers: rotate normalize + previewCacheKey(tex) unit tests (gewenst: content-hash, niet vaste key)"
-    status: pending
+    status: completed
   - id: fix-preview-cache-reuse
     content: "doPreview: content-hash key; één Knot Preview dialog hergebruiken"
-    status: pending
+    status: completed
   - id: fix-live-preview
     content: "Live preview deelt refresh-pad met Preview; updates na markDirty"
-    status: pending
+    status: completed
   - id: rotate-negative
     content: "Spinner -360..360; TikZ rotate suffix"
-    status: pending
+    status: completed
   - id: autosave-checkbox
     content: "Autosave checkbox + debounced maybeAutoSave"
-    status: pending
+    status: completed
   - id: width-pct-ui
     content: "Width % spinner in toolbar (export-wrap in plan 09)"
-    status: pending
+    status: completed
   - id: new-confirm
     content: "doNew confirm bij content/dirty"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen"
-    status: pending
+    status: completed
 isProject: false
 ---
 

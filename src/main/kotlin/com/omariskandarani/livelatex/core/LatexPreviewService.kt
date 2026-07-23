@@ -348,7 +348,7 @@ class LatexPreviewService(private val project: Project) : Disposable {
         jsSectionsQuery = JBCefJSQuery.create(browser).also { q ->
             Disposer.register(this, q)
             q.addHandler { json ->
-                val parsed = parseSectionsJson(json)
+                val parsed = PreviewSectionsJson.parse(json)
                 if (parsed.isNotEmpty()) setLastSections(parsed)
                 JBCefJSQuery.Response("OK")
             }
@@ -404,31 +404,15 @@ class LatexPreviewService(private val project: Project) : Disposable {
                 "localStorage.setItem('ll_auto_scroll', ${settings.autoScrollPreview}); " +
                 "localStorage.setItem('ll_sync_selection', ${settings.syncSelection}); " +
                 "localStorage.setItem('ll_show_tikz_debug', false); " +
+                "localStorage.setItem('ll_debug_scroll', ${settings.debugScrollLog}); " +
                 "localStorage.setItem('ll_invert_scroll_h', ${settings.invertScrollHorizontal}); " +
                 "localStorage.setItem('ll_invert_scroll_v', ${settings.invertScrollVertical}); " +
                 "if (typeof window.__llSetTikzDebug === 'function') window.__llSetTikzDebug(false); " +
+                "if (typeof window.__llApplyDebugScroll === 'function') window.__llApplyDebugScroll(${settings.debugScrollLog}); " +
                 "var cbH=document.getElementById('ll-invert-scroll-h'); if(cbH) cbH.checked=${settings.invertScrollHorizontal}; " +
                 "var cbV=document.getElementById('ll-invert-scroll-v'); if(cbV) cbV.checked=${settings.invertScrollVertical}; " +
             "} catch(e){}"
         )
-    }
-
-    private fun parseSectionsJson(json: String): List<Pair<String, String>> {
-        if (json.isBlank()) return emptyList()
-        return try {
-            val idRe = Regex("""\"id\"\s*:\s*\"([^\"]*)\"""")
-            val labelRe = Regex("""\"label\"\s*:\s*\"([^\"]*)\"""")
-            val raw = json.trim().removeSurrounding("[", "]").trim()
-            if (raw.isEmpty()) return emptyList()
-            val items = raw.split("},{")
-            items.mapNotNull { part ->
-                val id = idRe.find(part)?.groupValues?.getOrNull(1) ?: return@mapNotNull null
-                val label = labelRe.find(part)?.groupValues?.getOrNull(1) ?: id
-                id to label
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
     }
 
     private fun clearCacheForPaper() {
@@ -904,7 +888,22 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     /**
-     * One-shot: write the current preview HTML next to the source .tex.
+     * Enable/disable Debug Mode: scroll HUD in the page, and export preview HTML beside the .tex when on.
+     */
+    fun setDebugMode(enabled: Boolean) {
+        eval(
+            "try { " +
+                "localStorage.setItem('ll_debug_scroll', $enabled); " +
+                "if (typeof window.__llApplyDebugScroll === 'function') window.__llApplyDebugScroll($enabled); " +
+            "} catch(e){}"
+        )
+        if (enabled) {
+            exportPreviewHtmlBesideSource()
+        }
+    }
+
+    /**
+     * Write the current preview HTML next to the source .tex (used by Debug Mode).
      * @return false if no HTML/source is available yet.
      */
     fun exportPreviewHtmlBesideSource(): Boolean {
@@ -1082,6 +1081,12 @@ class LatexPreviewService(private val project: Project) : Disposable {
         }
         syncAutoScrollSettingsToPage()
         postSync(caretLine, source = "initial")
+        val debugOn = ApplicationManager.getApplication()
+            .getService(LiveLatexSettings::class.java).debugScrollLog
+        if (debugOn) {
+            val path = texPath ?: lastRenderedTexPath
+            if (path != null) dumpPreviewHtmlBesideSource(path, html)
+        }
     }
 
     private fun currentTexFileAndText(): Pair<VirtualFile, String>? {

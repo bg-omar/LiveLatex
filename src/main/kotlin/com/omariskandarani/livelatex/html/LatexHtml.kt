@@ -113,7 +113,9 @@ object LatexHtml {
          *       → convertTcolorboxes → convertTableEnvs → convertListEnvironmentsNested
          *       → convertDescription → convertTabulars → convertTheBibliography → stripAuxDirectives
          * Inline: convertParagraphsOutsideTags → applyInlineFormattingOutsideTags
-         *       → fixInlineBoundarySpaces → injectLineAnchors → SourceMapBuilder.applySourceMap
+         *       → fixInlineBoundarySpaces → materializeSourceLineAnchors (fallback injectLineAnchors)
+         *       → SourceMapBuilder.applySourceMap
+         * Prep also: plantSourceLineAnchors on TeX body newlines after stripLineComments.
          * formatInlineProseNonMath: \\[dim] before generic \\; replaceCmd1ArgBalanced after unescape.
          * TikZ/picture are converted once in wrapInternal (not again in applyProseConversions).
          */
@@ -142,9 +144,11 @@ object LatexHtml {
 
         val body0 = stripPreamble(texSource)
         val body1 = stripLineComments(body0)
+        // Source-line abs markers before HTML collapse (survive as %%LLA{N}%% until materialize).
+        val body1Anchored = plantSourceLineAnchors(body1, absOffset, everyN = 1)
         reportBuildProgress("Parsing macros…")
         checkBuildInterrupted()
-        val body1a = assembleSplitTitlepageMacros(body1, userMacros)
+        val body1a = assembleSplitTitlepageMacros(body1Anchored, userMacros)
         val body1b = expandZeroArgMacros(body1a, userMacros)
         checkBuildInterrupted()
         val body2 = sanitizeForMathJaxProse(body1b)
@@ -192,8 +196,13 @@ object LatexHtml {
         val body3b = convertParagraphsOutsideTags(body3)
         val body4 = applyInlineFormattingOutsideTags(body3b)
         val body4c = fixInlineBoundarySpaces(body4)
-        // Insert anchors (no blanket escaping here; we preserve math)
-        val withAnchors = injectLineAnchors(body4c, absOffset, everyN = 1)
+        // Materialize source-line markers; HTML-newline inject is fallback if markers were lost.
+        val materialized = materializeSourceLineAnchors(body4c)
+        val withAnchors = if (materialized.contains("class=\"syncline\"")) {
+            materialized
+        } else {
+            injectLineAnchors(body4c, absOffset, everyN = 1)
+        }
         val sourceMap = SourceMapBuilder.applySourceMap(withAnchors, texSource)
         srcMapJson = sourceMap.json
 
@@ -286,7 +295,8 @@ object LatexHtml {
     // fixInlineBoundarySpaces, TitleMeta, findLastCmdArg, extractTitleMeta, renderDate, splitAuthors,
     // processThanksWithin, buildMakTitleHtml, convertMakeTitle, escapeHtmlKeepBackslashes,
     // applyInlineFormattingOutsideTags, applyInlineFormattingOutsideTags_NoTables, proseNoBr,
-    // htmlEscapeAll, replaceTextSymbols, injectLineAnchors, toFileUrl, resolveImagePath,
+    // htmlEscapeAll, replaceTextSymbols, plantSourceLineAnchors, materializeSourceLineAnchors,
+    // injectLineAnchors, toFileUrl, resolveImagePath,
     // convertIncludeGraphics, includeGraphicsStyle -> LatexHtmlUtils.kt
 
     /** Compile a queued lazy TikZ job by key into the cache. Returns the SVG File on success, null on failure. */

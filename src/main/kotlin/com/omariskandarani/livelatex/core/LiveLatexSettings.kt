@@ -19,6 +19,7 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
         var autoScrollPreview: Boolean = true,
         var syncSelection: Boolean = false,    // default off; UI hidden until next version
         var showTikzDebugOverlay: Boolean = false,
+        var debugScrollLog: Boolean = false,   // Debug Mode: scroll HUD + auto-export HTML; default off
         var invertScrollHorizontal: Boolean = false,
         var invertScrollVertical: Boolean = false,
         var showDropdownSubsections: Boolean = true,
@@ -32,6 +33,8 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
     override fun loadState(state: State) {
         // Clear any previously persisted TikZ-debug toggle (feature is one-shot export now).
         state.showTikzDebugOverlay = false
+        // Always start with LiveRender off: a persisted "on" blocks/delays first preview until toggled off.
+        state.renderTikzInPreview = false
         this.state = state
     }
 
@@ -54,6 +57,10 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
     var showTikzDebugOverlay: Boolean
         get() = state.showTikzDebugOverlay
         set(value) { state.showTikzDebugOverlay = value }
+
+    var debugScrollLog: Boolean
+        get() = state.debugScrollLog
+        set(value) { state.debugScrollLog = value }
 
     var invertScrollHorizontal: Boolean
         get() = state.invertScrollHorizontal

@@ -4,16 +4,16 @@ overview: "Refresh = clear doc-cache + reload; Options clear-doc weg. Helper/ser
 todos:
   - id: test-helpers
     content: "Temp-dir test clearCacheForPaper contract indien testbaar zonder volle IDE"
-    status: pending
+    status: completed
   - id: wire-refresh-clear
     content: "PreviewRefreshAction → requestClearCache + tooltip"
-    status: pending
+    status: completed
   - id: remove-options-clear-doc
     content: "Options Clear cache for this document weg; Clear all blijft"
-    status: pending
+    status: completed
   - id: test-regress
     content: "./gradlew test groen; handcheck Refresh"
-    status: pending
+    status: completed
 isProject: false
 ---
 

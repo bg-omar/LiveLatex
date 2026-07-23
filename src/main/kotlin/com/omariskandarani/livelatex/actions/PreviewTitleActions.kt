@@ -13,8 +13,8 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.awt.RelativePoint
 import com.omariskandarani.livelatex.core.LatexPreviewService
 import com.omariskandarani.livelatex.core.LiveLatexSettings
@@ -130,15 +130,29 @@ class PreviewChapterComboAction(private val project: Project) :
         val listener = LatexPreviewService.SectionsUiListener { sections, activeId ->
             applyState(sections, activeId)
         }
-        svc.addSectionsUiListener(listener)
-        combo.putClientProperty("livelatex.sectionsListener", listener)
+        fun ensureSectionsListener() {
+            val existing = combo.getClientProperty("livelatex.sectionsListener") as? LatexPreviewService.SectionsUiListener
+            if (existing == null) {
+                svc.addSectionsUiListener(listener)
+                combo.putClientProperty("livelatex.sectionsListener", listener)
+            }
+        }
+        fun dropSectionsListener() {
+            val l = combo.getClientProperty("livelatex.sectionsListener") as? LatexPreviewService.SectionsUiListener
+            if (l != null) {
+                svc.removeSectionsUiListener(l)
+                combo.putClientProperty("livelatex.sectionsListener", null)
+            }
+        }
+        ensureSectionsListener()
         combo.addHierarchyListener { e ->
-            if ((e.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) != 0L && !combo.isShowing) {
-                val l = combo.getClientProperty("livelatex.sectionsListener") as? LatexPreviewService.SectionsUiListener
-                if (l != null) {
-                    svc.removeSectionsUiListener(l)
-                    combo.putClientProperty("livelatex.sectionsListener", null)
-                }
+            if ((e.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) == 0L) return@addHierarchyListener
+            if (combo.isShowing) {
+                // Re-bind after hide: updates that arrived while hidden must re-apply.
+                ensureSectionsListener()
+                applyState(svc.lastSections, svc.activeSectionId)
+            } else {
+                dropSectionsListener()
             }
         }
 
@@ -148,35 +162,64 @@ class PreviewChapterComboAction(private val project: Project) :
             isOpaque = false
             add(combo, BorderLayout.CENTER)
             minimumSize = Dimension(COMBO_MIN_WIDTH, COMBO_HEIGHT)
-            maximumSize = Dimension(COMBO_MAX_WIDTH, COMBO_HEIGHT)
 
-            fun applyWidth(width: Int) {
-                val w = PreviewChapterComboWidths.clampPreferredWidth(width)
+            fun toolContentWidth(): Int {
+                val tw = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview")
+                val twW = tw?.component?.width ?: 0
+                if (twW > COMBO_MIN_WIDTH) return twW
+                // Fallback: widest ancestor (content / tool window host).
+                var c: Component? = this
+                var best = 0
+                while (c != null) {
+                    if (c.width > best) best = c.width
+                    c = c.parent
+                }
+                return if (best > COMBO_MIN_WIDTH) best else COMBO_FALLBACK_WIDTH
+            }
+
+            fun applyWidthFromTool() {
+                val w = PreviewChapterComboWidths.clampFromToolWidth(toolContentWidth())
                 val dim = Dimension(w, COMBO_HEIGHT)
                 preferredSize = dim
+                maximumSize = dim
                 combo.preferredSize = dim
-                combo.maximumSize = Dimension(COMBO_MAX_WIDTH, COMBO_HEIGHT)
+                combo.maximumSize = dim
                 revalidate()
             }
 
-            applyWidth(COMBO_FALLBACK_WIDTH)
+            applyWidthFromTool()
 
-            // Grow with the title-action strip when the parent gives us more room.
-            var attachedParent: Component? = null
-            val parentResizeListener = object : ComponentAdapter() {
+            var attachedTool: Component? = null
+            val toolResizeListener = object : ComponentAdapter() {
                 override fun componentResized(e: ComponentEvent) {
-                    val p = parent ?: return
-                    if (p.width > COMBO_MIN_WIDTH) {
-                        applyWidth(p.width)
-                    }
+                    applyWidthFromTool()
                 }
             }
+
+            fun attachToolResizeListener() {
+                val twComp = ToolWindowManager.getInstance(project).getToolWindow("LaTeX Preview")?.component
+                if (twComp === attachedTool) {
+                    applyWidthFromTool()
+                    return
+                }
+                attachedTool?.removeComponentListener(toolResizeListener)
+                attachedTool = twComp
+                twComp?.addComponentListener(toolResizeListener)
+                applyWidthFromTool()
+            }
+
+            addHierarchyListener { e ->
+                val flags = e.changeFlags
+                if ((flags and HierarchyEvent.PARENT_CHANGED.toLong()) != 0L ||
+                    (flags and HierarchyEvent.SHOWING_CHANGED.toLong()) != 0L
+                ) {
+                    if (isShowing) attachToolResizeListener()
+                }
+            }
+            // Also listen to immediate parent (title strip) as a secondary signal.
             addHierarchyListener { e ->
                 if ((e.changeFlags and HierarchyEvent.PARENT_CHANGED.toLong()) == 0L) return@addHierarchyListener
-                attachedParent?.removeComponentListener(parentResizeListener)
-                attachedParent = parent
-                parent?.addComponentListener(parentResizeListener)
-                parent?.takeIf { it.width > COMBO_MIN_WIDTH }?.let { applyWidth(it.width) }
+                parent?.addComponentListener(toolResizeListener)
             }
         }
     }
@@ -187,17 +230,30 @@ class PreviewChapterComboAction(private val project: Project) :
         private const val COMBO_HEIGHT = 28
         private const val COMBO_MIN_WIDTH = 160
         private const val COMBO_FALLBACK_WIDTH = 420
-        private const val COMBO_MAX_WIDTH = Int.MAX_VALUE / 8
     }
 }
 
-/** Pure width helper for the sections combo (plan 04). */
+/**
+ * Width for the sections combo from the tool window / HTML content width:
+ * `(toolWidth - chromeReserve) * 0.75`, floored at [MIN_WIDTH].
+ */
 object PreviewChapterComboWidths {
     const val MIN_WIDTH = 160
     const val FALLBACK_WIDTH = 420
+    /** Title text + other title-actions + IDE strip (LiveRender, refresh, zoom, options, …). */
+    const val CHROME_RESERVE = 320
+    const val REMAINING_FRACTION = 0.75
 
-    fun clampPreferredWidth(available: Int): Int =
-        available.coerceAtLeast(MIN_WIDTH)
+    fun clampFromToolWidth(
+        toolWidth: Int,
+        chromeReserve: Int = CHROME_RESERVE,
+        fraction: Double = REMAINING_FRACTION,
+    ): Int {
+        val remaining = (toolWidth - chromeReserve).coerceAtLeast(0)
+        val target = (remaining * fraction).toInt()
+        val upper = remaining.coerceAtLeast(MIN_WIDTH)
+        return target.coerceAtLeast(MIN_WIDTH).coerceAtMost(upper)
+    }
 }
 
 /** Zoom out (−) in the tool window title bar. */
@@ -285,25 +341,15 @@ class PreviewOptionsAction(private val project: Project) : AnAction("Options", "
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
             add(Separator.getInstance())
-            add(object : AnAction("Export preview HTML…", "Write preview HTML next to the .tex file (for development or sharing issues)", null) {
-                override fun actionPerformed(e2: AnActionEvent) {
-                    val confirmed = Messages.showOkCancelDialog(
-                        project,
-                        "This writes the current preview as an .html file next to your .tex source.\n\n" +
-                            "Use it for development or when sharing issues — not for normal editing.",
-                        "Export preview HTML",
-                        "Export",
-                        "Cancel",
-                        Messages.getWarningIcon(),
-                    )
-                    if (confirmed != Messages.OK) return
-                    if (!svc.exportPreviewHtmlBesideSource()) {
-                        Messages.showWarningDialog(
-                            project,
-                            "No preview HTML available yet.\nOpen a .tex file and wait until the preview has loaded.",
-                            "Export preview HTML",
-                        )
-                    }
+            add(object : ToggleAction(
+                "Debug Mode",
+                "Show the preview scroll debug HUD and auto-export preview HTML next to the .tex file",
+                null,
+            ) {
+                override fun isSelected(e2: AnActionEvent) = settings.debugScrollLog
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.debugScrollLog = state
+                    svc.setDebugMode(state)
                 }
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })

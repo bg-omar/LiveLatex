@@ -357,8 +357,94 @@ internal fun replaceTextSymbols(t0: String): String {
         return t
 }
 
+/** Token planted on TeX body newlines; [materializeSourceLineAnchors] turns these into `.syncline` spans. */
+internal const val SOURCE_LINE_ANCHOR_RE = """%%LLA\{(\d+)\}%%"""
+
 /**
- * Insert invisible line anchors every Nth source line.
+ * Plant `%%LLA{N}%%` markers on safe TeX newlines in the document body (before HTML collapse).
+ * [N] = [absOffset] + body newline index so abs matches editor 1-based lines.
+ */
+internal fun plantSourceLineAnchors(s: String, absOffset: Int, everyN: Int = 1): String {
+        // Skip markers inside math and row/list envs so & / \item / \\ parsers keep working.
+        val skipEnvs = setOf(
+            "equation","equation*","align","align*","aligned","aligned*",
+            "gather","gather*","multline","multline*","flalign","flalign*",
+            "alignat","alignat*","bmatrix","pmatrix","vmatrix","Bmatrix","Vmatrix",
+            "smallmatrix","matrix","cases","split",
+            "tabular","tabular*","array",
+            "table","table*","longtable",
+            "itemize","enumerate","description",
+        )
+
+        var inDollar = false
+        var inDoubleDollar = false
+        var inBracket = false
+        var inParen = false
+        var envDepth = 0
+
+        fun startsAt(idx: Int, tok: String) =
+            idx + tok.length <= s.length && s.regionMatches(idx, tok, 0, tok.length)
+
+        var i = 0
+        var line = 0
+        val sb = StringBuilder(s.length + 1024)
+
+        while (i < s.length) {
+            if (!inBracket && !inParen) {
+                if (startsAt(i, "$$")) { inDoubleDollar = !inDoubleDollar; sb.append("$$"); i += 2; continue }
+                if (!inDoubleDollar && s[i] == '$') {
+                    val prev = if (i > 0) s[i - 1] else ' '
+                    if (prev != '\\') { inDollar = !inDollar; sb.append('$'); i += 1; continue }
+                }
+            }
+            if (!inDollar && !inDoubleDollar) {
+                if (startsAt(i, "\\[")) { inBracket = true;  sb.append("\\["); i += 2; continue }
+                if (startsAt(i, "\\]") && inBracket) { inBracket = false; sb.append("\\]"); i += 2; continue }
+                if (startsAt(i, "\\(")) { inParen = true;   sb.append("\\("); i += 2; continue }
+                if (startsAt(i, "\\)") && inParen) { inParen = false;  sb.append("\\)"); i += 2; continue }
+                if (startsAt(i, "\\begin{")) {
+                    val end  = s.indexOf('}', i + 7)
+                    val name = if (end > 0) s.substring(i + 7, end) else ""
+                    if (name in skipEnvs) envDepth++
+                    sb.append(s, i, (end + 1).coerceAtMost(s.length))
+                    i = (end + 1).coerceAtMost(s.length)
+                    continue
+                }
+                if (startsAt(i, "\\end{")) {
+                    val end  = s.indexOf('}', i + 5)
+                    val name = if (end > 0) s.substring(i + 5, end) else ""
+                    if (name in skipEnvs && envDepth > 0) envDepth--
+                    sb.append(s, i, (end + 1).coerceAtMost(s.length))
+                    i = (end + 1).coerceAtMost(s.length)
+                    continue
+                }
+            }
+
+            val ch = s[i]
+            if (ch == '\n') {
+                line++
+                sb.append('\n')
+                val safeSpot = !inDollar && !inDoubleDollar && !inBracket && !inParen && envDepth == 0
+                if (safeSpot && everyN > 0 && (line % everyN == 0)) {
+                    // Own line so converters that match ^\s*\\item / cell starts keep working.
+                    sb.append("%%LLA{${absOffset + line}}%%\n")
+                }
+                i++
+                continue
+            }
+            sb.append(ch); i++
+        }
+        return sb.toString()
+}
+
+/** Replace surviving `%%LLA{N}%%` markers with invisible `.syncline` spans. */
+internal fun materializeSourceLineAnchors(html: String): String =
+    html.replace(Regex(SOURCE_LINE_ANCHOR_RE)) { m ->
+        """<span class="syncline" data-abs="${m.groupValues[1]}"></span>"""
+    }
+
+/**
+ * Insert invisible line anchors every Nth source line (HTML-stage fallback).
  */
 internal fun injectLineAnchors(s: String, absOffset: Int, everyN: Int = 3): String {
         val mathEnvs = setOf(
