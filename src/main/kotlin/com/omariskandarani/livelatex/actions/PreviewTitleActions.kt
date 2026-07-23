@@ -21,6 +21,8 @@ import com.omariskandarani.livelatex.core.LiveLatexSettings
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.HierarchyEvent
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
@@ -76,8 +78,7 @@ class PreviewChapterComboAction(private val project: Project) :
             toolTipText = "Jump to section"
             maximumRowCount = 20
             isSwingPopup = true
-            preferredSize = Dimension(200, 28)
-            minimumSize = Dimension(120, 28)
+            minimumSize = Dimension(COMBO_MIN_WIDTH, COMBO_HEIGHT)
             renderer = object : DefaultListCellRenderer() {
                 override fun getListCellRendererComponent(
                     list: JList<*>?,
@@ -140,11 +141,57 @@ class PreviewChapterComboAction(private val project: Project) :
         return JPanel(BorderLayout()).apply {
             isOpaque = false
             add(combo, BorderLayout.CENTER)
-            preferredSize = Dimension(200, 28)
+            minimumSize = Dimension(COMBO_MIN_WIDTH, COMBO_HEIGHT)
+            maximumSize = Dimension(COMBO_MAX_WIDTH, COMBO_HEIGHT)
+
+            fun applyWidth(width: Int) {
+                val w = PreviewChapterComboWidths.clampPreferredWidth(width)
+                val dim = Dimension(w, COMBO_HEIGHT)
+                preferredSize = dim
+                combo.preferredSize = dim
+                combo.maximumSize = Dimension(COMBO_MAX_WIDTH, COMBO_HEIGHT)
+                revalidate()
+            }
+
+            applyWidth(COMBO_FALLBACK_WIDTH)
+
+            // Grow with the title-action strip when the parent gives us more room.
+            var attachedParent: Component? = null
+            val parentResizeListener = object : ComponentAdapter() {
+                override fun componentResized(e: ComponentEvent) {
+                    val p = parent ?: return
+                    if (p.width > COMBO_MIN_WIDTH) {
+                        applyWidth(p.width)
+                    }
+                }
+            }
+            addHierarchyListener { e ->
+                if ((e.changeFlags and HierarchyEvent.PARENT_CHANGED.toLong()) == 0L) return@addHierarchyListener
+                attachedParent?.removeComponentListener(parentResizeListener)
+                attachedParent = parent
+                parent?.addComponentListener(parentResizeListener)
+                parent?.takeIf { it.width > COMBO_MIN_WIDTH }?.let { applyWidth(it.width) }
+            }
         }
     }
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
+
+    companion object {
+        private const val COMBO_HEIGHT = 28
+        private const val COMBO_MIN_WIDTH = 160
+        private const val COMBO_FALLBACK_WIDTH = 420
+        private const val COMBO_MAX_WIDTH = Int.MAX_VALUE / 8
+    }
+}
+
+/** Pure width helper for the sections combo (plan 04). */
+object PreviewChapterComboWidths {
+    const val MIN_WIDTH = 160
+    const val FALLBACK_WIDTH = 420
+
+    fun clampPreferredWidth(available: Int): Int =
+        available.coerceAtLeast(MIN_WIDTH)
 }
 
 /** Zoom out (−) in the tool window title bar. */

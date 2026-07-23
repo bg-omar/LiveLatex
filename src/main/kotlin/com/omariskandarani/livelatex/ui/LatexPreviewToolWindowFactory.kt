@@ -45,15 +45,16 @@ class LatexPreviewToolWindowFactory : ToolWindowFactory, DumbAware {
             ContentFactory.getInstance().createContent(panel, "", false)
         )
 
+        // Combo last so it sits rightmost among our actions (before IDE ··· / hide).
         toolWindow.setTitleActions(
             listOf(
                 RenderTikzToggleAction(),
-                PreviewChapterComboAction(project),
                 PreviewRefreshAction(project),
                 PreviewCancelRenderAction(project),
                 PreviewZoomOutAction(project),
                 PreviewZoomInAction(project),
                 PreviewOptionsAction(project),
+                PreviewChapterComboAction(project),
             )
         )
 
