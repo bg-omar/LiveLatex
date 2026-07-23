@@ -428,18 +428,12 @@ class LatexPreviewService(private val project: Project) : Disposable {
     }
 
     private fun clearCacheForPaper() {
-        val cacheDir = currentDocumentCacheDir()
-        if (cacheDir.exists()) {
-            cacheDir.deleteRecursively()
-        }
+        PreviewCacheDirs.deleteIfExists(currentDocumentCacheDir())
         scheduleRefresh()
     }
 
     private fun clearAllCache() {
-        val cacheDir = globalCacheDir()
-        if (cacheDir.exists()) {
-            cacheDir.deleteRecursively()
-        }
+        PreviewCacheDirs.deleteIfExists(globalCacheDir())
         scheduleRefresh()
     }
 

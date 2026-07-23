@@ -204,9 +204,6 @@ class PreviewToolbarPanel(
             }
         }
         popup.add(JSeparator())
-        popup.add("Clear cache for this document").addActionListener {
-            svc.requestClearCache()
-        }
         popup.add("Clear all cache").addActionListener {
             svc.requestClearAllCache()
         }

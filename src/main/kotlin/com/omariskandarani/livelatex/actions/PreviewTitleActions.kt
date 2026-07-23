@@ -28,10 +28,11 @@ import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JPanel
 
-/** Manual refresh when auto-preview is off. */
-class PreviewRefreshAction(private val project: Project) : AnAction("Refresh", "Refresh LaTeX preview", AllIcons.Actions.Refresh) {
+/** Clear document cache and refresh preview. */
+class PreviewRefreshAction(private val project: Project) :
+    AnAction("Refresh", "Clear cache for this document and refresh preview", AllIcons.Actions.Refresh) {
     override fun actionPerformed(e: AnActionEvent) {
-        project.getService(LatexPreviewService::class.java).requestRefresh()
+        project.getService(LatexPreviewService::class.java).requestClearCache()
     }
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -246,12 +247,6 @@ class PreviewOptionsAction(private val project: Project) : AnAction("Options", "
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
             add(Separator.getInstance())
-            add(object : AnAction("Clear cache for this document") {
-                override fun actionPerformed(e2: AnActionEvent) {
-                    svc.requestClearCache()
-                }
-                override fun getActionUpdateThread() = ActionUpdateThread.BGT
-            })
             add(object : AnAction("Clear all cache") {
                 override fun actionPerformed(e2: AnActionEvent) {
                     svc.requestClearAllCache()
