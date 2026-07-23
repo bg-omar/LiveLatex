@@ -242,14 +242,6 @@ class PreviewOptionsAction(private val project: Project) : AnAction("Options", "
                 }
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })
-            add(object : ToggleAction("Auto scroll editor", "Move editor caret to follow preview scroll", null) {
-                override fun isSelected(e2: AnActionEvent) = settings.autoScrollEditor
-                override fun setSelected(e2: AnActionEvent, state: Boolean) {
-                    settings.autoScrollEditor = state
-                    svc.evalJs("try { localStorage.setItem('ll_auto_scroll_editor', $state); } catch(e){}")
-                }
-                override fun getActionUpdateThread() = ActionUpdateThread.BGT
-            })
             add(object : ToggleAction("Show subsections", "Include subsections in the Sections dropdown", null) {
                 override fun isSelected(e2: AnActionEvent) = settings.showDropdownSubsections
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {

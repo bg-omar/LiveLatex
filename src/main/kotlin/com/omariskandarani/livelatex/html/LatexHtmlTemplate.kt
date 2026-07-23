@@ -347,45 +347,6 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
 
 <script>
   (function(){
-    // When user scrolls the preview (incl. scrollbar drag), send line at viewport center to editor
-    function mergedAbsToOrig(mergedAbs) {
-      if (Array.isArray(window.__llM2O) && window.__llM2O.length && mergedAbs>=1 && mergedAbs<=window.__llM2O.length)
-        return window.__llM2O[mergedAbs-1];
-      return mergedAbs;
-    }
-    function lineAtViewportCenter() {
-      if (!window.sync || !window.sync.idx.length) { if (window.sync) window.sync.init(); }
-      const arr = window.sync && window.sync.idx;
-      if (!arr || !arr.length) return null;
-      const centerY = window.innerHeight / 2;
-      let best = null;
-      for (let i = 0; i < arr.length; i++) {
-        const r = arr[i].el.getBoundingClientRect();
-        if (r.top <= centerY) best = arr[i];
-      }
-      if (!best) best = arr[0];
-      return best ? mergedAbsToOrig(best.abs) : null;
-    }
-    let _scrollRaf = 0;
-    function onPreviewScroll() {
-      if (typeof window.__llAutoScrollEditor !== 'function' || !window.__llAutoScrollEditor()) return;
-      const g = window.__llGuards || {};
-      if (Date.now() < (g.suppressEmitUntil || 0)) return;
-      if (_scrollRaf) cancelAnimationFrame(_scrollRaf);
-      _scrollRaf = requestAnimationFrame(function() {
-        _scrollRaf = 0;
-        const origAbs = lineAtViewportCenter();
-        if (origAbs != null && typeof window.__jbcefMoveCaret === 'function')
-          window.__jbcefMoveCaret({ line: origAbs });
-      });
-    }
-    window.addEventListener('scroll', onPreviewScroll, { passive: true });
-    document.addEventListener('DOMContentLoaded', onPreviewScroll);
-  })();
-</script>
-
-<script>
-  (function(){
     window.addEventListener('message', (ev) => {
       const d = ev.data || {};
       if (d && d.type === 'sync-line' && Number.isFinite(d.abs)) {
@@ -668,23 +629,17 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
     function llAutoScroll() {
       try { return localStorage.getItem('ll_auto_scroll') !== 'false'; } catch(_) { return true; }
     }
-    function llAutoScrollEditor() {
-      try { return localStorage.getItem('ll_auto_scroll_editor') === 'true'; } catch(_) { return false; }
-    }
     window.__llAutoScroll = llAutoScroll;
-    window.__llAutoScrollEditor = llAutoScrollEditor;
 
     document.addEventListener('DOMContentLoaded', () => {
       const hamburger = document.getElementById('ll-hamburger');
       const panel = document.getElementById('ll-menu-panel');
       const cbScroll = document.getElementById('ll-auto-scroll');
-      const cbScrollEditor = document.getElementById('ll-auto-scroll-editor');
       const cbInvertH = document.getElementById('ll-invert-scroll-h');
       const cbInvertV = document.getElementById('ll-invert-scroll-v');
 
       try {
         cbScroll.checked = localStorage.getItem('ll_auto_scroll') !== 'false';
-        cbScrollEditor.checked = localStorage.getItem('ll_auto_scroll_editor') === 'true';
         if (cbInvertH) cbInvertH.checked = localStorage.getItem('ll_invert_scroll_h') === 'true';
         if (cbInvertV) cbInvertV.checked = localStorage.getItem('ll_invert_scroll_v') === 'true';
       } catch(_) {}
@@ -698,9 +653,6 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
 
       cbScroll?.addEventListener('change', () => {
         try { localStorage.setItem('ll_auto_scroll', cbScroll.checked ? 'true' : 'false'); } catch(_) {}
-      });
-      cbScrollEditor?.addEventListener('change', () => {
-        try { localStorage.setItem('ll_auto_scroll_editor', cbScrollEditor.checked ? 'true' : 'false'); } catch(_) {}
       });
       cbInvertH?.addEventListener('change', () => {
         try { localStorage.setItem('ll_invert_scroll_h', cbInvertH.checked ? 'true' : 'false'); } catch(_) {}
@@ -895,9 +847,8 @@ internal fun buildHtml(fullTextHtml: String, macrosJs: String): String = """
       g.echoId = m.id; g.echoUntil = now + 450;
 
       const origAbs = mergedAbsToOrig(m.abs);
-      if (typeof window.__llAutoScrollEditor === 'function' && window.__llAutoScrollEditor()) {
-        try { if (typeof window.__jbcefMoveCaret === 'function') window.__jbcefMoveCaret({ line: origAbs, markId: m.id }); } catch(_){}
-      }
+      // Preview scroll/spy no longer moves the editor caret (avoids snap-back).
+      // Clicks/jumps still call __jbcefMoveCaret from jumpToMarkId.
       try { window.postMessage({ type: 'preview-mark', id: m.id, origAbs }, '*'); } catch(_){}
       try { if (typeof updateDebug === 'function') updateDebug({ event:'preview-scroll', id:m.id, mergedAbs:m.abs, origAbs }); } catch(_){}
     }

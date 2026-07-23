@@ -154,22 +154,16 @@ class PreviewToolbarPanel(
         val popup = JPopupMenu()
         val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
         val autoScrollPreview = javax.swing.JCheckBoxMenuItem("Auto scroll preview", settings.autoScrollPreview)
-        val autoScrollEditor = javax.swing.JCheckBoxMenuItem("Auto scroll editor", settings.autoScrollEditor)
         val invertScrollH = javax.swing.JCheckBoxMenuItem("Inverted scroll-h", settings.invertScrollHorizontal)
         val invertScrollV = javax.swing.JCheckBoxMenuItem("Inverted scroll-v", settings.invertScrollVertical)
         val svc = project.getService(LatexPreviewService::class.java)
 
         popup.add(autoScrollPreview)
-        popup.add(autoScrollEditor)
         popup.add(invertScrollH)
         popup.add(invertScrollV)
         autoScrollPreview.addActionListener {
             settings.autoScrollPreview = autoScrollPreview.isSelected
             svc.evalJs("try { localStorage.setItem('ll_auto_scroll', " + autoScrollPreview.isSelected + "); } catch(e){}")
-        }
-        autoScrollEditor.addActionListener {
-            settings.autoScrollEditor = autoScrollEditor.isSelected
-            svc.evalJs("try { localStorage.setItem('ll_auto_scroll_editor', " + autoScrollEditor.isSelected + "); } catch(e){}")
         }
         invertScrollH.addActionListener {
             settings.invertScrollHorizontal = invertScrollH.isSelected

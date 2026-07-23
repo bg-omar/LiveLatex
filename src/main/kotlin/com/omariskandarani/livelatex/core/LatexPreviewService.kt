@@ -402,7 +402,6 @@ class LatexPreviewService(private val project: Project) : Disposable {
         eval(
             "try { " +
                 "localStorage.setItem('ll_auto_scroll', ${settings.autoScrollPreview}); " +
-                "localStorage.setItem('ll_auto_scroll_editor', ${settings.autoScrollEditor}); " +
                 "localStorage.setItem('ll_sync_selection', ${settings.syncSelection}); " +
                 "localStorage.setItem('ll_show_tikz_debug', false); " +
                 "localStorage.setItem('ll_invert_scroll_h', ${settings.invertScrollHorizontal}); " +
@@ -582,10 +581,9 @@ class LatexPreviewService(private val project: Project) : Disposable {
                                 }
                                 ed.caretModel.moveToOffset(caret)
                                 ed.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
-                                // Align preview to same line at center so both panels show the same position
-                                eval("""window.postMessage({type:'sync-line', abs:$lineToAlign, source:'align', mode:'center'}, '*');""")
+                                // No sync-line echo: that caused preview snap-back after jumps.
                             } finally {
-                                alarm.addRequest({ syncingFromPreview = false }, 80)
+                                alarm.addRequest({ syncingFromPreview = false }, 400)
                             }
                         }
                     }
