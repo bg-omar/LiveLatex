@@ -135,7 +135,11 @@ private fun findHobbyTikzBlockAtCaret(text: String, caretOffset: Int): TikzBlock
     return null
 }
 
-class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ picture and insert it", null) {
+class NewTikzFigureAction : AnAction(
+    "New TikZ…",
+    "Open the TikZ canvas. Right-click inside an existing tikzpicture to edit it.",
+    null,
+) {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
@@ -177,8 +181,10 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
         val dialog = TikzCanvasDialog(project, initialTikz = initialTikz)
 
         if (!dialog.showAndGet()) return
-        val body = dialog.resultTikz ?: return
-        val isKnot = body.contains("\\begin{knot}") || body.contains("\\KPATH")
+        val rawBody = dialog.resultTikzRaw
+        val wrappedBody = dialog.resultTikz ?: return
+        val bodyForEdit = rawBody ?: wrappedBody
+        val isKnot = bodyForEdit.contains("\\begin{knot}") || bodyForEdit.contains("\\KPATH")
 
         // Helpers to find insertion points
         fun findAfterDocumentClass(text: String): Int {
@@ -202,7 +208,7 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
         var preambleInserted = false
         WriteCommandAction.runWriteCommandAction(project) {
             if (editBlock != null) {
-                document.replaceString(editBlock.start, editBlock.end, body)
+                document.replaceString(editBlock.start, editBlock.end, bodyForEdit)
             } else {
                 // If the file is basically empty of TikZ config, insert the full preamble once after \documentclass
                 val hasAnyUsetikz = allLibsRegex.containsMatchIn(document.text)
@@ -249,7 +255,7 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
                     }
                 }
                 val caretPos = editor.caretModel.offset
-                document.insertString(caretPos, "\n$body\n")
+                document.insertString(caretPos, "\n$wrappedBody\n")
             }
         }
 
@@ -276,8 +282,12 @@ class NewTikzFigureAction : AnAction("New TikZ Figure…", "Draw a quick TikZ pi
             val text = editor.document.text
             val caret = editor.caretModel.offset
             val inEdit = findHobbyTikzBlockAtCaret(text, caret) != null || findAnyTikzBlockAtCaret(text, caret) != null
-            e.presentation.text = if (inEdit) "Edit TikZ…" else "New TikZ Figure…"
-            e.presentation.description = if (inEdit) "Edit the TikZ picture in the canvas" else "Draw a quick TikZ picture and insert it"
+            e.presentation.text = if (inEdit) "Edit TikZ…" else "New TikZ…"
+            e.presentation.description = if (inEdit) {
+                "Edit the tikzpicture under the caret in the canvas"
+            } else {
+                "Open the TikZ canvas. Right-click inside an existing tikzpicture to edit it."
+            }
         }
     }
 

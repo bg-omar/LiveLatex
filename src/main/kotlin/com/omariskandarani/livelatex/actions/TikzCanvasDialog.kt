@@ -64,7 +64,8 @@ private fun projectOntoSegment(p: Point, a: Point, b: Point): Point {
 
 class TikzCanvasDialog(
     private val project: Project,
-    private val initialTikz: String? = null
+    private val initialTikz: String? = null,
+    private val restoreFromSession: Boolean = false,
 ) : DialogWrapper(project, true) {
 
     private companion object {
@@ -124,6 +125,9 @@ class TikzCanvasDialog(
     private val knotPts = mutableListOf<Point>()
     // export buffer the action reads after OK
     var resultTikz: String? = null
+        private set
+    /** Unwrapped tikz/knot body (for replacing an existing tikzpicture without nesting resizebox). */
+    var resultTikzRaw: String? = null
         private set
 
     // Two-strand settings (bound to persistent service)
@@ -471,6 +475,7 @@ class TikzCanvasDialog(
     private var longPressReady: Boolean = false // readiness flag for long-press add
     private var initialPresetLoaded = false
     private var initialTikzImported = false
+    private var sessionRestored = false
 
     // --------- UI controls ----------
     private lateinit var rootPanel: JPanel
@@ -744,7 +749,12 @@ class TikzCanvasDialog(
                     initialTikzImported = true
                     initialPresetLoaded = true
                 }
-                if (!initialPresetLoaded && presets.isNotEmpty()) {
+                if (restoreFromSession && !sessionRestored && canvas.width > 0 && canvas.height > 0) {
+                    restoreSessionState()
+                    sessionRestored = true
+                    initialPresetLoaded = true
+                }
+                if (!initialPresetLoaded && !restoreFromSession && initialTikz == null && presets.isNotEmpty()) {
                     titleCombo.selectedIndex = 0
                     doLoadSelected()
                     initialPresetLoaded = true
@@ -1590,9 +1600,37 @@ class TikzCanvasDialog(
         // 2) Persist to service
         TwoStrandSettingsService.getInstance().loadState(twoStrandSettings)
 
-        // 3) Export body (branch) — handles knot, two-strand, or shapes-only
-        resultTikz = buildCurrentExportBody()
+        // 3) Export body + linewidth wrap for editor insert; keep preview path unwrapped.
+        val rawBody = buildCurrentExportBody()
+        val widthPct = exportWidthPercent()
+        val wrapped = TikzToolbarHelpers.wrapInLinewidthResizebox(rawBody, widthPct)
+        resultTikzRaw = rawBody
+        resultTikz = wrapped
+        ApplicationManager.getApplication().getService(TikzSessionStore::class.java).remember(
+            knotPoints = knotPts.map { Point(it) },
+            flip = flipField.text.trim(),
+            exportBody = wrapped,
+            widthPercent = widthPct,
+        )
         super.doOKAction()
+    }
+
+    private fun restoreSessionState() {
+        val session = ApplicationManager.getApplication().getService(TikzSessionStore::class.java)
+        val pts = session.getLastKnot()
+        if (pts.isNotEmpty()) {
+            knotPts.clear()
+            knotPts.addAll(pts.map { Point(it) })
+        } else {
+            session.lastExportBody?.let { importCoordinates(it) }
+        }
+        flipField.text = session.lastFlip
+        if (this::spWidthPct.isInitialized) {
+            spWidthPct.value = TikzToolbarHelpers.clampWidthPercent(session.lastWidthPercent)
+        }
+        dirty = false
+        canvas.repaint()
+        scheduleEmbedLivePreview()
     }
 
     private fun exportBodyTwoStrand(

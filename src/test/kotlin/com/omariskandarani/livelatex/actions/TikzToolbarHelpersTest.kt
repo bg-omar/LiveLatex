@@ -32,4 +32,23 @@ class TikzToolbarHelpersTest {
         assertEquals(100, TikzToolbarHelpers.clampWidthPercent(200))
         assertEquals(80, TikzToolbarHelpers.clampWidthPercent(80))
     }
+
+    @Test
+    fun wrapInLinewidthResizebox_usesPercentOfLinewidth() {
+        val body = "\\begin{tikzpicture}\n\\draw (0,0)--(1,1);\n\\end{tikzpicture}"
+        val wrapped = TikzToolbarHelpers.wrapInLinewidthResizebox(body, 80)
+        assertTrue(wrapped.startsWith("\\resizebox{0.8\\linewidth}{!}{%"))
+        assertTrue(wrapped.contains(body))
+        assertTrue(wrapped.trimEnd().endsWith("}"))
+        // Already wrapped → leave as-is (do not nest another resizebox).
+        assertEquals(wrapped, TikzToolbarHelpers.wrapInLinewidthResizebox(wrapped, 50))
+        assertEquals("% No content.", TikzToolbarHelpers.wrapInLinewidthResizebox("% No content.", 80))
+    }
+
+    @Test
+    fun linewidthFraction_formatsCommonPercents() {
+        assertEquals("0.8", TikzToolbarHelpers.linewidthFraction(80))
+        assertEquals("0.85", TikzToolbarHelpers.linewidthFraction(85))
+        assertEquals("1", TikzToolbarHelpers.linewidthFraction(100))
+    }
 }

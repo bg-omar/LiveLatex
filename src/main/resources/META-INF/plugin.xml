@@ -47,8 +47,12 @@
             <add-to-group group-id="ToolsMenu" anchor="last"/>
             <action id="LiveLaTeX.NewTikzFigure"
                     class="com.omariskandarani.livelatex.actions.NewTikzFigureAction"
-                    text="New TikZ Figure…"
-                    description="Open the TikZ canvas; right-click inside a tikzpicture to edit that figure"/>
+                    text="New TikZ…"
+                    description="Open the TikZ canvas. Right-click inside an existing tikzpicture to edit it."/>
+            <action id="LiveLaTeX.LoadLastTikz"
+                    class="com.omariskandarani.livelatex.actions.LoadLastTikzAction"
+                    text="Load Last TikZ…"
+                    description="Reopen the last TikZ canvas session from this IDE run and insert at the caret"/>
             <action id="LiveLaTeX.InsertImage"
                     class="com.omariskandarani.livelatex.actions.InsertImageAction"
                     text="Insert Image…"
