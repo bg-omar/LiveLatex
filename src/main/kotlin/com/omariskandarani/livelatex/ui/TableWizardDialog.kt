@@ -8,17 +8,35 @@ import java.awt.event.ItemEvent
 import javax.swing.*
 import javax.swing.event.ChangeEvent
 import javax.swing.event.DocumentEvent
-import javax.swing.table.AbstractTableModel
 
 class TableWizardDialog(
     project: Project?,
     private val seedDataFromSelection: List<List<String>> = emptyList()
 ) : DialogWrapper(project, true) {
 
-    private val rowsSpinner = JSpinner(SpinnerNumberModel( if (seedDataFromSelection.isNotEmpty()) seedDataFromSelection.size else 3, 1, 999, 1))
-    private val colsSpinner = JSpinner(SpinnerNumberModel( if (seedDataFromSelection.isNotEmpty()) seedDataFromSelection.maxOf { it.size } else 3, 1, 20, 1))
-    private val headerSpinner = JSpinner(SpinnerNumberModel(1, 0, 999, 1))
-    private val placementField = JTextField("htbp")
+    private val bodyRowsSpinner = JSpinner(
+        SpinnerNumberModel(
+            if (seedDataFromSelection.isNotEmpty()) (seedDataFromSelection.size - 1).coerceAtLeast(1) else 3,
+            1,
+            999,
+            1,
+        )
+    )
+    private val colsSpinner = JSpinner(
+        SpinnerNumberModel(
+            if (seedDataFromSelection.isNotEmpty()) seedDataFromSelection.maxOf { it.size } else 3,
+            1,
+            20,
+            1,
+        )
+    )
+    private val placementCombo = JComboBox(
+        arrayOf("htbp", "t", "b", "h", "p", "ht", "hb", "!h", "H")
+    ).apply {
+        selectedItem = "htbp"
+        toolTipText = "Float placement: h=here, t=top, b=bottom, p=page of floats; " +
+            "htbp = try in that order. ! = ignore some constraints; H = here (float package)."
+    }
     private val captionField = JTextField("")
     private val labelField = JTextField("")
     private val booktabsCheck = JCheckBox("Booktabs (top/mid/bottomrule)", true)
@@ -26,36 +44,30 @@ class TableWizardDialog(
     private val outerRulesCheck = JCheckBox("Add outer vertical rules (| ... |)", false)
 
     private val importBtn = JButton("Import selection")
-    private val previewArea = JTextArea(18, 80).apply {
+    private val previewArea = JTextArea(14, 80).apply {
         font = Font(Font.MONOSPACED, Font.PLAIN, 13)
         lineWrap = false
         isEditable = false
     }
 
-    private val colModel = ColumnSpecModel()
-    private val colTable = JTable(colModel).apply {
-        setFillsViewportHeight(true)
-        rowHeight = 24
-        preferredScrollableViewportSize = Dimension(520, 140)
-        // Render Alignment as combo
-        val combo = JComboBox(arrayOf("l", "c", "r", "p{width}"))
-        columnModel.getColumn(0).cellEditor = DefaultCellEditor(combo)
-    }
+    private val colSpecs = mutableListOf<ColSpec>()
+    private val alignRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+    private val tableMock = JPanel()
 
-    // Data that will be used to generate the table (either imported or placeholder)
     private var currentData: List<List<String>> = seedOrDefault()
 
     init {
         title = "Generate LaTeX Table"
         init()
-        updateColModelToSpinner()
+        syncColSpecsToSpinner()
+        rebuildAlignRow()
+        rebuildTableMock()
         updatePreview()
     }
 
     override fun createCenterPanel(): JComponent {
         val root = JPanel(BorderLayout(10, 10))
 
-        // Top: basic settings
         val top = JPanel(GridBagLayout())
         val c = GridBagConstraints().apply {
             anchor = GridBagConstraints.WEST
@@ -72,31 +84,34 @@ class TableWizardDialog(
             y++
         }
 
-        row("Rows:", rowsSpinner)
-        row("Cols:", colsSpinner)
-        row("Header rows:", headerSpinner)
-        row("Placement:", placementField)
+        val dims = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            add(JLabel("Body rows:"))
+            add(bodyRowsSpinner)
+            add(JLabel("Cols:"))
+            add(colsSpinner)
+        }
+        row("", dims)
+        row("Placement:", placementCombo)
         row("Caption:", captionField)
         row("Label:", labelField)
         row("", booktabsCheck, 0.0)
         row("", tableEnvCheck, 0.0)
         row("", outerRulesCheck, 0.0)
 
-        // Middle: columns spec editor + import button
         val mid = JPanel(BorderLayout(6, 6))
-        mid.border = BorderFactory.createTitledBorder("Columns")
-        mid.add(JScrollPane(colTable), BorderLayout.CENTER)
+        mid.border = BorderFactory.createTitledBorder("Table")
+        val floating = JPanel(BorderLayout(4, 4)).apply {
+            border = BorderFactory.createTitledBorder("Align")
+            add(alignRow, BorderLayout.CENTER)
+        }
+        mid.add(floating, BorderLayout.NORTH)
+        mid.add(JScrollPane(tableMock), BorderLayout.CENTER)
+        mid.add(JPanel(FlowLayout(FlowLayout.LEFT, 6, 6)).apply { add(importBtn) }, BorderLayout.SOUTH)
 
-        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 6, 6))
-        buttons.add(importBtn)
-        mid.add(buttons, BorderLayout.SOUTH)
-
-        // Bottom: preview
         val bottom = JPanel(BorderLayout())
         bottom.border = BorderFactory.createTitledBorder("Live LaTeX Preview")
         bottom.add(JScrollPane(previewArea), BorderLayout.CENTER)
 
-        // Assemble
         val center = JPanel(BorderLayout(10, 10))
         center.add(top, BorderLayout.NORTH)
         center.add(mid, BorderLayout.CENTER)
@@ -114,19 +129,21 @@ class TableWizardDialog(
         val docL: (DocumentEvent) -> Unit = { regen() }
         val itemL: (ItemEvent) -> Unit = { regen() }
 
-        rowsSpinner.addChangeListener {
-            syncHeaderMax()
-            updateColModelToSpinner()
-            currentData = ensureDataSize(currentData, rows(), cols())
+        bodyRowsSpinner.addChangeListener {
+            syncColSpecsToSpinner()
+            currentData = ensureDataSize(currentData, totalRows(), cols())
+            rebuildAlignRow()
+            rebuildTableMock()
             regen()
         }
         colsSpinner.addChangeListener {
-            updateColModelToSpinner()
-            currentData = ensureDataSize(currentData, rows(), cols())
+            syncColSpecsToSpinner()
+            currentData = ensureDataSize(currentData, totalRows(), cols())
+            rebuildAlignRow()
+            rebuildTableMock()
             regen()
         }
-        headerSpinner.addChangeListener(changeL)
-        placementField.document.addDocumentListener(simpleDocListener(docL))
+        placementCombo.addItemListener(itemL)
         captionField.document.addDocumentListener(simpleDocListener(docL))
         labelField.document.addDocumentListener(simpleDocListener(docL))
         booktabsCheck.addItemListener(itemL)
@@ -134,92 +151,153 @@ class TableWizardDialog(
         outerRulesCheck.addItemListener(itemL)
 
         importBtn.addActionListener {
-            // keep current rows/cols but replace data if importable
-            // Caller should pass selection in constructor; for convenience we allow re-seed here:
             if (seedDataFromSelection.isNotEmpty()) {
                 currentData = seedOrDefault()
-                rowsSpinner.value = currentData.size
+                bodyRowsSpinner.value = (currentData.size - 1).coerceAtLeast(1)
                 colsSpinner.value = currentData.maxOf { it.size }
-                updateColModelToSpinner()
-                syncHeaderMax()
+                syncColSpecsToSpinner()
+                rebuildAlignRow()
+                rebuildTableMock()
                 regen()
             } else {
-                JOptionPane.showMessageDialog(contentPanel,
+                JOptionPane.showMessageDialog(
+                    contentPanel,
                     "No selection was provided to this dialog.\nInvoke the action with a selection to import.",
-                    "No Selection", JOptionPane.INFORMATION_MESSAGE)
+                    "No Selection",
+                    JOptionPane.INFORMATION_MESSAGE,
+                )
             }
         }
     }
 
-    private fun rows() = (rowsSpinner.value as Number).toInt()
+    private fun bodyRows() = (bodyRowsSpinner.value as Number).toInt()
+    private fun totalRows() = 1 + bodyRows()
     private fun cols() = (colsSpinner.value as Number).toInt()
 
-    private fun syncHeaderMax() {
-        val r = rows()
-        val model = headerSpinner.model as SpinnerNumberModel
-        val current = (headerSpinner.value as Number).toInt().coerceAtMost(r)
-        model.maximum = r
-        headerSpinner.value = current
+    private fun syncColSpecsToSpinner() {
+        val n = cols()
+        when {
+            n > colSpecs.size -> repeat(n - colSpecs.size) { colSpecs += ColSpec() }
+            n < colSpecs.size -> repeat(colSpecs.size - n) { colSpecs.removeLast() }
+        }
     }
 
-    private fun updateColModelToSpinner() {
-        colModel.setColumnCount(cols())
+    private fun rebuildAlignRow() {
+        alignRow.removeAll()
+        colSpecs.forEachIndexed { idx, spec ->
+            val combo = JComboBox(arrayOf("l", "c", "r", "p{width}")).apply {
+                selectedItem = when (spec.align) {
+                    ColAlign.L -> "l"
+                    ColAlign.C -> "c"
+                    ColAlign.R -> "r"
+                    ColAlign.P -> "p{width}"
+                }
+                preferredSize = Dimension(88, preferredSize.height)
+            }
+            val widthField = JTextField(spec.width ?: "").apply {
+                columns = 8
+                isEnabled = spec.align == ColAlign.P
+                toolTipText = "Width for p{…}, e.g. 3cm or 0.2\\linewidth"
+            }
+            combo.addItemListener { e ->
+                if (e.stateChange != ItemEvent.SELECTED) return@addItemListener
+                val s = (combo.selectedItem as? String)?.lowercase().orEmpty()
+                spec.align = when {
+                    s.startsWith("p") -> ColAlign.P
+                    s.startsWith("c") -> ColAlign.C
+                    s.startsWith("r") -> ColAlign.R
+                    else -> ColAlign.L
+                }
+                widthField.isEnabled = spec.align == ColAlign.P
+                updatePreview()
+            }
+            widthField.document.addDocumentListener(simpleDocListener {
+                spec.width = widthField.text.takeIf { it.isNotBlank() }
+                updatePreview()
+            })
+            alignRow.add(JLabel("C${idx + 1}"))
+            alignRow.add(combo)
+            alignRow.add(widthField)
+        }
+        alignRow.revalidate()
+        alignRow.repaint()
+    }
+
+    private fun rebuildTableMock() {
+        val r = totalRows()
+        val c = cols()
+        currentData = ensureDataSize(currentData, r, c)
+        tableMock.removeAll()
+        tableMock.layout = GridLayout(r, c, 1, 1)
+        tableMock.border = BorderFactory.createLineBorder(Color.GRAY)
+        for (i in 0 until r) {
+            for (j in 0 until c) {
+                val text = currentData.getOrNull(i)?.getOrNull(j).orEmpty()
+                val cell = JLabel(text, SwingConstants.CENTER).apply {
+                    border = BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(Color.LIGHT_GRAY),
+                        BorderFactory.createEmptyBorder(4, 6, 4, 6),
+                    )
+                    if (i == 0) {
+                        font = font.deriveFont(Font.BOLD)
+                        background = Color(245, 245, 245)
+                        isOpaque = true
+                    }
+                }
+                tableMock.add(cell)
+            }
+        }
+        tableMock.revalidate()
+        tableMock.repaint()
     }
 
     private fun ensureDataSize(data: List<List<String>>, r: Int, c: Int): List<List<String>> {
         if (data.isEmpty()) return placeholderData(r, c)
-        val out = MutableList(r) { i ->
+        return MutableList(r) { i ->
             val row = data.getOrNull(i).orEmpty()
-            MutableList(c) { j -> row.getOrNull(j) ?: "Row${i+1} Col${j+1}" }
+            MutableList(c) { j -> row.getOrNull(j) ?: if (i == 0) "Header ${j + 1}" else "Row$i Col${j + 1}" }
         }
-        return out
     }
 
     private fun placeholderData(r: Int, c: Int): List<List<String>> =
         List(r) { i ->
             List(c) { j ->
-                if (i == 0) "Header ${j+1}" else "Row${i} Col${j+1}"
+                if (i == 0) "Header ${j + 1}" else "Row$i Col${j + 1}"
             }
         }
 
     private fun seedOrDefault(): List<List<String>> {
         if (seedDataFromSelection.isNotEmpty()) return seedDataFromSelection
-        return placeholderData(rows(), cols())
+        return placeholderData(totalRows(), cols())
     }
 
     private fun gatherOptions(): TableOptions {
-        val columns = (0 until cols()).map { idx ->
-            val spec = colModel.getSpec(idx)
+        val columns = colSpecs.map { spec ->
             when (spec.align) {
-                ColAlign.P -> Col(ColAlign.P, width = spec.width, verticalLeft = spec.vLeft, verticalRight = spec.vRight)
-                else       -> Col(spec.align, verticalLeft = spec.vLeft, verticalRight = spec.vRight)
+                ColAlign.P -> Col(ColAlign.P, width = spec.width)
+                else -> Col(spec.align)
             }
         }
         return TableOptions(
             withTableEnv = tableEnvCheck.isSelected,
-            placement = placementField.text.ifBlank { "htbp" },
+            placement = (placementCombo.selectedItem as? String)?.ifBlank { "htbp" } ?: "htbp",
             caption = captionField.text.takeIf { it.isNotBlank() },
             label = labelField.text.takeIf { it.isNotBlank() },
             booktabs = booktabsCheck.isSelected,
-            headerRows = (headerSpinner.value as Number).toInt().coerceIn(0, rows()),
+            headerRows = 1,
             addOuterRules = outerRulesCheck.isSelected,
-            cols = columns
+            cols = columns,
         )
     }
 
     private fun updatePreview() {
         val opts = gatherOptions()
-        val r = rows()
-        val c = cols()
-        currentData = ensureDataSize(currentData, r, c)
-        val latex = generateLatexTable(currentData, opts)
-        previewArea.text = latex
+        currentData = ensureDataSize(currentData, totalRows(), cols())
+        previewArea.text = generateLatexTable(currentData, opts)
         previewArea.caretPosition = 0
     }
 
     fun resultLatex(): String = previewArea.text
-
-    /* ---------------------- helpers ---------------------- */
 
     private fun simpleDocListener(onChange: (DocumentEvent) -> Unit) =
         object : javax.swing.event.DocumentListener {
@@ -228,72 +306,8 @@ class TableWizardDialog(
             override fun changedUpdate(e: DocumentEvent) = onChange(e)
         }
 
-    /* -------- column table model -------- */
-
-    private data class ColSpecRow(
+    private data class ColSpec(
         var align: ColAlign = ColAlign.L,
         var width: String? = null,
-        var vLeft: Boolean = false,
-        var vRight: Boolean = false
     )
-
-    private inner class ColumnSpecModel : AbstractTableModel() {
-        private val rows = mutableListOf<ColSpecRow>()
-        private val cols = arrayOf("Align", "p{width}", "│ left", "│ right")
-
-        fun setColumnCount(n: Int) {
-            val old = rowCount
-            when {
-                n > old -> repeat(n - old) { rows += ColSpecRow() }
-                n < old -> repeat(old - n) { rows.removeLast() }
-            }
-            fireTableDataChanged()
-        }
-
-        fun getSpec(i: Int): ColSpecRow = rows[i]
-
-        override fun getRowCount(): Int = rows.size
-        override fun getColumnCount(): Int = cols.size
-        override fun getColumnName(column: Int): String = cols[column]
-        override fun getColumnClass(columnIndex: Int): Class<*> =
-            when (columnIndex) {
-                0 -> String::class.java
-                1 -> String::class.java
-                2,3 -> Boolean::class.java
-                else -> String::class.java
-            }
-
-        override fun isCellEditable(rowIndex: Int, columnIndex: Int): Boolean = true
-
-        override fun getValueAt(rowIndex: Int, columnIndex: Int): Any? {
-            val r = rows[rowIndex]
-            return when (columnIndex) {
-                0 -> when (r.align) { ColAlign.L -> "l"; ColAlign.C -> "c"; ColAlign.R -> "r"; ColAlign.P -> "p{width}" }
-                1 -> r.width ?: ""
-                2 -> r.vLeft
-                3 -> r.vRight
-                else -> ""
-            }
-        }
-
-        override fun setValueAt(aValue: Any?, rowIndex: Int, columnIndex: Int) {
-            val r = rows[rowIndex]
-            when (columnIndex) {
-                0 -> {
-                    val s = (aValue as? String)?.lowercase()?.trim() ?: "l"
-                    r.align = when {
-                        s.startsWith("p") -> ColAlign.P
-                        s.startsWith("c") -> ColAlign.C
-                        s.startsWith("r") -> ColAlign.R
-                        else              -> ColAlign.L
-                    }
-                }
-                1 -> r.width = (aValue as? String)?.takeIf { it.isNotBlank() }
-                2 -> r.vLeft  = (aValue as? Boolean) ?: false
-                3 -> r.vRight = (aValue as? Boolean) ?: false
-            }
-            fireTableRowsUpdated(rowIndex, rowIndex)
-            updatePreview()
-        }
-    }
 }
