@@ -98,13 +98,19 @@ class PreviewChapterComboAction(private val project: Project) :
         fun applyState(sections: List<Pair<String, String>>, activeId: String?) {
             updating = true
             try {
-                if (sections.isEmpty()) {
+                val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
+                val display = SectionDropdownHelpers.displaySections(
+                    sections,
+                    showSubsections = settings.showDropdownSubsections,
+                    showSubsubsections = settings.showDropdownSubsubsections,
+                )
+                if (display.isEmpty()) {
                     combo.model = DefaultComboBoxModel(arrayOf(SectionItem("", "Sections")))
                     combo.isEnabled = false
                     combo.selectedIndex = 0
                     return
                 }
-                val items = sections.map { (id, label) -> SectionItem(id, label) }
+                val items = display.map { (id, label) -> SectionItem(id, label) }
                 combo.model = DefaultComboBoxModel(items.toTypedArray())
                 combo.isEnabled = true
                 val idx = items.indexOfFirst { it.id == activeId }
@@ -241,6 +247,22 @@ class PreviewOptionsAction(private val project: Project) : AnAction("Options", "
                 override fun setSelected(e2: AnActionEvent, state: Boolean) {
                     settings.autoScrollEditor = state
                     svc.evalJs("try { localStorage.setItem('ll_auto_scroll_editor', $state); } catch(e){}")
+                }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
+            })
+            add(object : ToggleAction("Show subsections", "Include subsections in the Sections dropdown", null) {
+                override fun isSelected(e2: AnActionEvent) = settings.showDropdownSubsections
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.showDropdownSubsections = state
+                    svc.refreshSectionsUi()
+                }
+                override fun getActionUpdateThread() = ActionUpdateThread.BGT
+            })
+            add(object : ToggleAction("Show subsubsections", "Include subsubsections/paragraphs in the Sections dropdown", null) {
+                override fun isSelected(e2: AnActionEvent) = settings.showDropdownSubsubsections
+                override fun setSelected(e2: AnActionEvent, state: Boolean) {
+                    settings.showDropdownSubsubsections = state
+                    svc.refreshSectionsUi()
                 }
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
             })

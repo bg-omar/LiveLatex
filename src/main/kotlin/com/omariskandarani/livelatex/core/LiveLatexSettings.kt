@@ -22,6 +22,8 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
         var showTikzDebugOverlay: Boolean = false,
         var invertScrollHorizontal: Boolean = false,
         var invertScrollVertical: Boolean = false,
+        var showDropdownSubsections: Boolean = true,
+        var showDropdownSubsubsections: Boolean = true,
     )
 
     private var state = State()
@@ -65,4 +67,12 @@ class LiveLatexSettings : PersistentStateComponent<LiveLatexSettings.State> {
     var invertScrollVertical: Boolean
         get() = state.invertScrollVertical
         set(value) { state.invertScrollVertical = value }
+
+    var showDropdownSubsections: Boolean
+        get() = state.showDropdownSubsections
+        set(value) { state.showDropdownSubsections = value }
+
+    var showDropdownSubsubsections: Boolean
+        get() = state.showDropdownSubsubsections
+        set(value) { state.showDropdownSubsubsections = value }
 }

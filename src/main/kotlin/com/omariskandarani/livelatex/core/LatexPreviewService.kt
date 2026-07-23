@@ -101,6 +101,11 @@ class LatexPreviewService(private val project: Project) : Disposable {
         )
     }
 
+    /** Re-push section list to title UI (e.g. after Options filter toggles). */
+    fun refreshSectionsUi() {
+        notifySectionsUiListeners()
+    }
+
     private fun setLastSections(sections: List<Pair<String, String>>, clear: Boolean = false) {
         // Ignore empty flashes from early sendSectionsToHost (marks not ready yet).
         if (sections.isEmpty() && !clear && lastSections.isNotEmpty()) return
