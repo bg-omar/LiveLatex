@@ -1,10 +1,8 @@
 package com.omariskandarani.livelatex.core
 
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.project.Project
 
 /**
@@ -16,12 +14,12 @@ object WhatsNewAnnouncer {
     const val NOTIFICATION_GROUP_ID = "LiveLatex"
 
     private val lock = Any()
+    private val versionTag = Regex("""<version>\s*([^<]*?)\s*</version>""", RegexOption.IGNORE_CASE)
 
     fun announceIfNeeded(project: Project) {
         if (project.isDisposed) return
         synchronized(lock) {
-            val plugin = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID)) ?: return
-            val current = plugin.version?.trim().orEmpty()
+            val current = currentPluginVersion()?.trim().orEmpty()
             if (current.isEmpty()) return
 
             val settings = ApplicationManager.getApplication().getService(LiveLatexSettings::class.java)
@@ -43,6 +41,22 @@ object WhatsNewAnnouncer {
 
             settings.lastSeenPluginVersion = current
         }
+    }
+
+    /**
+     * Reads the Marketplace/plugin version from the packaged `/META-INF/plugin.xml`
+     * (stamped by `patchPluginXml`). Avoids PluginManager / PluginId APIs for
+     * cross-IDE binary compatibility.
+     */
+    fun currentPluginVersion(): String? =
+        WhatsNewAnnouncer::class.java.getResourceAsStream("/META-INF/plugin.xml")
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { parseVersionFromPluginXml(it.readText()) }
+
+    /** Extracts `<version>` from plugin.xml text; null if missing/blank/malformed. */
+    fun parseVersionFromPluginXml(pluginXml: String): String? {
+        val match = versionTag.find(pluginXml) ?: return null
+        return match.groupValues[1].trim().ifEmpty { null }
     }
 
     fun loadBundledWhatsNew(): String? =
